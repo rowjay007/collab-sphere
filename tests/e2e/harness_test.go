@@ -45,7 +45,8 @@ func binaries(t *testing.T) (docsvc, hub string) {
 			"document-service": "./services/document-service/cmd/document-service",
 			"collab-hub":       "./services/collab-hub/cmd/collab-hub",
 		} {
-			cmd := exec.Command("go", "build", "-race", "-o", filepath.Join(binDir, name), pkg)
+			args := append(append([]string{"build"}, buildFlags...), "-o", filepath.Join(binDir, name), pkg)
+			cmd := exec.Command("go", args...)
 			cmd.Dir = filepath.Join("..", "..")
 			if out, err := cmd.CombinedOutput(); err != nil {
 				buildErr = fmt.Errorf("build %s: %v\n%s", name, err, out)

@@ -1,0 +1,6 @@
+    append_probe_test.go:45: AppendOperations x1000: mean=4.46821ms p50=2.658833ms p99=36.174167ms max=142.158792ms
+--- PASS: TestAppendLatency (8.07s)
+    collab_test.go:229: 100 editors, 4000 ops in 20.049s (200 ops/s), 2181 visible runes
+    collab_test.go:231: op round trip (send to echo): p50=6.267894209s p95=12.860678791s p99=13.48503475s max=13.828166375s
+--- PASS: TestHundredConcurrentEditors (21.40s)
+PASS
