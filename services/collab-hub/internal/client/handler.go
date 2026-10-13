@@ -1,0 +1,179 @@
+package client
+
+import (
+	"context"
+	"net/http"
+	"strconv"
+
+	"github.com/coder/websocket"
+	"google.golang.org/protobuf/proto"
+
+	collabv1 "github.com/rowjay007/collab-sphere/gen/collab/v1"
+	crdtv1 "github.com/rowjay007/collab-sphere/gen/crdt/v1"
+	"github.com/rowjay007/collab-sphere/pkg/crdt"
+	"github.com/rowjay007/collab-sphere/services/collab-hub/internal/hub"
+)
+
+const (
+	readLimit      = 1 << 20
+	maxOpsPerBatch = 1024
+)
+
+// Handler serves GET /ws/{docID}?client=<nonzero uint64>.
+func Handler(reg *hub.Registry) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		docID := r.PathValue("docID")
+		if docID == "" {
+			http.Error(w, "missing document id", http.StatusBadRequest)
+			return
+		}
+		clientID, err := parseClient(r.URL.Query().Get("client"))
+		if err != nil {
+			http.Error(w, "invalid client", http.StatusBadRequest)
+			return
+		}
+
+		conn, err := websocket.Accept(w, r, nil)
+		if err != nil {
+			return
+		}
+		conn.SetReadLimit(readLimit)
+		defer conn.CloseNow()
+
+		peer := hub.NewPeer(clientID)
+		ctx, cancel := context.WithCancel(r.Context())
+		defer cancel()
+
+		writeDone := make(chan struct{})
+		go func() {
+			writePump(ctx, conn, peer)
+			close(writeDone)
+			cancel()
+		}()
+
+		session, err := reg.Join(ctx, docID, peer)
+		if err != nil {
+			peer.Close()
+			<-writeDone
+			return
+		}
+
+		readPump(ctx, conn, session, peer)
+		session.Leave(context.Background())
+		peer.Close()
+		<-writeDone
+	})
+}
+
+func parseClient(s string) (crdt.ClientID, error) {
+	n, err := strconv.ParseUint(s, 10, 64)
+	if err != nil || n == 0 {
+		return 0, strconv.ErrSyntax
+	}
+	return crdt.ClientID(n), nil
+}
+
+func writePump(ctx context.Context, conn *websocket.Conn, peer *hub.Peer) {
+	for {
+		select {
+		case <-ctx.Done():
+			drainWrites(conn, peer)
+			return
+		case <-peer.Done():
+			drainWrites(conn, peer)
+			return
+		case frame := <-peer.Frames():
+			if err := conn.Write(ctx, websocket.MessageBinary, frame); err != nil {
+				return
+			}
+		}
+	}
+}
+
+func drainWrites(conn *websocket.Conn, peer *hub.Peer) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	for {
+		select {
+		case frame := <-peer.Frames():
+			_ = conn.Write(ctx, websocket.MessageBinary, frame)
+		default:
+			return
+		}
+	}
+}
+
+func readPump(ctx context.Context, conn *websocket.Conn, session *hub.Session, peer *hub.Peer) {
+	for {
+		typ, data, err := conn.Read(ctx)
+		if err != nil {
+			return
+		}
+		if typ != websocket.MessageBinary {
+			_ = conn.Close(websocket.StatusPolicyViolation, "text frames are not allowed")
+			return
+		}
+		msg := &collabv1.ClientMessage{}
+		if err := proto.Unmarshal(data, msg); err != nil {
+			peer.TrySend(hub.EncodeError(collabv1.ErrorMessage_CODE_MALFORMED_MESSAGE, "malformed message"))
+			return
+		}
+		if !handleClientMessage(ctx, session, peer, msg) {
+			return
+		}
+	}
+}
+
+func handleClientMessage(ctx context.Context, session *hub.Session, peer *hub.Peer, msg *collabv1.ClientMessage) bool {
+	switch p := msg.GetPayload().(type) {
+	case *collabv1.ClientMessage_OperationBatch:
+		ops, ok := parseBatch(peer, p.OperationBatch)
+		if !ok {
+			return false
+		}
+		if len(ops) > 0 {
+			session.SubmitOps(ctx, ops)
+		}
+		return true
+	case *collabv1.ClientMessage_CursorMove:
+		session.MoveCursor(ctx, idFromProto(p.CursorMove.GetAnchor()), idFromProto(p.CursorMove.GetHead()))
+		return true
+	case *collabv1.ClientMessage_Ping:
+		if !peer.TrySend(hub.EncodePong(p.Ping.GetNonce())) {
+			return false
+		}
+		return true
+	default:
+		peer.TrySend(hub.EncodeError(collabv1.ErrorMessage_CODE_MALFORMED_MESSAGE, "malformed message"))
+		return false
+	}
+}
+
+func parseBatch(peer *hub.Peer, batch *collabv1.OperationBatch) ([]crdt.Op, bool) {
+	if batch == nil {
+		peer.TrySend(hub.EncodeError(collabv1.ErrorMessage_CODE_MALFORMED_MESSAGE, "malformed message"))
+		return nil, false
+	}
+	raw := batch.GetOperations()
+	if len(raw) > maxOpsPerBatch {
+		peer.TrySend(hub.EncodeError(collabv1.ErrorMessage_CODE_MALFORMED_MESSAGE, "malformed message"))
+		return nil, false
+	}
+	ops := make([]crdt.Op, 0, len(raw))
+	for _, pb := range raw {
+		op, err := crdt.OpFromProto(pb)
+		if err != nil {
+			peer.TrySend(hub.EncodeError(collabv1.ErrorMessage_CODE_MALFORMED_MESSAGE, "malformed message"))
+			return nil, false
+		}
+		ops = append(ops, op)
+	}
+	return ops, true
+}
+
+func idFromProto(id *crdtv1.OpID) crdt.ID {
+	if id == nil {
+		return crdt.Root
+	}
+	return crdt.ID{Client: crdt.ClientID(id.GetClient()), Clock: id.GetClock()}
+}
