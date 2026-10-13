@@ -1,0 +1,16 @@
+Non-race binaries, MacBook, Postgres 17 in Docker, both services and 100 clients on one host.
+Command: COLLAB_TEST_DATABASE_URL=... go test -count=1 -v -run TestHundred ./tests/e2e/
+
+Baseline (docs/perf/baseline.txt): 200 ops/s, p50 6.27s, p99 13.49s.
+
+Group commit + unnest insert, snapshot still inline (5 runs):
+  p99 284ms, 139ms, 47ms, 132ms, 36ms; p50 about 8ms; about 575 ops/s
+  Hub-side Append: p50 4.4ms, p99 about 30ms. Slow appends were the snapshot appends,
+  16ms at 1000 ops rising to 37ms at 4000 ops. Postgres logged no statement over 20ms.
+
+Plus background compaction (8 runs):
+  p50  6.57  6.53  6.15  7.72  5.85  6.30  6.62  6.43 ms
+  p95 14.41 23.59 12.90 17.94 11.35 11.70 13.82 11.74 ms
+  p99 27.32 71.38 25.58 29.94 16.30 17.43 21.30 16.66 ms
+  max 84.61 228.26 56.72 58.52 22.96 28.79 37.26 24.01 ms
+  About 580 ops/s offered and achieved (100 editors, one op every 100-200ms).

@@ -156,9 +156,6 @@ func TestTwoClientsConvergeAndSurviveRestarts(t *testing.T) {
 	if meta.GetOpSeq() != 700 {
 		t.Fatalf("op_seq = %d, want 700", meta.GetOpSeq())
 	}
-	if meta.GetOpSeq()-meta.GetSnapshotSeq() >= 100 || meta.GetSnapshotSeq() == 0 {
-		t.Fatalf("snapshot_seq = %d with op_seq %d breaks the 100-op cadence", meta.GetSnapshotSeq(), meta.GetOpSeq())
-	}
 
 	alice.Close()
 	bob.Close()
@@ -166,6 +163,11 @@ func TestTwoClientsConvergeAndSurviveRestarts(t *testing.T) {
 	s.docsvc.stop()
 	s.startDocumentService()
 	s.startHub()
+
+	_, meta = loadText(t, ctx, s.docs, docID)
+	if meta.GetOpSeq()-meta.GetSnapshotSeq() >= 100 || meta.GetSnapshotSeq() == 0 {
+		t.Fatalf("snapshot_seq = %d with op_seq %d breaks the 100-op cadence", meta.GetSnapshotSeq(), meta.GetOpSeq())
+	}
 
 	carol := s.dial(ctx, docID, 1003)
 	if got := carol.Text(); got != final {

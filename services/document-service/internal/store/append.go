@@ -48,49 +48,92 @@ func (s *Store) Append(ctx context.Context, id uuid.UUID, ops []*crdtv1.Operatio
 	}
 
 	next := doc.OpSeq
+	seqs := make([]int64, 0, len(pending))
+	clients := make([]string, 0, len(pending))
+	clocks := make([]string, 0, len(pending))
+	rawOps := make([][]byte, 0, len(pending))
 	for i := range pending {
 		if pending[i].skip {
 			continue
 		}
 		next++
-		if _, err := tx.Exec(ctx, `
-			INSERT INTO operations (document_id, seq, op_client, op_clock, op)
-			VALUES ($1, $2, $3::numeric, $4::numeric, $5)`,
-			id,
-			int64(next),
-			strconv.FormatUint(pending[i].key.client, 10),
-			strconv.FormatUint(pending[i].key.clock, 10),
-			pending[i].raw,
-		); err != nil {
-			return 0, fmt.Errorf("insert op: %w", err)
-		}
+		seqs = append(seqs, int64(next))
+		clients = append(clients, strconv.FormatUint(pending[i].key.client, 10))
+		clocks = append(clocks, strconv.FormatUint(pending[i].key.clock, 10))
+		rawOps = append(rawOps, pending[i].raw)
 	}
 
 	if next == doc.OpSeq {
 		if err := tx.Commit(ctx); err != nil {
 			return 0, fmt.Errorf("commit append: %w", err)
 		}
+		if doc.OpSeq-doc.SnapshotSeq >= domain.SnapshotEvery {
+			s.triggerCompaction(id, doc.SnapshotSeq)
+		}
 		return doc.OpSeq, nil
 	}
 
-	snapshotSeq := doc.SnapshotSeq
-	if next-doc.SnapshotSeq >= domain.SnapshotEvery {
-		if err := writeSnapshot(ctx, tx, id, doc.SnapshotSeq, next); err != nil {
-			return 0, err
-		}
-		snapshotSeq = next
+	if _, err := tx.Exec(ctx, `
+		INSERT INTO operations (document_id, seq, op_client, op_clock, op)
+		SELECT $1, seq, op_client, op_clock, op
+		FROM unnest($2::bigint[], $3::numeric[], $4::numeric[], $5::bytea[])
+			AS pending(seq, op_client, op_clock, op)`,
+		id, seqs, clients, clocks, rawOps); err != nil {
+		return 0, fmt.Errorf("insert ops: %w", err)
 	}
 
 	if _, err := tx.Exec(ctx, `
 		UPDATE documents
-		SET op_seq = $2, snapshot_seq = $3, updated_at = now()
-		WHERE id = $1`, id, int64(next), int64(snapshotSeq)); err != nil {
+		SET op_seq = $2, updated_at = now()
+		WHERE id = $1`, id, int64(next)); err != nil {
 		return 0, fmt.Errorf("bump seq: %w", err)
 	}
 	if err := tx.Commit(ctx); err != nil {
 		return 0, fmt.Errorf("commit append: %w", err)
 	}
+	if next-doc.SnapshotSeq >= domain.SnapshotEvery {
+		s.triggerCompaction(id, doc.SnapshotSeq)
+	}
 	return next, nil
+}
+
+// Compact holds no lock while it rebuilds: operations and snapshots are
+// immutable once written, so a snapshot at op_seq stays valid however far
+// Append has moved on, and the conditional UPDATE keeps snapshot_seq monotonic.
+func (s *Store) Compact(ctx context.Context, id uuid.UUID) (uint64, error) {
+	var opSeq, snapshotSeq int64
+	if err := s.pool.QueryRow(ctx, `
+		SELECT op_seq, snapshot_seq
+		FROM documents
+		WHERE id = $1`, id).Scan(&opSeq, &snapshotSeq); err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return 0, domain.ErrNotFound
+		}
+		return 0, fmt.Errorf("load compact metadata: %w", err)
+	}
+	if uint64(opSeq-snapshotSeq) < domain.SnapshotEvery {
+		return uint64(snapshotSeq), nil
+	}
+
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
+		return 0, fmt.Errorf("begin compact: %w", err)
+	}
+	defer tx.Rollback(ctx)
+
+	if err := writeSnapshot(ctx, tx, id, uint64(snapshotSeq), uint64(opSeq)); err != nil {
+		return 0, err
+	}
+	if _, err := tx.Exec(ctx, `
+		UPDATE documents
+		SET snapshot_seq = $2
+		WHERE id = $1 AND snapshot_seq < $2`, id, opSeq); err != nil {
+		return 0, fmt.Errorf("advance snapshot seq: %w", err)
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return 0, fmt.Errorf("commit compact: %w", err)
+	}
+	return uint64(opSeq), nil
 }
 
 func (s *Store) LoadState(ctx context.Context, id uuid.UUID) (domain.Document, *crdtv1.Snapshot, []*crdtv1.Operation, error) {
@@ -245,7 +288,7 @@ func writeSnapshot(ctx context.Context, tx pgx.Tx, id uuid.UUID, fromSeq, toSeq 
 	if err != nil {
 		return fmt.Errorf("restore snapshot: %w", err)
 	}
-	ops, err := loadOpsAfter(ctx, tx, id, fromSeq)
+	ops, err := loadOpsRange(ctx, tx, id, fromSeq, toSeq)
 	if err != nil {
 		return err
 	}
@@ -264,10 +307,36 @@ func writeSnapshot(ctx context.Context, tx pgx.Tx, id uuid.UUID, fromSeq, toSeq 
 	}
 	if _, err := tx.Exec(ctx, `
 		INSERT INTO snapshots (document_id, seq, state)
-		VALUES ($1, $2, $3::jsonb)`, id, int64(toSeq), body); err != nil {
+		VALUES ($1, $2, $3::jsonb)
+		ON CONFLICT (document_id, seq) DO NOTHING`, id, int64(toSeq), body); err != nil {
 		return fmt.Errorf("insert snapshot: %w", err)
 	}
 	return nil
+}
+
+func loadOpsRange(ctx context.Context, tx pgx.Tx, id uuid.UUID, after, through uint64) ([]*crdtv1.Operation, error) {
+	rows, err := tx.Query(ctx, `
+		SELECT op FROM operations
+		WHERE document_id = $1 AND seq > $2 AND seq <= $3
+		ORDER BY seq`, id, int64(after), int64(through))
+	if err != nil {
+		return nil, fmt.Errorf("load ops: %w", err)
+	}
+	defer rows.Close()
+
+	var ops []*crdtv1.Operation
+	for rows.Next() {
+		var raw []byte
+		if err := rows.Scan(&raw); err != nil {
+			return nil, fmt.Errorf("scan op: %w", err)
+		}
+		op := &crdtv1.Operation{}
+		if err := proto.Unmarshal(raw, op); err != nil {
+			return nil, fmt.Errorf("unmarshal op: %w", err)
+		}
+		ops = append(ops, op)
+	}
+	return ops, rows.Err()
 }
 
 func loadSnapshot(ctx context.Context, tx pgx.Tx, id uuid.UUID, seq uint64) (*crdtv1.Snapshot, error) {

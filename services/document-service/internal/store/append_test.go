@@ -8,6 +8,7 @@ import (
 
 	"math/rand/v2"
 
+	"github.com/google/uuid"
 	"google.golang.org/protobuf/proto"
 
 	crdtv1 "github.com/rowjay007/collab-sphere/gen/crdt/v1"
@@ -75,7 +76,7 @@ func TestSnapshotCadence(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	var saw100, saw200 bool
+	textAtSeq := make(map[uint64]string, 250)
 	for i := 0; i < 250; i++ {
 		op, err := r.InsertAt(rng.IntN(r.Len()+1), rune('a'+i%26))
 		if err != nil {
@@ -84,32 +85,26 @@ func TestSnapshotCadence(t *testing.T) {
 		if _, err := st.Append(ctx, doc.ID, []*crdtv1.Operation{testdb.ProtoFromInsert(op)}); err != nil {
 			t.Fatalf("append %d: %v", i, err)
 		}
-		got, err := st.Get(ctx, doc.ID)
-		if err != nil {
-			t.Fatal(err)
-		}
-		switch got.OpSeq {
-		case 100:
-			if got.SnapshotSeq != 100 {
-				t.Fatalf("at 100 snapshot_seq=%d", got.SnapshotSeq)
-			}
-			saw100 = true
-		case 200:
-			if got.SnapshotSeq != 200 {
-				t.Fatalf("at 200 snapshot_seq=%d", got.SnapshotSeq)
-			}
-			saw200 = true
-		}
+		textAtSeq[uint64(i+1)] = r.Text()
 	}
+	st.Close()
 	final, err := st.Get(ctx, doc.ID)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !saw100 || !saw200 {
-		t.Fatalf("cadence flags 100=%v 200=%v", saw100, saw200)
-	}
-	if final.OpSeq != 250 || final.SnapshotSeq != 200 {
+	if final.OpSeq != 250 || final.SnapshotSeq == 0 || final.OpSeq-final.SnapshotSeq >= domain.SnapshotEvery {
 		t.Fatalf("final seqs op=%d snap=%d", final.OpSeq, final.SnapshotSeq)
+	}
+	_, snap, _, err := st.LoadState(ctx, doc.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	snapshotDoc, err := crdt.FromSnapshot(snap)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if snapshotDoc.Text() != textAtSeq[final.SnapshotSeq] {
+		t.Fatalf("snapshot text %q vs %q at seq %d", snapshotDoc.Text(), textAtSeq[final.SnapshotSeq], final.SnapshotSeq)
 	}
 
 	batchDoc, err := st.Create(ctx, "batch", "owner")
@@ -131,12 +126,99 @@ func TestSnapshotCadence(t *testing.T) {
 	if _, err := st.Append(ctx, batchDoc.ID, ops); err != nil {
 		t.Fatalf("150-op batch: %v", err)
 	}
+	if _, err := st.Compact(ctx, batchDoc.ID); err != nil {
+		t.Fatalf("compact batch: %v", err)
+	}
 	got, err := st.Get(ctx, batchDoc.ID)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if got.OpSeq != 150 || got.SnapshotSeq != 150 {
 		t.Fatalf("batch seqs op=%d snap=%d", got.OpSeq, got.SnapshotSeq)
+	}
+	_, batchSnap, _, err := st.LoadState(ctx, batchDoc.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	batchSnapshotDoc, err := crdt.FromSnapshot(batchSnap)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if batchSnapshotDoc.Text() != br.Text() {
+		t.Fatalf("batch snapshot text %q vs %q", batchSnapshotDoc.Text(), br.Text())
+	}
+}
+
+func TestCompactIdempotentAndConcurrent(t *testing.T) {
+	st, pool := testdb.Open(t)
+	ctx := t.Context()
+	st.Close()
+
+	appendHundred := func(title string, client crdt.ClientID) domain.Document {
+		t.Helper()
+		doc, err := st.Create(ctx, title, "owner")
+		if err != nil {
+			t.Fatal(err)
+		}
+		r, err := crdt.NewReplica(client, nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		ops := make([]*crdtv1.Operation, 0, domain.SnapshotEvery)
+		for range domain.SnapshotEvery {
+			op, err := r.InsertAt(r.Len(), 'x')
+			if err != nil {
+				t.Fatal(err)
+			}
+			ops = append(ops, testdb.ProtoFromInsert(op))
+		}
+		if _, err := st.Append(ctx, doc.ID, ops); err != nil {
+			t.Fatal(err)
+		}
+		return doc
+	}
+	snapshotCount := func(id uuid.UUID) int {
+		t.Helper()
+		var count int
+		if err := pool.QueryRow(ctx, `SELECT count(*) FROM snapshots WHERE document_id = $1`, id).Scan(&count); err != nil {
+			t.Fatal(err)
+		}
+		return count
+	}
+
+	idempotent := appendHundred("idempotent", 30)
+	first, err := st.Compact(ctx, idempotent.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	second, err := st.Compact(ctx, idempotent.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if first != domain.SnapshotEvery || second != first || snapshotCount(idempotent.ID) != 1 {
+		t.Fatalf("idempotent compact seqs %d, %d rows %d", first, second, snapshotCount(idempotent.ID))
+	}
+
+	concurrent := appendHundred("concurrent", 31)
+	errCh := make(chan error, 2)
+	var wg sync.WaitGroup
+	for range 2 {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			_, err := st.Compact(ctx, concurrent.ID)
+			errCh <- err
+		}()
+	}
+	wg.Wait()
+	close(errCh)
+	for err := range errCh {
+		if err != nil {
+			t.Fatalf("concurrent compact: %v", err)
+		}
+	}
+	if count := snapshotCount(concurrent.ID); count != 1 {
+		t.Fatalf("concurrent snapshot rows %d", count)
 	}
 }
 

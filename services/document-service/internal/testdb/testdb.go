@@ -50,7 +50,9 @@ func Open(t *testing.T) (*store.Store, *pgxpool.Pool) {
 	if err := store.Migrate(ctx, pool); err != nil {
 		t.Fatalf("migrate: %v", err)
 	}
-	return store.New(pool), pool
+	st := store.New(pool)
+	t.Cleanup(st.Close)
+	return st, pool
 }
 
 func randomHex(t *testing.T, n int) string {

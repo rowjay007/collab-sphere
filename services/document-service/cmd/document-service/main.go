@@ -49,7 +49,8 @@ func main() {
 	}
 
 	server := grpc.NewServer()
-	documentv1.RegisterDocumentServiceServer(server, docgrpc.New(store.New(pool)))
+	st := store.New(pool)
+	documentv1.RegisterDocumentServiceServer(server, docgrpc.New(st))
 
 	errCh := make(chan error, 1)
 	go func() {
@@ -59,13 +60,18 @@ func main() {
 
 	stop := make(chan os.Signal, 1)
 	signal.Notify(stop, syscall.SIGINT, syscall.SIGTERM)
+	var serveErr error
 	select {
-	case err := <-errCh:
-		if err != nil {
-			slog.Error("serve", "err", err)
-			os.Exit(1)
+	case serveErr = <-errCh:
+		if serveErr != nil {
+			slog.Error("serve", "err", serveErr)
 		}
 	case <-stop:
-		server.GracefulStop()
+	}
+	server.GracefulStop()
+	st.Close()
+	if serveErr != nil {
+		pool.Close()
+		os.Exit(1)
 	}
 }

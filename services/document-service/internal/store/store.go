@@ -4,6 +4,9 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log/slog"
+	"sync"
+	"time"
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
@@ -14,10 +17,76 @@ import (
 
 type Store struct {
 	pool *pgxpool.Pool
+
+	compactionMu sync.Mutex
+	compacting   map[uuid.UUID]bool
+	closed       bool
+	compactionWG sync.WaitGroup
 }
 
 func New(pool *pgxpool.Pool) *Store {
-	return &Store{pool: pool}
+	return &Store{
+		pool:       pool,
+		compacting: make(map[uuid.UUID]bool),
+	}
+}
+
+const compactionTimeout = 30 * time.Second
+
+func (s *Store) Close() {
+	s.compactionMu.Lock()
+	s.closed = true
+	s.compactionMu.Unlock()
+	s.compactionWG.Wait()
+}
+
+func (s *Store) triggerCompaction(id uuid.UUID, snapshotSeq uint64) {
+	s.compactionMu.Lock()
+	defer s.compactionMu.Unlock()
+	if s.closed {
+		return
+	}
+	if _, ok := s.compacting[id]; ok {
+		s.compacting[id] = true
+		return
+	}
+	s.compacting[id] = false
+	s.compactionWG.Add(1)
+	go s.compactInBackground(id, snapshotSeq)
+}
+
+func (s *Store) compactInBackground(id uuid.UUID, snapshotSeq uint64) {
+	defer s.compactionWG.Done()
+	for {
+		ctx, cancel := context.WithTimeout(context.Background(), compactionTimeout)
+		next, err := s.Compact(ctx, id)
+		cancel()
+		if err != nil {
+			slog.Warn("compact document", "document_id", id, "err", err)
+			s.finishCompaction(id)
+			return
+		}
+		if next != snapshotSeq {
+			snapshotSeq = next
+			continue
+		}
+
+		s.compactionMu.Lock()
+		if s.compacting[id] {
+			s.compacting[id] = false
+			s.compactionMu.Unlock()
+			continue
+		}
+		delete(s.compacting, id)
+		s.compactionMu.Unlock()
+		return
+	}
+}
+
+func (s *Store) finishCompaction(id uuid.UUID) {
+	s.compactionMu.Lock()
+	delete(s.compacting, id)
+	s.compactionMu.Unlock()
 }
 
 const documentColumns = `id, title, owner_id, status, op_seq, snapshot_seq, created_at, updated_at`

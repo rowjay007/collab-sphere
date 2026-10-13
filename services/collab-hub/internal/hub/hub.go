@@ -11,7 +11,10 @@ import (
 	"github.com/rowjay007/collab-sphere/pkg/crdt"
 )
 
-const appendTimeout = 5 * time.Second
+const (
+	appendTimeout  = 5 * time.Second
+	maxOpsPerGroup = 4096
+)
 
 var (
 	// ErrDuplicateClient is returned when that ClientID is already on the document.
@@ -97,7 +100,14 @@ func (h *Hub) loop() {
 		h.doc = doc
 	}
 
-	for ev := range h.events {
+	var pending event
+	for {
+		var ev event
+		if pending != nil {
+			ev, pending = pending, nil
+		} else {
+			ev = <-h.events
+		}
 		switch ev := ev.(type) {
 		case stopEvent:
 			h.shutdown()
@@ -107,7 +117,9 @@ func (h *Hub) loop() {
 		case leaveEvent:
 			h.handleLeave(ev)
 		case opsEvent:
-			if h.handleOps(ev) {
+			var failed bool
+			pending, failed = h.handleOpsGroup(ev)
+			if failed {
 				h.shutdown()
 				return
 			}
@@ -198,13 +210,35 @@ func (h *Hub) handleLeave(ev leaveEvent) {
 	close(ev.reply)
 }
 
-func (h *Hub) handleOps(ev opsEvent) bool {
+func (h *Hub) handleOpsGroup(first opsEvent) (event, bool) {
+	accepted := h.applyOps(first)
+	opCount := len(first.ops)
+	for opCount < maxOpsPerGroup {
+		select {
+		case next := <-h.events:
+			ev, ok := next.(opsEvent)
+			if !ok {
+				return next, h.persistAndBroadcast(accepted)
+			}
+			if len(ev.ops) > maxOpsPerGroup-opCount {
+				return ev, h.persistAndBroadcast(accepted)
+			}
+			opCount += len(ev.ops)
+			accepted = append(accepted, h.applyOps(ev)...)
+		default:
+			return nil, h.persistAndBroadcast(accepted)
+		}
+	}
+	return nil, h.persistAndBroadcast(accepted)
+}
+
+func (h *Hub) applyOps(ev opsEvent) []crdt.Op {
 	if h.dead {
-		return false
+		return nil
 	}
 	p, ok := h.peers[ev.id]
 	if !ok {
-		return false
+		return nil
 	}
 	accepted := make([]crdt.Op, 0, len(ev.ops))
 	for _, op := range ev.ops {
@@ -226,6 +260,10 @@ func (h *Hub) handleOps(ev opsEvent) bool {
 		}
 		accepted = append(accepted, op)
 	}
+	return accepted
+}
+
+func (h *Hub) persistAndBroadcast(accepted []crdt.Op) bool {
 	if len(accepted) == 0 {
 		return false
 	}
