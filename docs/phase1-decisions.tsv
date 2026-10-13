@@ -1,0 +1,11 @@
+ts	phase	decision	why	evidence	result
+2026-10-13T17:18:07Z	frame	scoped this run to Phase 1 of the brief only	the brief says begin with Phase 1 and later phases depend on the CRDT core	project-07-collabsphere.md lines 213-217	scope fixed
+2026-10-13T17:18:07Z	frame	defined done as go test -race green plus live convergence of real WebSocket clients over real Postgres	a passing unit suite alone would not prove the services work together	Makefile test-integration target	open
+2026-10-13T17:18:07Z	frame	chose high rigor for the CRDT and its wire format	the ID ordering and snapshot format are hard to change once data is stored	n/a	rigor set
+2026-10-13T17:18:07Z	harness	ran Postgres 17 in docker compose on port 55432 for integration tests	tests must hit a real database, not a mock	docker-compose.yml	container healthy
+2026-10-13T17:18:07Z	design	asked two other models to sketch the design independently before coding	the RGA layout and GC rule are one-way doors worth designing twice	agent store docs/architect/	open
+2026-10-13T17:22:57Z	design	switched the RGA from a linked list to a parent-pointer tree with ID-sorted children	the tree's text is fixed by the set of nodes, so replicas converge even with bad clocks; the list needed valid Lamport clocks to converge	agent store docs/architect/runner-grok.md section 2	adopted
+2026-10-13T17:22:57Z	design	kept Lamport clocks over Grok's gapless per-client counters	with per-client counters a new insert can sort after older siblings and appear in the wrong place	runner-grok.md section 4 vs runner-mine.md	kept
+2026-10-13T17:22:57Z	design	kept GC to tombstones with no children whose insert and delete are covered by the stable vector	both sketches showed that moving a tombstone's children to its parent reorders text	runner-grok.md section 6 counterexample	agreed
+2026-10-13T17:22:57Z	design	made the op log idempotent with a unique key on each op ID	a retried append must not double count toward the 100-op snapshot cadence	runner-grok.md section 5	adopted
+2026-10-13T17:22:57Z	design	kept JSONB snapshots as the brief mandates despite Grok preferring bytea	the brief names JSONB explicitly; size cost goes to the user as an open decision	project-07-collabsphere.md line 155	open decision

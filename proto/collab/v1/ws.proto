@@ -1,0 +1,81 @@
+syntax = "proto3";
+
+package collab.v1;
+
+import "crdt/v1/snapshot.proto";
+
+option go_package = "github.com/rowjay007/collab-sphere/gen/collab/v1;collabv1";
+
+message ClientMessage {
+  reserved 3;
+  reserved "awareness_update";
+  oneof payload {
+    OperationBatch operation_batch = 1;
+    CursorMove cursor_move = 2;
+    Ping ping = 4;
+  }
+}
+
+message ServerMessage {
+  reserved 4;
+  reserved "missed_ops";
+  oneof payload {
+    OperationBroadcast operation_broadcast = 1;
+    PresenceBroadcast presence_broadcast = 2;
+    DocumentSync document_sync = 3;
+    ErrorMessage error = 5;
+    Pong pong = 6;
+  }
+}
+
+message OperationBatch {
+  repeated crdt.v1.Operation operations = 1;
+}
+
+// CursorMove positions are CRDT IDs: the cursor sits immediately after the
+// character with ID anchor (the root ID means the start of the document).
+// head is the other end of the selection and equals anchor when collapsed.
+message CursorMove {
+  crdt.v1.OpID anchor = 1;
+  crdt.v1.OpID head = 2;
+}
+
+message Ping {
+  uint64 nonce = 1;
+}
+
+message Pong {
+  uint64 nonce = 1;
+}
+
+message OperationBroadcast {
+  repeated crdt.v1.Operation operations = 1;
+}
+
+message PresenceLeft {}
+
+message PresenceBroadcast {
+  uint64 client = 1;
+  oneof state {
+    CursorMove cursor = 2;
+    PresenceLeft left = 3;
+  }
+}
+
+message DocumentSync {
+  string document_id = 1;
+  crdt.v1.Snapshot snapshot = 2;
+}
+
+message ErrorMessage {
+  enum Code {
+    CODE_UNSPECIFIED = 0;
+    CODE_MALFORMED_MESSAGE = 1;
+    CODE_INVALID_OPERATION = 2;
+    CODE_CLIENT_MISMATCH = 3;
+    CODE_MISSING_DEPENDENCY = 4;
+    CODE_INTERNAL = 5;
+  }
+  Code code = 1;
+  string message = 2;
+}

@@ -1,0 +1,66 @@
+syntax = "proto3";
+
+package document.v1;
+
+import "crdt/v1/snapshot.proto";
+import "google/protobuf/timestamp.proto";
+
+option go_package = "github.com/rowjay007/collab-sphere/gen/document/v1;documentv1";
+
+service DocumentService {
+  rpc CreateDocument(CreateDocumentRequest) returns (Document);
+  rpc GetDocument(GetDocumentRequest) returns (Document);
+  rpc ArchiveDocument(ArchiveDocumentRequest) returns (Document);
+  // LoadState returns the latest snapshot plus every operation appended
+  // after it. Applying the operations to the snapshot yields the current state.
+  rpc LoadState(LoadStateRequest) returns (LoadStateResponse);
+  rpc AppendOperations(AppendOperationsRequest) returns (AppendOperationsResponse);
+}
+
+message Document {
+  enum Status {
+    STATUS_UNSPECIFIED = 0;
+    STATUS_ACTIVE = 1;
+    STATUS_ARCHIVED = 2;
+  }
+  string id = 1;
+  string title = 2;
+  string owner_id = 3;
+  Status status = 4;
+  uint64 op_seq = 5;
+  uint64 snapshot_seq = 6;
+  google.protobuf.Timestamp created_at = 7;
+  google.protobuf.Timestamp updated_at = 8;
+}
+
+message CreateDocumentRequest {
+  string title = 1;
+  string owner_id = 2;
+}
+
+message GetDocumentRequest {
+  string id = 1;
+}
+
+message ArchiveDocumentRequest {
+  string id = 1;
+}
+
+message LoadStateRequest {
+  string id = 1;
+}
+
+message LoadStateResponse {
+  Document document = 1;
+  crdt.v1.Snapshot snapshot = 2;
+  repeated crdt.v1.Operation operations = 3;
+}
+
+message AppendOperationsRequest {
+  string id = 1;
+  repeated crdt.v1.Operation operations = 2;
+}
+
+message AppendOperationsResponse {
+  uint64 op_seq = 1;
+}
