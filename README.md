@@ -12,7 +12,10 @@ Real-time collaborative text editing in Go. This repository holds Phase 1: a CRD
 | `services/collab-hub` | WebSocket server with one goroutine per open document |
 | `proto/` | Protobuf definitions for the CRDT snapshot, the WebSocket protocol, and the gRPC API |
 | `gen/` | Generated Go code for `proto/`, committed |
-| `tests/e2e` | Starts both binaries against a fresh database and drives real clients |
+| `tests/crdt` | Merge correctness over the exported CRDT API, in every arrival order |
+| `tests/load` | 100 concurrent editors and the Append latency probe |
+| `tests/e2e` | Two clients converge and survive service restarts |
+| `tests/internal/stack` | Builds both binaries once per test process and starts them on a fresh database |
 | `docs/adr` | Architecture decisions |
 | `docs/perf` | Load-test measurements |
 
@@ -47,10 +50,10 @@ Create a document with the `CreateDocument` RPC, then connect clients to `/ws/{i
 
 ```sh
 make test               # unit tests with -race; database tests skip
-make test-integration   # starts PostgreSQL and runs everything, including tests/e2e
+make test-integration   # starts PostgreSQL and runs everything, including tests/e2e and tests/load
 ```
 
-The end-to-end suite builds both binaries, runs them as subprocesses on a database created for each test, and checks these things:
+`tests/internal/stack` builds both binaries and starts them as subprocesses on a database created for each test. `tests/e2e` and `tests/load` use it for these checks:
 
 - Two clients making 700 concurrent edits converge to identical CRDT state, and document-service holds the same state.
 - Both services restart and a new client receives the same text.
@@ -60,7 +63,7 @@ To reproduce the load numbers without the race detector:
 
 ```sh
 COLLAB_TEST_DATABASE_URL='postgres://collab:collab@localhost:55432/collab?sslmode=disable' \
-  go test -count=1 -v -run 'TestHundred|TestAppendLatency' ./tests/e2e/
+  go test -count=1 -v -run 'TestHundred|TestAppendLatency' ./tests/load/
 ```
 
 ## Performance

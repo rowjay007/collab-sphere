@@ -1,4 +1,4 @@
-package e2e
+package stack
 
 import (
 	"bytes"
@@ -11,6 +11,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"sync"
 	"syscall"
 	"testing"
@@ -34,6 +35,14 @@ var (
 	buildErr  error
 )
 
+func repoRoot() string {
+	_, file, _, ok := runtime.Caller(0)
+	if !ok {
+		return "."
+	}
+	return filepath.Clean(filepath.Join(filepath.Dir(file), "..", "..", ".."))
+}
+
 func binaries(t *testing.T) (docsvc, hub string) {
 	t.Helper()
 	buildOnce.Do(func() {
@@ -41,13 +50,14 @@ func binaries(t *testing.T) (docsvc, hub string) {
 		if buildErr != nil {
 			return
 		}
+		root := repoRoot()
 		for name, pkg := range map[string]string{
 			"document-service": "./services/document-service/cmd/document-service",
 			"collab-hub":       "./services/collab-hub/cmd/collab-hub",
 		} {
 			args := append(append([]string{"build"}, buildFlags...), "-o", filepath.Join(binDir, name), pkg)
 			cmd := exec.Command("go", args...)
-			cmd.Dir = filepath.Join("..", "..")
+			cmd.Dir = root
 			if out, err := cmd.CombinedOutput(); err != nil {
 				buildErr = fmt.Errorf("build %s: %v\n%s", name, err, out)
 				return
@@ -162,37 +172,37 @@ func (p *process) stop() {
 	}
 }
 
-type stack struct {
+type Stack struct {
 	t       *testing.T
 	dbURL   string
 	grpc    string
 	http    string
 	docsvc  *process
 	hub     *process
-	docs    documentv1.DocumentServiceClient
+	Docs    documentv1.DocumentServiceClient
 	hubBase string
 }
 
-func newStack(t *testing.T) *stack {
+func New(t *testing.T) *Stack {
 	t.Helper()
-	s := &stack{t: t, dbURL: freshDatabase(t), grpc: freeAddr(t), http: freeAddr(t)}
+	s := &Stack{t: t, dbURL: freshDatabase(t), grpc: freeAddr(t), http: freeAddr(t)}
 	s.hubBase = "ws://" + s.http
 	conn, err := grpc.NewClient(s.grpc, grpc.WithTransportCredentials(insecure.NewCredentials()))
 	if err != nil {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { conn.Close() })
-	s.docs = documentv1.NewDocumentServiceClient(conn)
-	s.startDocumentService()
-	s.startHub()
+	s.Docs = documentv1.NewDocumentServiceClient(conn)
+	s.StartDocumentService()
+	s.StartHub()
 	return s
 }
 
-func (s *stack) startDocumentService() {
+func (s *Stack) StartDocumentService() {
 	docsvc, _ := binaries(s.t)
 	s.docsvc = start(s.t, "document-service", docsvc, "DATABASE_URL="+s.dbURL, "GRPC_ADDR="+s.grpc)
 	waitFor(s.t, "document-service", func(ctx context.Context) error {
-		_, err := s.docs.GetDocument(ctx, &documentv1.GetDocumentRequest{Id: uuid.NewString()})
+		_, err := s.Docs.GetDocument(ctx, &documentv1.GetDocumentRequest{Id: uuid.NewString()})
 		if status.Code(err) == codes.NotFound {
 			return nil
 		}
@@ -200,7 +210,7 @@ func (s *stack) startDocumentService() {
 	})
 }
 
-func (s *stack) startHub() {
+func (s *Stack) StartHub() {
 	_, hub := binaries(s.t)
 	s.hub = start(s.t, "collab-hub", hub, "HTTP_ADDR="+s.http, "DOCUMENT_SERVICE_ADDR="+s.grpc)
 	waitFor(s.t, "collab-hub", func(ctx context.Context) error {
@@ -217,16 +227,24 @@ func (s *stack) startHub() {
 	})
 }
 
-func (s *stack) createDocument(ctx context.Context) string {
+func (s *Stack) StopDocumentService() {
+	s.docsvc.stop()
+}
+
+func (s *Stack) StopHub() {
+	s.hub.stop()
+}
+
+func (s *Stack) CreateDocument(ctx context.Context) string {
 	s.t.Helper()
-	doc, err := s.docs.CreateDocument(ctx, &documentv1.CreateDocumentRequest{Title: s.t.Name(), OwnerId: "e2e"})
+	doc, err := s.Docs.CreateDocument(ctx, &documentv1.CreateDocumentRequest{Title: s.t.Name(), OwnerId: "e2e"})
 	if err != nil {
 		s.t.Fatal(err)
 	}
 	return doc.GetId()
 }
 
-func (s *stack) dial(ctx context.Context, docID string, client crdt.ClientID) *collabclient.Client {
+func (s *Stack) Dial(ctx context.Context, docID string, client crdt.ClientID) *collabclient.Client {
 	s.t.Helper()
 	c, err := collabclient.Dial(ctx, s.hubBase, docID, client)
 	if err != nil {

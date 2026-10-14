@@ -1,4 +1,4 @@
-package e2e
+package load
 
 import (
 	"context"
@@ -9,6 +9,7 @@ import (
 	crdtv1 "github.com/rowjay007/collab-sphere/gen/crdt/v1"
 	documentv1 "github.com/rowjay007/collab-sphere/gen/document/v1"
 	"github.com/rowjay007/collab-sphere/pkg/crdt"
+	"github.com/rowjay007/collab-sphere/tests/internal/stack"
 )
 
 // TestAppendLatency measures document-service AppendOperations on its own,
@@ -17,9 +18,9 @@ func TestAppendLatency(t *testing.T) {
 	if testing.Short() {
 		t.Skip("probe")
 	}
-	s := newStack(t)
+	s := stack.New(t)
 	ctx := context.Background()
-	docID := s.createDocument(ctx)
+	docID := s.CreateDocument(ctx)
 	r, _ := crdt.NewReplica(1, nil)
 
 	var took []time.Duration
@@ -29,7 +30,7 @@ func TestAppendLatency(t *testing.T) {
 			t.Fatal(err)
 		}
 		start := time.Now()
-		_, err = s.docs.AppendOperations(ctx, &documentv1.AppendOperationsRequest{
+		_, err = s.Docs.AppendOperations(ctx, &documentv1.AppendOperationsRequest{
 			Id: docID, Operations: []*crdtv1.Operation{crdt.OpToProto(op)},
 		})
 		took = append(took, time.Since(start))

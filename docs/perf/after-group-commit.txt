@@ -1,5 +1,5 @@
 Non-race binaries, MacBook, Postgres 17 in Docker, both services and 100 clients on one host.
-Command: COLLAB_TEST_DATABASE_URL=... go test -count=1 -v -run TestHundred ./tests/e2e/
+Command: COLLAB_TEST_DATABASE_URL=... go test -count=1 -v -run TestHundred ./tests/load/
 
 Baseline (docs/perf/baseline.txt): 200 ops/s, p50 6.27s, p99 13.49s.
 
