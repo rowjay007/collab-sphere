@@ -16,7 +16,7 @@ Tombstones never go away on their own. A document that is edited for months fill
 
 Removing a node can leave its parent eligible, so GC repeats up the tree. It never moves children to a new parent. Here is why. Say root has children A (clock 2) and T (clock 1), and T has a child B (clock 5). The text reads "AB". Moving B up to root sorts it before A, and the text becomes "BA".
 
-`stable` must be a version-vector prefix that every replica has fully received, under per-client FIFO delivery. GC refuses a `stable` that its own vector does not cover. After GC, the doc remembers `stable` in a `collected` vector. An op that `collected` covers but the doc no longer holds is a late duplicate, and `Apply` reports it as one.
+`stable` must be at most the pointwise minimum of version vectors reported by every replica. Each report must travel on the same FIFO channel as that replica's operations. Receiving a report then proves that every operation the replica sent before the report has arrived. GC refuses a `stable` that its own vector does not cover. After GC, the doc remembers `stable` in a `collected` vector. An op that `collected` covers but the doc no longer holds is a late duplicate, and `Apply` reports it as one.
 
 ## Why it is safe
 
@@ -24,4 +24,4 @@ Each replica that has seen `stable` has a Lamport clock above every ID in it. So
 
 ## Consequences
 
-The hard part is computing `stable`. It needs the set of every replica, including offline ones that may come back after 24 hours, and each one's acknowledged vector. Guessing it from connected sockets would be unsafe. Phase 1 therefore ships GC in the library with tests and calls it from no service. The Phase 5 GC pipeline adds replica membership and acknowledgements and then calls it.
+The hard part is computing `stable`. It needs the set of every replica, including offline ones that may come back after 24 hours, and each one's FIFO-ordered vector report. Guessing it from connected sockets would be unsafe. No Phase 1 service calls GC. The Phase 5 GC pipeline adds replica membership and reports and then calls it.

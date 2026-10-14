@@ -14,3 +14,12 @@ Plus background compaction (8 runs):
   p99 27.32 71.38 25.58 29.94 16.30 17.43 21.30 16.66 ms
   max 84.61 228.26 56.72 58.52 22.96 28.79 37.26 24.01 ms
   About 580 ops/s offered and achieved (100 editors, one op every 100-200ms).
+
+Review fixes, 20,000-rune seed, fan-out latency (send to receipt by the last of the other 99 clients):
+  Random-index editors: fan-out p99 105, 107, 108ms. Test-process profile: 54% CPU in crdt.(*Doc).IDAt.
+  Cursor typists (InsertAfter/Delete by ID), 5 runs: fan-out p99 95, 105, 37, 104, 761ms; p50 8-47ms.
+  Snapshots disabled (SnapshotEvery = 1,000,000), 3 runs: fan-out p99 206, 111, 23ms.
+  Hub-side Append probe, 3 runs: p50 3.7-5.1ms, p99 20-24ms, max 35-110ms; fan-out p99 122, 35, 47ms.
+  synchronous_commit = off, 4 runs: fan-out p99 29, 168, 96, 133ms.
+  Neither snapshots nor fsync explain the tail. It varies run to run with host load.
+  The brief proves P99 < 50ms in Phase 5 on production-like hardware.

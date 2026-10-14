@@ -4,6 +4,7 @@ import (
 	"context"
 	"net/http"
 	"strconv"
+	"time"
 
 	"github.com/coder/websocket"
 	"google.golang.org/protobuf/proto"
@@ -15,8 +16,11 @@ import (
 )
 
 const (
-	readLimit      = 1 << 20
-	maxOpsPerBatch = 1024
+	readLimit         = 1 << 20
+	maxOpsPerBatch    = 1024
+	writeTimeout      = 10 * time.Second
+	drainTimeout      = 100 * time.Millisecond
+	keepaliveInterval = 30 * time.Second
 )
 
 // Handler serves GET /ws/{docID}?client=<nonzero uint64>.
@@ -74,6 +78,8 @@ func parseClient(s string) (crdt.ClientID, error) {
 }
 
 func writePump(ctx context.Context, conn *websocket.Conn, peer *hub.Peer) {
+	ticker := time.NewTicker(keepaliveInterval)
+	defer ticker.Stop()
 	for {
 		select {
 		case <-ctx.Done():
@@ -81,9 +87,19 @@ func writePump(ctx context.Context, conn *websocket.Conn, peer *hub.Peer) {
 			return
 		case <-peer.Done():
 			drainWrites(conn, peer)
+			_ = conn.Close(websocket.StatusPolicyViolation, "dropped: "+peer.DropReason())
 			return
 		case frame := <-peer.Frames():
-			if err := conn.Write(ctx, websocket.MessageBinary, frame); err != nil {
+			if err := writeFrame(ctx, conn, frame); err != nil {
+				_ = conn.CloseNow()
+				return
+			}
+		case <-ticker.C:
+			pingCtx, cancel := context.WithTimeout(ctx, writeTimeout)
+			err := conn.Ping(pingCtx)
+			cancel()
+			if err != nil {
+				_ = conn.CloseNow()
 				return
 			}
 		}
@@ -91,16 +107,24 @@ func writePump(ctx context.Context, conn *websocket.Conn, peer *hub.Peer) {
 }
 
 func drainWrites(conn *websocket.Conn, peer *hub.Peer) {
-	ctx, cancel := context.WithCancel(context.Background())
+	ctx, cancel := context.WithTimeout(context.Background(), drainTimeout)
 	defer cancel()
 	for {
 		select {
 		case frame := <-peer.Frames():
-			_ = conn.Write(ctx, websocket.MessageBinary, frame)
+			if writeFrame(ctx, conn, frame) != nil {
+				return
+			}
 		default:
 			return
 		}
 	}
+}
+
+func writeFrame(ctx context.Context, conn *websocket.Conn, frame []byte) error {
+	writeCtx, cancel := context.WithTimeout(ctx, writeTimeout)
+	defer cancel()
+	return conn.Write(writeCtx, websocket.MessageBinary, frame)
 }
 
 func readPump(ctx context.Context, conn *websocket.Conn, session *hub.Session, peer *hub.Peer) {

@@ -2,6 +2,7 @@ package crdt
 
 import (
 	"fmt"
+	"math"
 	"sort"
 	"strings"
 	"unicode/utf8"
@@ -107,6 +108,9 @@ func validateInsert(op Insert) error {
 	if op.ID.Client == 0 || op.ID.Clock == 0 {
 		return fmt.Errorf("%w: zero insert ID", ErrInvalidOp)
 	}
+	if op.ID.Clock == math.MaxUint64 {
+		return fmt.Errorf("%w: insert clock is exhausted", ErrInvalidOp)
+	}
 	if op.Parent.Client == 0 && op.Parent.Clock != 0 {
 		return fmt.Errorf("%w: malformed parent", ErrInvalidOp)
 	}
@@ -158,8 +162,8 @@ func (d *Doc) integrate(first Insert) {
 }
 
 func (d *Doc) applyDelete(op Delete) (Status, error) {
-	if op.ID.Client == 0 || op.ID.Clock == 0 || op.Target.IsRoot() || op.Target.Client == 0 {
-		return 0, fmt.Errorf("%w: malformed delete", ErrInvalidOp)
+	if err := validateDelete(op); err != nil {
+		return 0, err
 	}
 	if existing, ok := d.deletes[op.ID]; ok {
 		if existing == op {
@@ -183,10 +187,23 @@ func (d *Doc) applyDelete(op Delete) (Status, error) {
 		target.deletedBy = insertIDAscending(target.deletedBy, op.ID)
 		return Applied, nil
 	}
+	if d.collected.Covers(op.Target) {
+		return Applied, nil
+	}
 
 	d.pendingDeletes[op.ID] = op
 	d.waitingDeletes[op.Target] = append(d.waitingDeletes[op.Target], op.ID)
 	return Pending, nil
+}
+
+func validateDelete(op Delete) error {
+	if op.ID.Client == 0 || op.ID.Clock == 0 || op.Target.IsRoot() || op.Target.Client == 0 {
+		return fmt.Errorf("%w: malformed delete", ErrInvalidOp)
+	}
+	if op.ID.Clock == math.MaxUint64 {
+		return fmt.Errorf("%w: delete clock is exhausted", ErrInvalidOp)
+	}
+	return nil
 }
 
 func (d *Doc) observe(id ID) {
@@ -209,9 +226,9 @@ func (d *Doc) Ready(op Op) bool {
 	case *Insert:
 		return op != nil && d.Has(op.Parent)
 	case Delete:
-		return d.Has(op.Target)
+		return d.Has(op.Target) || d.collected.Covers(op.Target)
 	case *Delete:
-		return op != nil && d.Has(op.Target)
+		return op != nil && (d.Has(op.Target) || d.collected.Covers(op.Target))
 	default:
 		return false
 	}
@@ -401,6 +418,13 @@ func NewReplica(client ClientID, doc *Doc) (*Replica, error) {
 // Client returns the replica's client ID.
 func (r *Replica) Client() ClientID { return r.client }
 
+func (r *Replica) nextID() (ID, error) {
+	if r.Clock() >= math.MaxUint64-1 {
+		return ID{}, fmt.Errorf("%w: replica clock is exhausted", ErrInvalidOp)
+	}
+	return ID{Clock: r.Clock() + 1, Client: r.client}, nil
+}
+
 // InsertAt inserts one rune at a visible index.
 func (r *Replica) InsertAt(index int, value rune) (Insert, error) {
 	if r == nil || r.Doc == nil || index < 0 || index > r.Len() {
@@ -414,7 +438,23 @@ func (r *Replica) InsertAt(index int, value rune) (Insert, error) {
 			return Insert{}, err
 		}
 	}
-	op := Insert{ID: ID{Clock: r.Clock() + 1, Client: r.client}, Parent: parent, Value: value}
+	return r.InsertAfter(parent, value)
+}
+
+// InsertAfter inserts one rune directly after parent, which is Root or an
+// integrated node. Editors that track cursors as IDs avoid the O(n) index walk.
+func (r *Replica) InsertAfter(parent ID, value rune) (Insert, error) {
+	if r == nil || r.Doc == nil {
+		return Insert{}, ErrIndex
+	}
+	if !r.Has(parent) {
+		return Insert{}, fmt.Errorf("%w: parent %s is not integrated", ErrInvalidOp, parent)
+	}
+	id, err := r.nextID()
+	if err != nil {
+		return Insert{}, err
+	}
+	op := Insert{ID: id, Parent: parent, Value: value}
 	if _, err := r.Apply(op); err != nil {
 		return Insert{}, err
 	}
@@ -436,7 +476,11 @@ func (r *Replica) InsertText(index int, text string) ([]Insert, error) {
 	}
 	ops := make([]Insert, 0, utf8.RuneCountInString(text))
 	for _, value := range text {
-		op := Insert{ID: ID{Clock: r.Clock() + 1, Client: r.client}, Parent: parent, Value: value}
+		id, err := r.nextID()
+		if err != nil {
+			return ops, err
+		}
+		op := Insert{ID: id, Parent: parent, Value: value}
 		if _, err := r.Apply(op); err != nil {
 			return ops, err
 		}
@@ -455,7 +499,22 @@ func (r *Replica) DeleteAt(index int) (Delete, error) {
 	if err != nil {
 		return Delete{}, err
 	}
-	op := Delete{ID: ID{Clock: r.Clock() + 1, Client: r.client}, Target: target}
+	return r.Delete(target)
+}
+
+// Delete tombstones target, which must be an integrated node.
+func (r *Replica) Delete(target ID) (Delete, error) {
+	if r == nil || r.Doc == nil {
+		return Delete{}, ErrIndex
+	}
+	if target.IsRoot() || !r.Has(target) {
+		return Delete{}, fmt.Errorf("%w: target %s is not integrated", ErrInvalidOp, target)
+	}
+	id, err := r.nextID()
+	if err != nil {
+		return Delete{}, err
+	}
+	op := Delete{ID: id, Target: target}
 	if _, err := r.Apply(op); err != nil {
 		return Delete{}, err
 	}

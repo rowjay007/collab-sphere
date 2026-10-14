@@ -3,6 +3,7 @@ package crdt
 import (
 	"errors"
 	"fmt"
+	"math"
 	"math/rand/v2"
 	"slices"
 	"testing"
@@ -282,6 +283,96 @@ func TestConflictsAndInvalidOperations(t *testing.T) {
 	if _, err := doc.Apply(Insert{ID: ID{Clock: 0, Client: 1}, Value: 'a'}); !errors.Is(err, ErrInvalidOp) {
 		t.Fatal(err)
 	}
+}
+
+func TestReplicaEditsByID(t *testing.T) {
+	r, err := NewReplica(1, New())
+	if err != nil {
+		t.Fatal(err)
+	}
+	cursor := Root
+	for _, v := range "helo" {
+		op, err := r.InsertAfter(cursor, v)
+		if err != nil {
+			t.Fatal(err)
+		}
+		cursor = op.ID
+	}
+	l, err := r.IDAt(2)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := r.InsertAfter(l, 'l'); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := r.Delete(cursor); err != nil {
+		t.Fatal(err)
+	}
+	if got := r.Text(); got != "hell" {
+		t.Fatalf("text = %q, want %q", got, "hell")
+	}
+
+	missing := ID{Clock: 99, Client: 2}
+	if _, err := r.InsertAfter(missing, 'x'); !errors.Is(err, ErrInvalidOp) {
+		t.Fatalf("InsertAfter missing parent: %v", err)
+	}
+	if _, err := r.Delete(missing); !errors.Is(err, ErrInvalidOp) {
+		t.Fatalf("Delete missing target: %v", err)
+	}
+	if _, err := r.Delete(Root); !errors.Is(err, ErrInvalidOp) {
+		t.Fatalf("Delete root: %v", err)
+	}
+	if n := len(r.Snapshot().GetPending()); n != 0 {
+		t.Fatalf("%d ops left pending", n)
+	}
+}
+
+func TestRejectsMaximumClock(t *testing.T) {
+	doc := New()
+	insert := Insert{ID: ID{Clock: math.MaxUint64, Client: 1}, Parent: Root, Value: 'x'}
+	if _, err := doc.Apply(insert); !errors.Is(err, ErrInvalidOp) {
+		t.Fatalf("maximum-clock insert: %v", err)
+	}
+
+	deleteOp := Delete{
+		ID:     ID{Clock: math.MaxUint64, Client: 2},
+		Target: ID{Clock: 1, Client: 1},
+	}
+	if _, err := doc.Apply(deleteOp); !errors.Is(err, ErrInvalidOp) {
+		t.Fatalf("maximum-clock delete: %v", err)
+	}
+}
+
+func TestReplicaClockExhaustion(t *testing.T) {
+	newReplica := func(t *testing.T) *Replica {
+		t.Helper()
+		doc := New()
+		op := Insert{ID: ID{Clock: math.MaxUint64 - 1, Client: 9}, Parent: Root, Value: 'x'}
+		if _, err := doc.Apply(op); err != nil {
+			t.Fatal(err)
+		}
+		replica, err := NewReplica(1, doc)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return replica
+	}
+
+	t.Run("insert", func(t *testing.T) {
+		if _, err := newReplica(t).InsertAt(1, 'y'); !errors.Is(err, ErrInvalidOp) {
+			t.Fatalf("InsertAt: %v", err)
+		}
+	})
+	t.Run("insert text", func(t *testing.T) {
+		if _, err := newReplica(t).InsertText(1, "y"); !errors.Is(err, ErrInvalidOp) {
+			t.Fatalf("InsertText: %v", err)
+		}
+	})
+	t.Run("delete", func(t *testing.T) {
+		if _, err := newReplica(t).DeleteAt(0); !errors.Is(err, ErrInvalidOp) {
+			t.Fatalf("DeleteAt: %v", err)
+		}
+	})
 }
 
 func TestDeepChainUsesIterativeTraversal(t *testing.T) {

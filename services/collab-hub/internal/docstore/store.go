@@ -7,6 +7,7 @@ import (
 	crdtv1 "github.com/rowjay007/collab-sphere/gen/crdt/v1"
 	documentv1 "github.com/rowjay007/collab-sphere/gen/document/v1"
 	"github.com/rowjay007/collab-sphere/pkg/crdt"
+	"github.com/rowjay007/collab-sphere/services/collab-hub/internal/hub"
 )
 
 // Store loads and appends document state through DocumentService.
@@ -24,6 +25,9 @@ func (s *Store) Load(ctx context.Context, docID string) (*crdt.Doc, error) {
 	resp, err := s.client.LoadState(ctx, &documentv1.LoadStateRequest{Id: docID})
 	if err != nil {
 		return nil, err
+	}
+	if resp.GetDocument().GetStatus() == documentv1.Document_STATUS_ARCHIVED {
+		return nil, hub.ErrArchived
 	}
 	var doc *crdt.Doc
 	if resp.GetSnapshot() == nil {

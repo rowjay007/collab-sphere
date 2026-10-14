@@ -13,6 +13,7 @@ import (
 
 const (
 	appendTimeout  = 5 * time.Second
+	loadTimeout    = 10 * time.Second
 	maxOpsPerGroup = 4096
 )
 
@@ -33,7 +34,7 @@ type joinEvent struct {
 func (joinEvent) isEvent() {}
 
 type leaveEvent struct {
-	id    crdt.ClientID
+	peer  *Peer
 	reply chan struct{}
 }
 
@@ -93,7 +94,9 @@ func newHub(docID string, store Store, registry *Registry) *Hub {
 }
 
 func (h *Hub) loop() {
-	doc, err := h.store.Load(context.Background(), h.docID)
+	ctx, cancel := context.WithTimeout(context.Background(), loadTimeout)
+	doc, err := h.store.Load(ctx, h.docID)
+	cancel()
 	if err != nil {
 		h.loadErr = err
 	} else {
@@ -137,7 +140,7 @@ func (h *Hub) shutdown() {
 	h.closeStopped()
 	h.dead = true
 	for _, p := range h.peers {
-		p.Close()
+		p.CloseWithReason("hub stopped")
 	}
 	h.peers = nil
 	h.cursors = nil
@@ -166,7 +169,11 @@ func (h *Hub) handleJoin(ev joinEvent) {
 		return
 	}
 	if h.loadErr != nil {
-		ev.peer.TrySend(EncodeError(collabv1.ErrorMessage_CODE_INTERNAL, "failed to load document"))
+		message := "failed to load document"
+		if errors.Is(h.loadErr, ErrArchived) {
+			message = "document archived"
+		}
+		ev.peer.TrySend(EncodeError(collabv1.ErrorMessage_CODE_INTERNAL, message))
 		ev.reply <- h.loadErr
 		return
 	}
@@ -206,7 +213,7 @@ func (h *Hub) handleJoin(ev joinEvent) {
 }
 
 func (h *Hub) handleLeave(ev leaveEvent) {
-	h.drop(ev.id, true)
+	h.dropPeer(ev.peer, true)
 	close(ev.reply)
 }
 
@@ -243,16 +250,22 @@ func (h *Hub) applyOps(ev opsEvent) []crdt.Op {
 	accepted := make([]crdt.Op, 0, len(ev.ops))
 	for _, op := range ev.ops {
 		if op.OpID().Client != ev.id {
-			p.TrySend(EncodeError(collabv1.ErrorMessage_CODE_CLIENT_MISMATCH, "operation client does not match connection"))
+			h.rejectOperation(p, collabv1.ErrorMessage_CODE_CLIENT_MISMATCH, "operation client does not match connection")
+			break
+		}
+		clock := op.OpID().Clock
+		docClock := h.doc.Clock()
+		if clock > docClock && clock-docClock > 1 {
+			h.rejectOperation(p, collabv1.ErrorMessage_CODE_INVALID_OPERATION, "operation clock exceeds document frontier")
 			break
 		}
 		if !h.doc.Ready(op) {
-			p.TrySend(EncodeError(collabv1.ErrorMessage_CODE_MISSING_DEPENDENCY, "missing dependency"))
+			h.rejectOperation(p, collabv1.ErrorMessage_CODE_MISSING_DEPENDENCY, "missing dependency")
 			break
 		}
 		status, err := h.doc.Apply(op)
 		if err != nil {
-			p.TrySend(EncodeError(collabv1.ErrorMessage_CODE_INVALID_OPERATION, "invalid operation"))
+			h.rejectOperation(p, collabv1.ErrorMessage_CODE_INVALID_OPERATION, "invalid operation")
 			break
 		}
 		if status == crdt.Duplicate {
@@ -261,6 +274,12 @@ func (h *Hub) applyOps(ev opsEvent) []crdt.Op {
 		accepted = append(accepted, op)
 	}
 	return accepted
+}
+
+func (h *Hub) rejectOperation(p *Peer, code collabv1.ErrorMessage_Code, message string) {
+	p.TrySend(EncodeError(code, message))
+	p.CloseWithReason("rejected operation")
+	h.dropPeer(p, true)
 }
 
 func (h *Hub) persistAndBroadcast(accepted []crdt.Op) bool {
@@ -314,7 +333,7 @@ func (h *Hub) failStop() {
 	frame := EncodeError(collabv1.ErrorMessage_CODE_INTERNAL, "internal error")
 	for _, p := range h.peers {
 		p.TrySend(frame)
-		p.Close()
+		p.CloseWithReason("persistence failure")
 	}
 	h.peers = nil
 	h.cursors = nil
@@ -327,9 +346,17 @@ func (h *Hub) drop(id crdt.ClientID, announce bool) {
 	if !ok {
 		return
 	}
+	h.dropPeer(p, announce)
+}
+
+func (h *Hub) dropPeer(p *Peer, announce bool) {
+	id := p.id
+	if h.peers[id] != p {
+		return
+	}
 	delete(h.peers, id)
 	delete(h.cursors, id)
-	p.Close()
+	p.CloseWithReason("session ended")
 	if announce && !h.dead {
 		frame := mustMarshal(&collabv1.ServerMessage{
 			Payload: &collabv1.ServerMessage_PresenceBroadcast{PresenceBroadcast: &collabv1.PresenceBroadcast{
@@ -345,22 +372,24 @@ func (h *Hub) sendOrDrop(p *Peer, frame []byte) bool {
 	if p.TrySend(frame) {
 		return true
 	}
+	p.CloseWithReason("slow consumer")
 	h.drop(p.id, true)
 	return false
 }
 
 func (h *Hub) broadcast(frame []byte, except crdt.ClientID, includeExcept bool) {
-	var dead []crdt.ClientID
+	var dead []*Peer
 	for id, p := range h.peers {
 		if !includeExcept && id == except {
 			continue
 		}
 		if !p.TrySend(frame) {
-			dead = append(dead, id)
+			p.CloseWithReason("slow consumer")
+			dead = append(dead, p)
 		}
 	}
-	for _, id := range dead {
-		h.drop(id, true)
+	for _, p := range dead {
+		h.dropPeer(p, true)
 	}
 }
 

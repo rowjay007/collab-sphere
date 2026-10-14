@@ -28,6 +28,8 @@ type Client struct {
 	changed   chan struct{}
 	replica   *crdt.Replica
 	sentAt    map[crdt.ID]time.Time
+	sentTimes map[crdt.ID]time.Time
+	received  map[crdt.ID]time.Time
 	latencies []time.Duration
 	errs      []*collabv1.ErrorMessage
 	readErr   error
@@ -79,14 +81,16 @@ func Dial(ctx context.Context, baseURL, docID string, client crdt.ClientID) (*Cl
 
 	runCtx, cancel := context.WithCancel(context.Background())
 	c := &Client{
-		conn:    conn,
-		out:     make(chan []byte, 1024),
-		changed: make(chan struct{}),
-		replica: replica,
-		sentAt:  make(map[crdt.ID]time.Time),
-		ctx:     runCtx,
-		cancel:  cancel,
-		done:    make(chan struct{}),
+		conn:      conn,
+		out:       make(chan []byte, 1024),
+		changed:   make(chan struct{}),
+		replica:   replica,
+		sentAt:    make(map[crdt.ID]time.Time),
+		sentTimes: make(map[crdt.ID]time.Time),
+		received:  make(map[crdt.ID]time.Time),
+		ctx:       runCtx,
+		cancel:    cancel,
+		done:      make(chan struct{}),
 	}
 	go c.readLoop(runCtx)
 	go c.writeLoop(runCtx)
@@ -110,6 +114,7 @@ func (c *Client) Edit(fn func(r *crdt.Replica) ([]crdt.Op, error)) error {
 	for i, op := range ops {
 		batch.Operations[i] = crdt.OpToProto(op)
 		c.sentAt[op.OpID()] = now
+		c.sentTimes[op.OpID()] = now
 	}
 	frame, err := proto.Marshal(&collabv1.ClientMessage{
 		Payload: &collabv1.ClientMessage_OperationBatch{OperationBatch: batch},
@@ -182,6 +187,26 @@ func (c *Client) Latencies() []time.Duration {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	return append([]time.Duration(nil), c.latencies...)
+}
+
+func (c *Client) SendTimes() map[crdt.ID]time.Time {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	times := make(map[crdt.ID]time.Time, len(c.sentTimes))
+	for id, at := range c.sentTimes {
+		times[id] = at
+	}
+	return times
+}
+
+func (c *Client) ReceiveTimes() map[crdt.ID]time.Time {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	times := make(map[crdt.ID]time.Time, len(c.received))
+	for id, at := range c.received {
+		times[id] = at
+	}
+	return times
 }
 
 func (c *Client) Errors() []*collabv1.ErrorMessage {
@@ -257,6 +282,9 @@ func (c *Client) handle(msg *collabv1.ServerMessage) error {
 			}
 			if _, err := c.replica.Apply(op); err != nil {
 				return err
+			}
+			if op.OpID().Client != c.replica.Client() {
+				c.received[op.OpID()] = now
 			}
 			if at, ok := c.sentAt[op.OpID()]; ok {
 				c.latencies = append(c.latencies, now.Sub(at))

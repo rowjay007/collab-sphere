@@ -2,11 +2,14 @@ package hub
 
 import (
 	"context"
+	"errors"
 	"sync"
 	"sync/atomic"
 
 	"github.com/rowjay007/collab-sphere/pkg/crdt"
 )
+
+var ErrArchived = errors.New("document archived")
 
 // Store is the consumer-side persistence seam for a document hub.
 type Store interface {

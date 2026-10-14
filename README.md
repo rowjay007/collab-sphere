@@ -65,11 +65,18 @@ COLLAB_TEST_DATABASE_URL='postgres://collab:collab@localhost:55432/collab?sslmod
 
 ## Performance
 
-With 100 editors on one laptop, op round trip from send to echo has a P50 of about 6.5ms. P99 is 16 to 30ms in 7 of 8 runs. The eighth run reached 71ms because of a single 228ms stall. The target is P99 under 50ms. `docs/perf/after-group-commit.txt` has the raw runs and the path from the 13.5s baseline.
+The 100-editor test starts from a 20,000-rune document. It reports sender echo latency and full fan-out latency. Full fan-out ends when the last of the other 99 clients receives an op. The target is full fan-out P99 under 50ms. The test logs the measurements but does not assert the target because shared laptop load is noisy.
+
+Editors type at a cursor held as a CRDT ID, using `Replica.InsertAfter` and `Replica.Delete`. Index-based edits call `IDAt`, which walks the document. On a 20,000-rune document, that walk took more than half of the test process's CPU.
+
+On one laptop running Postgres in Docker, both services and 100 full replicas, fan-out P50 is 7 to 11ms. Fan-out P99 ranges from 23ms to over 200ms between runs. The hub's Append call has a P50 of about 4.5ms and a P99 of about 20ms. Disabling snapshots or `synchronous_commit` does not remove the tail. `docs/perf/after-group-commit.txt` has the runs. Proving the target needs the load generator on separate hardware from the services.
 
 ## Phase 1 limits
 
 - No authentication. Clients choose their own client ID, and the hub only rejects a second live connection with the same ID on one document.
 - One hub process. There is no Redis fan-out and no cross-instance routing yet.
+- A rejected operation disconnects its sender. The client must reconnect and replace local state from `DocumentSync`.
+- The server pings each WebSocket every 30 seconds. Failed keepalives and slow consumers release their client IDs.
+- Archived documents refuse collaboration joins.
 - `crdt.Doc.GC` exists and is tested, but no service calls it. Tombstones accumulate.
 - Snapshots are protojson in JSONB, as the brief asks. ADR 0004 covers the `bytea` alternative.

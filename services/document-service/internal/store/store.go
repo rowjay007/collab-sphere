@@ -21,6 +21,7 @@ type Store struct {
 	compactionMu sync.Mutex
 	compacting   map[uuid.UUID]bool
 	closed       bool
+	closeCh      chan struct{}
 	compactionWG sync.WaitGroup
 }
 
@@ -28,14 +29,24 @@ func New(pool *pgxpool.Pool) *Store {
 	return &Store{
 		pool:       pool,
 		compacting: make(map[uuid.UUID]bool),
+		closeCh:    make(chan struct{}),
 	}
 }
 
 const compactionTimeout = 30 * time.Second
 
+var compactionRetryDelays = [...]time.Duration{
+	100 * time.Millisecond,
+	400 * time.Millisecond,
+	1600 * time.Millisecond,
+}
+
 func (s *Store) Close() {
 	s.compactionMu.Lock()
-	s.closed = true
+	if !s.closed {
+		s.closed = true
+		close(s.closeCh)
+	}
 	s.compactionMu.Unlock()
 	s.compactionWG.Wait()
 }
@@ -58,16 +69,26 @@ func (s *Store) triggerCompaction(id uuid.UUID, snapshotSeq uint64) {
 func (s *Store) compactInBackground(id uuid.UUID, snapshotSeq uint64) {
 	defer s.compactionWG.Done()
 	for {
-		ctx, cancel := context.WithTimeout(context.Background(), compactionTimeout)
-		next, err := s.Compact(ctx, id)
-		cancel()
+		next, err := retryCompaction(s.closeCh, func() (uint64, error) {
+			ctx, cancel := context.WithTimeout(context.Background(), compactionTimeout)
+			defer cancel()
+			return s.Compact(ctx, id)
+		})
 		if err != nil {
-			slog.Warn("compact document", "document_id", id, "err", err)
+			if !errors.Is(err, context.Canceled) {
+				slog.Warn("compact document", "document_id", id, "err", err)
+			}
 			s.finishCompaction(id)
 			return
 		}
 		if next != snapshotSeq {
 			snapshotSeq = next
+			select {
+			case <-s.closeCh:
+				s.finishCompaction(id)
+				return
+			default:
+			}
 			continue
 		}
 
@@ -81,6 +102,29 @@ func (s *Store) compactInBackground(id uuid.UUID, snapshotSeq uint64) {
 		s.compactionMu.Unlock()
 		return
 	}
+}
+
+func retryCompaction(closeCh <-chan struct{}, compact func() (uint64, error)) (uint64, error) {
+	next, err := compact()
+	if err == nil {
+		return next, nil
+	}
+	for _, delay := range compactionRetryDelays {
+		timer := time.NewTimer(delay)
+		select {
+		case <-closeCh:
+			if !timer.Stop() {
+				<-timer.C
+			}
+			return 0, context.Canceled
+		case <-timer.C:
+		}
+		next, err = compact()
+		if err == nil {
+			return next, nil
+		}
+	}
+	return next, err
 }
 
 func (s *Store) finishCompaction(id uuid.UUID) {

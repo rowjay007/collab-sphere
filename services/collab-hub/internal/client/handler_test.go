@@ -3,6 +3,9 @@ package client
 import (
 	"context"
 	"errors"
+	"net/http"
+	"net/http/httptest"
+	"net/url"
 	"sync"
 	"testing"
 	"time"
@@ -15,7 +18,57 @@ import (
 	collabv1 "github.com/rowjay007/collab-sphere/gen/collab/v1"
 	crdtv1 "github.com/rowjay007/collab-sphere/gen/crdt/v1"
 	"github.com/rowjay007/collab-sphere/pkg/crdt"
+	"github.com/rowjay007/collab-sphere/services/collab-hub/internal/hub"
 )
+
+func TestDroppedPeerClosesWebSocket(t *testing.T) {
+	peer := hub.NewPeer(1)
+	accepted := make(chan struct{})
+	startWrite := make(chan struct{})
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		conn, err := websocket.Accept(w, r, nil)
+		if err != nil {
+			return
+		}
+		defer conn.CloseNow()
+		close(accepted)
+		<-startWrite
+		go writePump(r.Context(), conn, peer)
+		_, _, _ = conn.Read(r.Context())
+	}))
+	t.Cleanup(srv.Close)
+
+	u, err := url.Parse(srv.URL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	u.Scheme = "ws"
+	conn, _, err := websocket.Dial(t.Context(), u.String(), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = conn.CloseNow() })
+	<-accepted
+
+	frame := make([]byte, 1024)
+	for peer.TrySend(frame) {
+	}
+	peer.Close()
+	close(startWrite)
+
+	ctx, cancel := context.WithTimeout(t.Context(), 2*time.Second)
+	defer cancel()
+	for {
+		_, _, err = conn.Read(ctx)
+		if err == nil {
+			continue
+		}
+		if websocket.CloseStatus(err) != websocket.StatusPolicyViolation {
+			t.Fatalf("close status = %v, error = %v", websocket.CloseStatus(err), err)
+		}
+		break
+	}
+}
 
 func TestConvergence(t *testing.T) {
 	srv, store := startHub(t)
@@ -129,6 +182,19 @@ func TestLateJoinerSync(t *testing.T) {
 
 func TestProtocolErrors(t *testing.T) {
 	srv, _ := startHub(t)
+	seed := dial(t, srv, "doc", 2)
+	if _, err := seed.insertAt(0, 's'); err != nil {
+		t.Fatal(err)
+	}
+	seedCtx, seedCancel := context.WithTimeout(t.Context(), 5*time.Second)
+	defer seedCancel()
+	if err := seed.waitEchoed(seedCtx); err != nil {
+		t.Fatal(err)
+	}
+	if err := seed.Close(); err != nil {
+		t.Fatal(err)
+	}
+
 	a := dial(t, srv, "doc", 1)
 	ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
 	defer cancel()
@@ -139,27 +205,40 @@ func TestProtocolErrors(t *testing.T) {
 	if err := a.waitError(ctx, collabv1.ErrorMessage_CODE_CLIENT_MISMATCH); err != nil {
 		t.Fatalf("CLIENT_MISMATCH: %v", err)
 	}
+	if err := a.waitUntil(ctx, func(tc *testClient) bool { return tc.readErr != nil }); err != nil {
+		t.Fatalf("CLIENT_MISMATCH close: %v", err)
+	}
 
-	if err := a.sendRawOps([]crdt.Op{crdt.Insert{ID: crdt.ID{Client: 1, Clock: 5}, Parent: crdt.ID{Client: 99, Clock: 4}, Value: 'x'}}); err != nil {
+	a = dial(t, srv, "doc", 1)
+	if err := a.sendRawOps([]crdt.Op{crdt.Insert{ID: crdt.ID{Client: 1, Clock: 2}, Parent: crdt.ID{Client: 99, Clock: 1}, Value: 'x'}}); err != nil {
 		t.Fatal(err)
 	}
 	if err := a.waitError(ctx, collabv1.ErrorMessage_CODE_MISSING_DEPENDENCY); err != nil {
 		t.Fatalf("MISSING_DEPENDENCY: %v", err)
 	}
+	if err := a.waitUntil(ctx, func(tc *testClient) bool { return tc.readErr != nil }); err != nil {
+		t.Fatalf("MISSING_DEPENDENCY close: %v", err)
+	}
 
-	if _, err := a.insertAt(0, 'a'); err != nil {
+	a = dial(t, srv, "doc", 1)
+	inserted, err := a.insertAt(0, 'a')
+	if err != nil {
 		t.Fatal(err)
 	}
 	if err := a.waitEchoed(ctx); err != nil {
 		t.Fatal(err)
 	}
-	if err := a.sendRawOps([]crdt.Op{crdt.Insert{ID: crdt.ID{Client: 1, Clock: 1}, Parent: crdt.Root, Value: 'z'}}); err != nil {
+	if err := a.sendRawOps([]crdt.Op{crdt.Insert{ID: inserted.ID, Parent: inserted.Parent, Value: 'z'}}); err != nil {
 		t.Fatal(err)
 	}
 	if err := a.waitError(ctx, collabv1.ErrorMessage_CODE_INVALID_OPERATION); err != nil {
 		t.Fatalf("INVALID_OPERATION conflict: %v", err)
 	}
+	if err := a.waitUntil(ctx, func(tc *testClient) bool { return tc.readErr != nil }); err != nil {
+		t.Fatalf("INVALID_OPERATION close: %v", err)
+	}
 
+	a = dial(t, srv, "doc", 1)
 	if err := a.sendCursor(crdt.ID{Client: 99, Clock: 1}, crdt.ID{Client: 99, Clock: 1}); err != nil {
 		t.Fatal(err)
 	}
@@ -167,7 +246,7 @@ func TestProtocolErrors(t *testing.T) {
 		t.Fatalf("INVALID_OPERATION cursor: %v", err)
 	}
 
-	_, err := dialErr(ctx, srv, "doc", 1)
+	_, err = dialErr(ctx, srv, "doc", 1)
 	var je *joinError
 	if !errors.As(err, &je) || je.err.GetCode() != collabv1.ErrorMessage_CODE_CLIENT_MISMATCH {
 		t.Fatalf("duplicate client: %v", err)

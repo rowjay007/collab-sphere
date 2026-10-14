@@ -2,8 +2,10 @@ package crdt
 
 import "fmt"
 
-// GC removes stable leaf tombstones. Stable must be a prefix every replica has
-// fully received under per-client FIFO delivery.
+// GC removes stable leaf tombstones. Stable must not exceed the pointwise
+// minimum of vectors reported by every replica. Each report must follow that
+// replica's operations on the same FIFO channel, so all earlier operations
+// have arrived before the report.
 func (d *Doc) GC(stable VersionVector) (int, error) {
 	if d == nil {
 		return 0, fmt.Errorf("%w: nil document", ErrInvalidOp)

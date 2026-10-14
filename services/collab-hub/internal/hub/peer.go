@@ -10,10 +10,12 @@ const sendBuf = 256
 
 // Peer is one connected client. Only the write pump reads Frames.
 type Peer struct {
-	id   crdt.ClientID
-	out  chan []byte
-	done chan struct{}
-	once sync.Once
+	id       crdt.ClientID
+	out      chan []byte
+	done     chan struct{}
+	once     sync.Once
+	reasonMu sync.Mutex
+	reason   string
 }
 
 // NewPeer constructs a peer with a bounded send buffer.
@@ -36,7 +38,22 @@ func (p *Peer) Done() <-chan struct{} { return p.done }
 
 // Close marks the peer dead. It is idempotent.
 func (p *Peer) Close() {
-	p.once.Do(func() { close(p.done) })
+	p.CloseWithReason("dropped")
+}
+
+func (p *Peer) CloseWithReason(reason string) {
+	p.once.Do(func() {
+		p.reasonMu.Lock()
+		p.reason = reason
+		p.reasonMu.Unlock()
+		close(p.done)
+	})
+}
+
+func (p *Peer) DropReason() string {
+	p.reasonMu.Lock()
+	defer p.reasonMu.Unlock()
+	return p.reason
 }
 
 // TrySend enqueues a frame. It returns false if the buffer is full or the peer is dead.

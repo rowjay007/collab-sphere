@@ -348,7 +348,7 @@ func loadSnapshot(ctx context.Context, tx pgx.Tx, id uuid.UUID, seq uint64) (*cr
 		SELECT state FROM snapshots WHERE document_id = $1 AND seq = $2`, id, int64(seq)).Scan(&raw)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
-			return crdt.New().Snapshot(), nil
+			return nil, fmt.Errorf("load snapshot at seq %d: invariant violation, row missing: %w", seq, err)
 		}
 		return nil, fmt.Errorf("load snapshot: %w", err)
 	}

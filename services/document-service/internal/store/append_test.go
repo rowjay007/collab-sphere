@@ -222,6 +222,65 @@ func TestCompactIdempotentAndConcurrent(t *testing.T) {
 	}
 }
 
+func TestMissingSnapshotFailsLoadAndCompaction(t *testing.T) {
+	st, pool := testdb.Open(t)
+	ctx := t.Context()
+	doc, err := st.Create(ctx, "missing snapshot", "owner")
+	if err != nil {
+		t.Fatal(err)
+	}
+	replica, err := crdt.NewReplica(40, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	appendOps := func(count int) {
+		t.Helper()
+		ops := make([]*crdtv1.Operation, 0, count)
+		for range count {
+			op, err := replica.InsertAt(replica.Len(), 'x')
+			if err != nil {
+				t.Fatal(err)
+			}
+			ops = append(ops, testdb.ProtoFromInsert(op))
+		}
+		if _, err := st.Append(ctx, doc.ID, ops); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	appendOps(int(domain.SnapshotEvery))
+	st.Close()
+	compacted, err := st.Get(ctx, doc.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if compacted.SnapshotSeq == 0 {
+		t.Fatal("background compaction did not write a snapshot")
+	}
+
+	appendOps(int(domain.SnapshotEvery))
+	if _, err := pool.Exec(ctx, `
+		DELETE FROM snapshots
+		WHERE document_id = $1 AND seq = $2`, doc.ID, int64(compacted.SnapshotSeq)); err != nil {
+		t.Fatal(err)
+	}
+
+	if _, _, _, err := st.LoadState(ctx, doc.ID); err == nil {
+		t.Fatal("LoadState succeeded without its snapshot")
+	}
+	if _, err := st.Compact(ctx, doc.ID); err == nil {
+		t.Fatal("Compact succeeded without its base snapshot")
+	}
+	var count int
+	if err := pool.QueryRow(ctx, `
+		SELECT count(*) FROM snapshots WHERE document_id = $1`, doc.ID).Scan(&count); err != nil {
+		t.Fatal(err)
+	}
+	if count != 0 {
+		t.Fatalf("snapshot rows=%d", count)
+	}
+}
+
 func TestRestoreEquivalence(t *testing.T) {
 	st, _ := testdb.Open(t)
 	ctx := t.Context()

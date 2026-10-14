@@ -2,6 +2,7 @@ package hub
 
 import (
 	"context"
+	"math"
 	"sync"
 	"testing"
 	"time"
@@ -10,6 +11,79 @@ import (
 	"github.com/rowjay007/collab-sphere/pkg/crdt"
 	"google.golang.org/protobuf/proto"
 )
+
+func TestRejectedOperationDropsPeerAfterPersistingPrefix(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+	store := NewMemoryStore()
+	reg := NewRegistry(store)
+	t.Cleanup(reg.Close)
+	peer := NewPeer(1)
+	session, err := reg.Join(ctx, "doc", peer)
+	if err != nil {
+		t.Fatal(err)
+	}
+	readServerMessage(t, ctx, peer)
+
+	session.SubmitOps(ctx, []crdt.Op{
+		crdt.Insert{ID: crdt.ID{Client: 1, Clock: 1}, Parent: crdt.Root, Value: 'a'},
+		crdt.Insert{ID: crdt.ID{Client: 2, Clock: 2}, Parent: crdt.Root, Value: 'x'},
+	})
+	msg := readServerMessage(t, ctx, peer)
+	if msg.GetError().GetCode() != collabv1.ErrorMessage_CODE_CLIENT_MISMATCH {
+		t.Fatalf("error code = %s", msg.GetError().GetCode())
+	}
+	select {
+	case <-peer.Done():
+	case <-ctx.Done():
+		t.Fatal("peer remained connected after rejected operation")
+	}
+	waitForStoredText(t, ctx, store, "doc", "a")
+}
+
+func TestOperationClockBeyondHubFrontierIsRejected(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+	store := NewMemoryStore()
+	reg := NewRegistry(store)
+	t.Cleanup(reg.Close)
+	peer := NewPeer(1)
+	session, err := reg.Join(ctx, "doc", peer)
+	if err != nil {
+		t.Fatal(err)
+	}
+	readServerMessage(t, ctx, peer)
+
+	session.SubmitOps(ctx, []crdt.Op{
+		crdt.Insert{ID: crdt.ID{Client: 1, Clock: math.MaxUint64}, Parent: crdt.Root, Value: 'x'},
+	})
+	msg := readServerMessage(t, ctx, peer)
+	if msg.GetError().GetCode() != collabv1.ErrorMessage_CODE_INVALID_OPERATION {
+		t.Fatalf("error code = %s", msg.GetError().GetCode())
+	}
+	select {
+	case <-peer.Done():
+	case <-ctx.Done():
+		t.Fatal("peer remained connected after invalid clock")
+	}
+	if doc := store.Doc("doc"); doc != nil && doc.Text() != "" {
+		t.Fatalf("stored text = %q", doc.Text())
+	}
+}
+
+func waitForStoredText(t *testing.T, ctx context.Context, store *MemoryStore, docID, want string) {
+	t.Helper()
+	for {
+		if doc := store.Doc(docID); doc != nil && doc.Text() == want {
+			return
+		}
+		select {
+		case <-ctx.Done():
+			t.Fatalf("stored text did not become %q", want)
+		case <-time.After(time.Millisecond):
+		}
+	}
+}
 
 type blockingAppendStore struct {
 	Store
@@ -97,8 +171,8 @@ func TestHubGroupsQueuedClientBatches(t *testing.T) {
 	close(store.releaseFirst)
 
 	for i, peer := range peers {
-		var initialBroadcasts, groupedBroadcasts, errors int
-		for range 3 {
+		var initialBroadcasts, errors int
+		for initialBroadcasts == 0 || errors == 0 {
 			msg := readServerMessage(t, ctx, peer)
 			switch {
 			case msg.GetError() != nil:
@@ -107,20 +181,23 @@ func TestHubGroupsQueuedClientBatches(t *testing.T) {
 				}
 				errors++
 			case msg.GetOperationBroadcast() != nil:
-				switch len(msg.GetOperationBroadcast().GetOperations()) {
-				case 1:
+				if len(msg.GetOperationBroadcast().GetOperations()) == 1 {
 					initialBroadcasts++
-				case clients:
-					groupedBroadcasts++
-				default:
+				} else {
 					t.Fatalf("client %d broadcast has %d ops", i+1, len(msg.GetOperationBroadcast().GetOperations()))
 				}
+			case msg.GetPresenceBroadcast() != nil:
 			default:
 				t.Fatalf("client %d unexpected message %T", i+1, msg.GetPayload())
 			}
 		}
-		if initialBroadcasts != 1 || groupedBroadcasts != 1 || errors != 1 {
-			t.Fatalf("client %d got initial=%d grouped=%d errors=%d", i+1, initialBroadcasts, groupedBroadcasts, errors)
+		if initialBroadcasts != 1 || errors != 1 {
+			t.Fatalf("client %d got initial=%d errors=%d", i+1, initialBroadcasts, errors)
+		}
+		select {
+		case <-peer.Done():
+		default:
+			t.Fatalf("client %d was not dropped", i+1)
 		}
 	}
 

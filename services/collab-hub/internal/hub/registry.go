@@ -2,6 +2,7 @@ package hub
 
 import (
 	"context"
+	"errors"
 	"sync"
 
 	"github.com/rowjay007/collab-sphere/pkg/crdt"
@@ -25,9 +26,9 @@ func NewRegistry(store Store) *Registry {
 // Session is one client's attachment to the hub it joined. Every later
 // message goes to that hub, even if the registry has since replaced it.
 type Session struct {
-	reg *Registry
-	hub *Hub
-	id  crdt.ClientID
+	reg  *Registry
+	hub  *Hub
+	peer *Peer
 }
 
 // Join attaches peer to docID. The caller must Leave the returned session on disconnect.
@@ -47,30 +48,36 @@ func (r *Registry) Join(ctx context.Context, docID string, peer *Peer) (*Session
 			waitErr = err
 		}
 		if waitErr != nil {
+			if errors.Is(waitErr, context.Canceled) || errors.Is(waitErr, context.DeadlineExceeded) {
+				reply := make(chan struct{})
+				if h.send(context.Background(), leaveEvent{peer: peer, reply: reply}) == nil {
+					_, _ = waitReply(context.Background(), h, reply)
+				}
+			}
 			r.release(h)
 			if waitErr == ErrStopped {
 				continue
 			}
 			return nil, waitErr
 		}
-		return &Session{reg: r, hub: h, id: peer.id}, nil
+		return &Session{reg: r, hub: h, peer: peer}, nil
 	}
 }
 
 // SubmitOps delivers an already-parsed operation batch to the session's hub.
 func (s *Session) SubmitOps(ctx context.Context, ops []crdt.Op) {
-	_ = s.hub.send(ctx, opsEvent{id: s.id, ops: ops})
+	_ = s.hub.send(ctx, opsEvent{id: s.peer.id, ops: ops})
 }
 
 // MoveCursor delivers a cursor update to the session's hub.
 func (s *Session) MoveCursor(ctx context.Context, anchor, head crdt.ID) {
-	_ = s.hub.send(ctx, cursorEvent{id: s.id, anchor: anchor, head: head})
+	_ = s.hub.send(ctx, cursorEvent{id: s.peer.id, anchor: anchor, head: head})
 }
 
 // Leave detaches the client and stops the hub when it is empty.
 func (s *Session) Leave(ctx context.Context) {
 	reply := make(chan struct{})
-	if err := s.hub.send(ctx, leaveEvent{id: s.id, reply: reply}); err == nil {
+	if err := s.hub.send(ctx, leaveEvent{peer: s.peer, reply: reply}); err == nil {
 		_, _ = waitReply(ctx, s.hub, reply)
 	}
 	s.reg.release(s.hub)

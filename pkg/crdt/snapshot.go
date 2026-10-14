@@ -101,8 +101,9 @@ func FromSnapshot(snapshot *crdtv1.Snapshot) (*Doc, error) {
 				return nil, fmt.Errorf("%w: nil delete ID", ErrInvalidOp)
 			}
 			deleteID := idFromProto(pbDeleteID)
-			if deleteID.Client == 0 || deleteID.Clock == 0 {
-				return nil, fmt.Errorf("%w: zero delete ID", ErrInvalidOp)
+			deleteOp := Delete{ID: deleteID, Target: id}
+			if err := validateDelete(deleteOp); err != nil {
+				return nil, err
 			}
 			if i > 0 && !previousDelete.Less(deleteID) {
 				return nil, fmt.Errorf("%w: delete IDs are not ascending", ErrInvalidOp)
@@ -112,7 +113,7 @@ func FromSnapshot(snapshot *crdtv1.Snapshot) (*Doc, error) {
 			}
 			seen[deleteID] = struct{}{}
 			n.deletedBy = append(n.deletedBy, deleteID)
-			d.deletes[deleteID] = Delete{ID: deleteID, Target: id}
+			d.deletes[deleteID] = deleteOp
 			previousDelete = deleteID
 		}
 		d.nodes[id] = n
@@ -244,10 +245,11 @@ func OpFromProto(pbOp *crdtv1.Operation) (Op, error) {
 			return nil, fmt.Errorf("%w: missing delete", ErrInvalidOp)
 		}
 		target := idFromProto(kind.Delete.Target)
-		if target.IsRoot() || target.Client == 0 {
-			return nil, fmt.Errorf("%w: malformed delete target", ErrInvalidOp)
+		op := Delete{ID: id, Target: target}
+		if err := validateDelete(op); err != nil {
+			return nil, err
 		}
-		return Delete{ID: id, Target: target}, nil
+		return op, nil
 	default:
 		return nil, fmt.Errorf("%w: missing operation kind", ErrInvalidOp)
 	}
