@@ -29,6 +29,7 @@ func TestGRPCJoinApplyList(t *testing.T) {
 		DocumentId:  doc,
 		Client:      1,
 		Session:     10,
+		Epoch:       1,
 		DisplayName: "ann",
 		HasCursor:   true,
 		Anchor:      &crdtv1.OpID{Client: 1, Clock: 3},
@@ -37,7 +38,7 @@ func TestGRPCJoinApplyList(t *testing.T) {
 	if err != nil {
 		t.Fatalf("join: %v", err)
 	}
-	if joined.GetVersion() != 1 || len(joined.GetStates()) != 0 {
+	if joined.GetVersion() == 0 || len(joined.GetStates()) != 0 {
 		t.Fatalf("join self %+v", joined)
 	}
 
@@ -45,12 +46,13 @@ func TestGRPCJoinApplyList(t *testing.T) {
 		DocumentId:  doc,
 		Client:      2,
 		Session:     20,
+		Epoch:       1,
 		DisplayName: "bob",
 	}})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if peer.GetVersion() != 2 || len(peer.GetStates()) != 1 || peer.GetStates()[0].GetClient() != 1 {
+	if peer.GetVersion() <= joined.GetVersion() || len(peer.GetStates()) != 1 || peer.GetStates()[0].GetClient() != 1 {
 		t.Fatalf("join others %+v", peer)
 	}
 	if peer.GetStates()[0].GetHasCursor() {
@@ -76,11 +78,12 @@ func TestGRPCJoinApplyList(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if listed.GetVersion() != 3 || len(listed.GetStates()) != 2 {
+	if listed.GetVersion() <= peer.GetVersion() || len(listed.GetStates()) != 2 {
 		t.Fatalf("list %+v", listed)
 	}
 
 	touched, err := client.Apply(ctx, &presencev1.ApplyRequest{Changes: []*presencev1.Change{
+		{Kind: &presencev1.Change_Upsert{Upsert: &presencev1.State{DocumentId: doc, Client: 1, Session: 99}}},
 		{Kind: &presencev1.Change_Touch{Touch: &presencev1.Touch{DocumentId: doc, Client: 1, Session: 10}}},
 		{Kind: &presencev1.Change_Touch{Touch: &presencev1.Touch{DocumentId: doc, Client: 1, Session: 99}}},
 		{Kind: &presencev1.Change_Touch{Touch: &presencev1.Touch{DocumentId: doc, Client: 3, Session: 30}}},
@@ -95,13 +98,50 @@ func TestGRPCJoinApplyList(t *testing.T) {
 	if len(touched.GetSuperseded()) != 1 || touched.GetSuperseded()[0].GetSession() != 99 {
 		t.Fatalf("superseded %+v", touched.GetSuperseded())
 	}
+	if len(touched.GetSupersededUpserts()) != 1 || touched.GetSupersededUpserts()[0].GetSession() != 99 {
+		t.Fatalf("superseded upserts %+v", touched.GetSupersededUpserts())
+	}
 
 	listed, err = client.List(ctx, &presencev1.ListRequest{DocumentId: doc})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if listed.GetVersion() != 4 || len(listed.GetStates()) != 1 || listed.GetStates()[0].GetClient() != 1 {
+	if listed.GetVersion() <= peer.GetVersion() || len(listed.GetStates()) != 1 || listed.GetStates()[0].GetClient() != 1 {
 		t.Fatalf("after leave %+v", listed)
+	}
+}
+
+func TestGRPCJoinReportsSupersededEpoch(t *testing.T) {
+	client, _ := startGRPC(t, time.Second)
+	ctx := t.Context()
+	doc := uuid.NewString()
+
+	if _, err := client.Join(ctx, &presencev1.JoinRequest{Self: &presencev1.State{
+		DocumentId: doc,
+		Client:     1,
+		Session:    20,
+		Epoch:      2,
+	}}); err != nil {
+		t.Fatal(err)
+	}
+	late, err := client.Join(ctx, &presencev1.JoinRequest{Self: &presencev1.State{
+		DocumentId: doc,
+		Client:     1,
+		Session:    10,
+		Epoch:      1,
+	}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !late.GetSuperseded() {
+		t.Fatalf("join response %+v", late)
+	}
+	listed, err := client.List(ctx, &presencev1.ListRequest{DocumentId: doc})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(listed.GetStates()) != 1 || listed.GetStates()[0].GetSession() != 20 {
+		t.Fatalf("list %+v", listed)
 	}
 }
 

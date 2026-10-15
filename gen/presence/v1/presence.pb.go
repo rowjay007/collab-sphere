@@ -81,6 +81,7 @@ type State struct {
 	DisplayName   string                 `protobuf:"bytes,6,opt,name=display_name,json=displayName,proto3" json:"display_name,omitempty"`
 	Version       uint64                 `protobuf:"varint,7,opt,name=version,proto3" json:"version,omitempty"`
 	HasCursor     bool                   `protobuf:"varint,8,opt,name=has_cursor,json=hasCursor,proto3" json:"has_cursor,omitempty"`
+	Epoch         uint64                 `protobuf:"varint,9,opt,name=epoch,proto3" json:"epoch,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -169,6 +170,13 @@ func (x *State) GetHasCursor() bool {
 		return x.HasCursor
 	}
 	return false
+}
+
+func (x *State) GetEpoch() uint64 {
+	if x != nil {
+		return x.Epoch
+	}
+	return 0
 }
 
 type Change struct {
@@ -434,11 +442,12 @@ func (x *ApplyRequest) GetChanges() []*Change {
 }
 
 type ApplyResponse struct {
-	state         protoimpl.MessageState `protogen:"open.v1"`
-	Missing       []*Touch               `protobuf:"bytes,1,rep,name=missing,proto3" json:"missing,omitempty"`
-	Superseded    []*Touch               `protobuf:"bytes,2,rep,name=superseded,proto3" json:"superseded,omitempty"`
-	unknownFields protoimpl.UnknownFields
-	sizeCache     protoimpl.SizeCache
+	state             protoimpl.MessageState `protogen:"open.v1"`
+	Missing           []*Touch               `protobuf:"bytes,1,rep,name=missing,proto3" json:"missing,omitempty"`
+	Superseded        []*Touch               `protobuf:"bytes,2,rep,name=superseded,proto3" json:"superseded,omitempty"`
+	SupersededUpserts []*State               `protobuf:"bytes,3,rep,name=superseded_upserts,json=supersededUpserts,proto3" json:"superseded_upserts,omitempty"`
+	unknownFields     protoimpl.UnknownFields
+	sizeCache         protoimpl.SizeCache
 }
 
 func (x *ApplyResponse) Reset() {
@@ -481,6 +490,13 @@ func (x *ApplyResponse) GetMissing() []*Touch {
 func (x *ApplyResponse) GetSuperseded() []*Touch {
 	if x != nil {
 		return x.Superseded
+	}
+	return nil
+}
+
+func (x *ApplyResponse) GetSupersededUpserts() []*State {
+	if x != nil {
+		return x.SupersededUpserts
 	}
 	return nil
 }
@@ -577,6 +593,7 @@ type ListResponse struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	States        []*State               `protobuf:"bytes,1,rep,name=states,proto3" json:"states,omitempty"`
 	Version       uint64                 `protobuf:"varint,2,opt,name=version,proto3" json:"version,omitempty"`
+	Superseded    bool                   `protobuf:"varint,3,opt,name=superseded,proto3" json:"superseded,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -623,6 +640,13 @@ func (x *ListResponse) GetVersion() uint64 {
 		return x.Version
 	}
 	return 0
+}
+
+func (x *ListResponse) GetSuperseded() bool {
+	if x != nil {
+		return x.Superseded
+	}
+	return false
 }
 
 type Event struct {
@@ -787,7 +811,7 @@ var File_presence_v1_presence_proto protoreflect.FileDescriptor
 
 const file_presence_v1_presence_proto_rawDesc = "" +
 	"\n" +
-	"\x1apresence/v1/presence.proto\x12\vpresence.v1\x1a\x16crdt/v1/snapshot.proto\"\x80\x02\n" +
+	"\x1apresence/v1/presence.proto\x12\vpresence.v1\x1a\x16crdt/v1/snapshot.proto\"\x96\x02\n" +
 	"\x05State\x12\x1f\n" +
 	"\vdocument_id\x18\x01 \x01(\tR\n" +
 	"documentId\x12\x16\n" +
@@ -798,7 +822,8 @@ const file_presence_v1_presence_proto_rawDesc = "" +
 	"\fdisplay_name\x18\x06 \x01(\tR\vdisplayName\x12\x18\n" +
 	"\aversion\x18\a \x01(\x04R\aversion\x12\x1d\n" +
 	"\n" +
-	"has_cursor\x18\b \x01(\bR\thasCursor\"\x96\x01\n" +
+	"has_cursor\x18\b \x01(\bR\thasCursor\x12\x14\n" +
+	"\x05epoch\x18\t \x01(\x04R\x05epoch\"\x96\x01\n" +
 	"\x06Change\x12,\n" +
 	"\x06upsert\x18\x01 \x01(\v2\x12.presence.v1.StateH\x00R\x06upsert\x12*\n" +
 	"\x05touch\x18\x02 \x01(\v2\x12.presence.v1.TouchH\x00R\x05touch\x12*\n" +
@@ -815,20 +840,24 @@ const file_presence_v1_presence_proto_rawDesc = "" +
 	"\x06client\x18\x02 \x01(\x04R\x06client\x12\x18\n" +
 	"\asession\x18\x03 \x01(\x04R\asession\"=\n" +
 	"\fApplyRequest\x12-\n" +
-	"\achanges\x18\x01 \x03(\v2\x13.presence.v1.ChangeR\achanges\"q\n" +
+	"\achanges\x18\x01 \x03(\v2\x13.presence.v1.ChangeR\achanges\"\xb4\x01\n" +
 	"\rApplyResponse\x12,\n" +
 	"\amissing\x18\x01 \x03(\v2\x12.presence.v1.TouchR\amissing\x122\n" +
 	"\n" +
 	"superseded\x18\x02 \x03(\v2\x12.presence.v1.TouchR\n" +
-	"superseded\"5\n" +
+	"superseded\x12A\n" +
+	"\x12superseded_upserts\x18\x03 \x03(\v2\x12.presence.v1.StateR\x11supersededUpserts\"5\n" +
 	"\vJoinRequest\x12&\n" +
 	"\x04self\x18\x01 \x01(\v2\x12.presence.v1.StateR\x04self\".\n" +
 	"\vListRequest\x12\x1f\n" +
 	"\vdocument_id\x18\x01 \x01(\tR\n" +
-	"documentId\"T\n" +
+	"documentId\"t\n" +
 	"\fListResponse\x12*\n" +
 	"\x06states\x18\x01 \x03(\v2\x12.presence.v1.StateR\x06states\x12\x18\n" +
-	"\aversion\x18\x02 \x01(\x04R\aversion\"\xb7\x01\n" +
+	"\aversion\x18\x02 \x01(\x04R\aversion\x12\x1e\n" +
+	"\n" +
+	"superseded\x18\x03 \x01(\bR\n" +
+	"superseded\"\xb7\x01\n" +
 	"\x05Event\x12\x1f\n" +
 	"\vdocument_id\x18\x01 \x01(\tR\n" +
 	"documentId\x12\x16\n" +
@@ -887,22 +916,23 @@ var file_presence_v1_presence_proto_depIdxs = []int32{
 	2,  // 5: presence.v1.ApplyRequest.changes:type_name -> presence.v1.Change
 	3,  // 6: presence.v1.ApplyResponse.missing:type_name -> presence.v1.Touch
 	3,  // 7: presence.v1.ApplyResponse.superseded:type_name -> presence.v1.Touch
-	1,  // 8: presence.v1.JoinRequest.self:type_name -> presence.v1.State
-	1,  // 9: presence.v1.ListResponse.states:type_name -> presence.v1.State
-	1,  // 10: presence.v1.Event.state:type_name -> presence.v1.State
-	11, // 11: presence.v1.Event.left:type_name -> presence.v1.Left
-	0,  // 12: presence.v1.Left.reason:type_name -> presence.v1.Left.Reason
-	7,  // 13: presence.v1.PresenceService.Join:input_type -> presence.v1.JoinRequest
-	5,  // 14: presence.v1.PresenceService.Apply:input_type -> presence.v1.ApplyRequest
-	8,  // 15: presence.v1.PresenceService.List:input_type -> presence.v1.ListRequest
-	9,  // 16: presence.v1.PresenceService.Join:output_type -> presence.v1.ListResponse
-	6,  // 17: presence.v1.PresenceService.Apply:output_type -> presence.v1.ApplyResponse
-	9,  // 18: presence.v1.PresenceService.List:output_type -> presence.v1.ListResponse
-	16, // [16:19] is the sub-list for method output_type
-	13, // [13:16] is the sub-list for method input_type
-	13, // [13:13] is the sub-list for extension type_name
-	13, // [13:13] is the sub-list for extension extendee
-	0,  // [0:13] is the sub-list for field type_name
+	1,  // 8: presence.v1.ApplyResponse.superseded_upserts:type_name -> presence.v1.State
+	1,  // 9: presence.v1.JoinRequest.self:type_name -> presence.v1.State
+	1,  // 10: presence.v1.ListResponse.states:type_name -> presence.v1.State
+	1,  // 11: presence.v1.Event.state:type_name -> presence.v1.State
+	11, // 12: presence.v1.Event.left:type_name -> presence.v1.Left
+	0,  // 13: presence.v1.Left.reason:type_name -> presence.v1.Left.Reason
+	7,  // 14: presence.v1.PresenceService.Join:input_type -> presence.v1.JoinRequest
+	5,  // 15: presence.v1.PresenceService.Apply:input_type -> presence.v1.ApplyRequest
+	8,  // 16: presence.v1.PresenceService.List:input_type -> presence.v1.ListRequest
+	9,  // 17: presence.v1.PresenceService.Join:output_type -> presence.v1.ListResponse
+	6,  // 18: presence.v1.PresenceService.Apply:output_type -> presence.v1.ApplyResponse
+	9,  // 19: presence.v1.PresenceService.List:output_type -> presence.v1.ListResponse
+	17, // [17:20] is the sub-list for method output_type
+	14, // [14:17] is the sub-list for method input_type
+	14, // [14:14] is the sub-list for extension type_name
+	14, // [14:14] is the sub-list for extension extendee
+	0,  // [0:14] is the sub-list for field type_name
 }
 
 func init() { file_presence_v1_presence_proto_init() }

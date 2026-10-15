@@ -97,9 +97,24 @@ func runSweep(ctx context.Context, st *store.Store, every time.Duration) {
 		case <-ctx.Done():
 			return
 		case <-ticker.C:
-			if _, err := st.Sweep(ctx, 256); err != nil && ctx.Err() == nil {
+			if err := drainSweep(ctx, st, 256); err != nil && ctx.Err() == nil {
 				slog.Error("sweep", "err", err)
 			}
+		}
+	}
+}
+
+func drainSweep(ctx context.Context, st *store.Store, limit int) error {
+	for {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+		n, err := st.Sweep(ctx, limit)
+		if err != nil {
+			return err
+		}
+		if n < limit {
+			return nil
 		}
 	}
 }

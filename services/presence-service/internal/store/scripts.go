@@ -76,6 +76,13 @@ local function now_ms()
   return tonumber(t[1]) * 1000 + math.floor(tonumber(t[2]) / 1000)
 end
 
+local function next_version(key, now)
+  local stored = tonumber(redis.call('GET', key)) or 0
+  local ver = math.max(stored + 1, now * 1000)
+  redis.call('SET', key, ver)
+  return ver
+end
+
 local function encode_key(field, wire)
   return encode_varint(field * 8 + wire)
 end
@@ -121,6 +128,15 @@ local function hex_decode(encoded)
   end))
 end
 
+local function field_varint(buf, want)
+  local raw = field_varint_bytes(buf, want)
+  if raw == '' then
+    return 0
+  end
+  local n = decode_varint(raw, 1)
+  return n
+end
+
 local function stamp_state(raw, ver)
   return raw .. encode_uint64(7, ver)
 end
@@ -139,26 +155,56 @@ local function event_left(doc, client_varint, ver, session_varint, reason)
 end
 `
 
-var upsertScript = redis.NewScript(luaPrelude + `
-local ver = redis.call('INCR', KEYS[4])
+var joinUpsertScript = redis.NewScript(luaPrelude + `
+local raw = redis.call('GET', KEYS[1])
+if raw then
+  local same_session = field_varint_bytes(raw, 3) == ARGV[9]
+  local stored_epoch = tonumber(field_varint(raw, 9))
+  local new_epoch = tonumber(ARGV[10])
+  if not same_session and new_epoch <= stored_epoch and not (new_epoch == 0 and stored_epoch == 0) then
+    return {2, 0}
+  end
+end
+local now = now_ms()
+local ver = next_version(KEYS[4], now)
 local state = stamp_state(ARGV[1], ver)
 redis.call('SET', KEYS[1], state, 'PX', tonumber(ARGV[8]))
 redis.call('SADD', KEYS[2], ARGV[3])
-redis.call('ZADD', KEYS[3], now_ms() + tonumber(ARGV[2]), ARGV[4])
+redis.call('ZADD', KEYS[3], now + tonumber(ARGV[2]), ARGV[4])
 redis.call('PUBLISH', ARGV[7], event_state(ARGV[5], ARGV[6], ver, state))
-return ver
+return {1, ver}
+`)
+
+var applyUpsertScript = redis.NewScript(luaPrelude + `
+local raw = redis.call('GET', KEYS[1])
+if raw and field_varint_bytes(raw, 3) ~= ARGV[9] then
+  return {2, 0}
+end
+local now = now_ms()
+local ver = next_version(KEYS[4], now)
+local state = stamp_state(ARGV[1], ver)
+redis.call('SET', KEYS[1], state, 'PX', tonumber(ARGV[8]))
+redis.call('SADD', KEYS[2], ARGV[3])
+redis.call('ZADD', KEYS[3], now + tonumber(ARGV[2]), ARGV[4])
+redis.call('PUBLISH', ARGV[7], event_state(ARGV[5], ARGV[6], ver, state))
+return {1, ver}
 `)
 
 var touchScript = redis.NewScript(luaPrelude + `
-if redis.call('EXISTS', KEYS[1]) == 0 then
+local raw = redis.call('GET', KEYS[1])
+if not raw then
   return 0
 end
-local raw = redis.call('GET', KEYS[1])
 if field_varint_bytes(raw, 3) ~= ARGV[1] then
   return 2
 end
+local now = now_ms()
+local score = redis.call('ZSCORE', KEYS[2], ARGV[3])
+if not score or tonumber(score) <= now then
+  return 0
+end
 redis.call('PEXPIRE', KEYS[1], tonumber(ARGV[4]))
-redis.call('ZADD', KEYS[2], now_ms() + tonumber(ARGV[2]), ARGV[3])
+redis.call('ZADD', KEYS[2], now + tonumber(ARGV[2]), ARGV[3])
 return 1
 `)
 
@@ -173,7 +219,7 @@ end
 redis.call('DEL', KEYS[1])
 redis.call('SREM', KEYS[2], ARGV[2])
 redis.call('ZREM', KEYS[3], ARGV[3])
-local ver = redis.call('INCR', KEYS[4])
+local ver = next_version(KEYS[4], now_ms())
 redis.call('PUBLISH', ARGV[6], event_left(ARGV[4], ARGV[5], ver, ARGV[1], 1))
 return ver
 `)
@@ -198,7 +244,7 @@ for _, member in ipairs(members) do
       end
       redis.call('DEL', skey)
       redis.call('SREM', 'presence-members:' .. doc, client)
-      local ver = redis.call('INCR', 'presence-ver:' .. doc)
+      local ver = next_version('presence-ver:' .. doc, now)
       redis.call('PUBLISH', 'presence-events:' .. doc, event_left(doc, client_varint, ver, session, 2))
       n = n + 1
     end

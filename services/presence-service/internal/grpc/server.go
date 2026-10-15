@@ -28,7 +28,8 @@ func (s *Server) Join(ctx context.Context, req *presencev1.JoinRequest) (*presen
 	self.HasCursor = false
 	self.Anchor = nil
 	self.Head = nil
-	if err := s.store.Upsert(ctx, self); err != nil {
+	result, err := s.store.Join(ctx, self)
+	if err != nil {
 		return nil, status.Error(codes.Internal, "internal error")
 	}
 	states, ver, err := s.store.List(ctx, self.GetDocumentId())
@@ -41,7 +42,11 @@ func (s *Server) Join(ctx context.Context, req *presencev1.JoinRequest) (*presen
 			others = append(others, st)
 		}
 	}
-	return &presencev1.ListResponse{States: others, Version: ver}, nil
+	return &presencev1.ListResponse{
+		States:     others,
+		Version:    ver,
+		Superseded: result == store.UpsertSuperseded,
+	}, nil
 }
 
 func (s *Server) Apply(ctx context.Context, req *presencev1.ApplyRequest) (*presencev1.ApplyResponse, error) {
@@ -51,32 +56,15 @@ func (s *Server) Apply(ctx context.Context, req *presencev1.ApplyRequest) (*pres
 		}
 	}
 
-	var missing []*presencev1.Touch
-	var superseded []*presencev1.Touch
-	for _, ch := range req.GetChanges() {
-		switch k := ch.GetKind().(type) {
-		case *presencev1.Change_Upsert:
-			if err := s.store.Upsert(ctx, k.Upsert); err != nil {
-				return nil, status.Error(codes.Internal, "internal error")
-			}
-		case *presencev1.Change_Touch:
-			ok, err := s.store.Touch(ctx, k.Touch)
-			if err != nil {
-				return nil, status.Error(codes.Internal, "internal error")
-			}
-			switch ok {
-			case store.TouchMissing:
-				missing = append(missing, k.Touch)
-			case store.TouchSuperseded:
-				superseded = append(superseded, k.Touch)
-			}
-		case *presencev1.Change_Leave:
-			if err := s.store.Remove(ctx, k.Leave); err != nil {
-				return nil, status.Error(codes.Internal, "internal error")
-			}
-		}
+	missing, superseded, supersededUpserts, err := s.store.Apply(ctx, req.GetChanges())
+	if err != nil {
+		return nil, status.Error(codes.Internal, "internal error")
 	}
-	return &presencev1.ApplyResponse{Missing: missing, Superseded: superseded}, nil
+	return &presencev1.ApplyResponse{
+		Missing:           missing,
+		Superseded:        superseded,
+		SupersededUpserts: supersededUpserts,
+	}, nil
 }
 
 func validateChange(ch *presencev1.Change) error {

@@ -21,6 +21,7 @@ message State {
   string display_name = 6;
   uint64 version = 7;
   bool has_cursor = 8;
+  uint64 epoch = 9;
 }
 
 message Change {
@@ -50,6 +51,7 @@ message ApplyRequest {
 message ApplyResponse {
   repeated Touch missing = 1;
   repeated Touch superseded = 2;
+  repeated State superseded_upserts = 3;
 }
 
 message JoinRequest {
@@ -63,6 +65,7 @@ message ListRequest {
 message ListResponse {
   repeated State states = 1;
   uint64 version = 2;
+  bool superseded = 3;
 }
 
 message Event {
