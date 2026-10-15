@@ -56,8 +56,15 @@ func TestAppendIdempotentAndConflict(t *testing.T) {
 
 	conflict := proto.Clone(testdb.ProtoFromInsert(a)).(*crdtv1.Operation)
 	conflict.GetInsert().Value = uint32('z')
-	if _, err := st.Append(ctx, doc.ID, []*crdtv1.Operation{conflict}); !errors.Is(err, domain.ErrConflict) {
-		t.Fatalf("conflict: %v", err)
+	_, err = st.Append(ctx, doc.ID, []*crdtv1.Operation{conflict})
+	var stored *domain.ConflictError
+	if !errors.Is(err, domain.ErrConflict) || !errors.As(err, &stored) || *stored != (domain.ConflictError{Client: 1, Clock: a.ID.Clock}) {
+		t.Fatalf("conflict with the log: %v", err)
+	}
+	_, err = st.Append(ctx, doc.ID, []*crdtv1.Operation{testdb.ProtoFromInsert(b), conflict, testdb.ProtoFromInsert(a)})
+	var inBatch *domain.ConflictError
+	if !errors.As(err, &inBatch) || *inBatch != (domain.ConflictError{Client: 1, Clock: a.ID.Clock}) {
+		t.Fatalf("conflict within the batch: %v", err)
 	}
 }
 

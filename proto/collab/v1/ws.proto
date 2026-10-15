@@ -125,6 +125,8 @@ message ErrorMessage {
     CODE_INVALID_RESUME = 6;
     // Retryable: reconnect and resend unacknowledged ops.
     CODE_UNAVAILABLE = 7;
+    // A newer connection with this client ID joined the hub.
+    CODE_SUPERSEDED = 8;
   }
   Code code = 1;
   string message = 2;

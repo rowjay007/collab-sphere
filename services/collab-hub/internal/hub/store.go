@@ -13,6 +13,16 @@ import (
 
 var ErrArchived = errors.New("document archived")
 
+// ConflictError is an Append refused because the log holds one of Client's
+// op IDs with different content.
+type ConflictError struct {
+	Client crdt.ClientID
+}
+
+func (e ConflictError) Error() string {
+	return fmt.Sprintf("an op from client %d conflicts with the log", e.Client)
+}
+
 // AppendResult reports where Append put each op. Seqs is parallel to the
 // appended ops. An op already in the log keeps its existing seq. Newly stored
 // ops hold exactly FirstNewSeq..OpSeq, and FirstNewSeq is 0 when none were new.
@@ -88,7 +98,7 @@ func (s *MemoryStore) AppendFromOtherWriter(docID string, ops ...crdt.Op) (Appen
 func (l *memoryLog) append(ops []crdt.Op) (AppendResult, error) {
 	for _, op := range ops {
 		if seq, ok := l.seq[op.OpID()]; ok && l.ops[seq-1] != op {
-			return AppendResult{}, fmt.Errorf("op %s conflicts with stored op", op.OpID())
+			return AppendResult{}, ConflictError{Client: op.OpID().Client}
 		}
 	}
 	res := AppendResult{Seqs: make([]uint64, len(ops))}

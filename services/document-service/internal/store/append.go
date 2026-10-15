@@ -273,7 +273,7 @@ func classifyOps(ctx context.Context, tx pgx.Tx, id uuid.UUID, ops []*crdtv1.Ope
 		key := opKey{client: protoOp.GetId().GetClient(), clock: protoOp.GetId().GetClock()}
 		if prev, ok := seen[key]; ok {
 			if !bytes.Equal(prev, raw) {
-				return nil, domain.ErrConflict
+				return nil, &domain.ConflictError{Client: key.client, Clock: key.clock}
 			}
 			pending = append(pending, pendingOp{key: key, raw: raw, skip: true})
 			continue
@@ -298,7 +298,7 @@ func classifyOps(ctx context.Context, tx pgx.Tx, id uuid.UUID, ops []*crdtv1.Ope
 			continue
 		}
 		if !bytes.Equal(held.raw, pending[i].raw) {
-			return nil, domain.ErrConflict
+			return nil, &domain.ConflictError{Client: pending[i].key.client, Clock: pending[i].key.clock}
 		}
 		pending[i].skip = true
 		pending[i].seq = held.seq

@@ -21,6 +21,10 @@ type Registry struct {
 	maxReplay uint64
 	mu        sync.Mutex
 	hubs      map[string]*Hub
+	closed    bool
+
+	loops         sync.WaitGroup
+	presenceCalls sync.WaitGroup
 }
 
 // NewRegistry starts with no hubs. The first join for a document creates one,
@@ -48,10 +52,14 @@ type Session struct {
 
 // Join attaches peer to docID. A resuming client holds log[1..seq] and gets
 // MissedOps instead of a DocumentSync when it is close enough. The caller
-// must Leave the returned session on disconnect.
+// must Leave the returned session on disconnect. After Close it returns
+// ErrStopped.
 func (r *Registry) Join(ctx context.Context, docID string, peer *Peer, resume bool, seq uint64) (*Session, error) {
 	for {
 		h := r.acquire(docID)
+		if h == nil {
+			return nil, ErrStopped
+		}
 		reply := make(chan error, 1)
 		if err := h.send(ctx, joinEvent{peer: peer, resume: resume, seq: seq, reply: reply}); err != nil {
 			r.release(h)
@@ -105,11 +113,12 @@ func (s *Session) Leave(ctx context.Context) {
 	s.reg.release(s.hub)
 }
 
-// Close stops every hub and returns once each has closed its peers and
-// handed their presence Leaves to Presence. In-flight joins fail with
-// ErrStopped.
+// Close refuses later joins, stops every hub, and returns once each has
+// closed its peers and handed every presence Leave to Presence. In-flight
+// joins fail with ErrStopped.
 func (r *Registry) Close() {
 	r.mu.Lock()
+	r.closed = true
 	hubs := make([]*Hub, 0, len(r.hubs))
 	for _, h := range r.hubs {
 		hubs = append(hubs, h)
@@ -119,14 +128,18 @@ func (r *Registry) Close() {
 	for _, h := range hubs {
 		_ = h.send(context.Background(), stopEvent{})
 	}
-	for _, h := range hubs {
-		<-h.done
-	}
+	r.loops.Wait()
+	r.presenceCalls.Wait()
 }
 
+// acquire returns docID's hub, starting one if needed, or nil once the
+// registry is closed.
 func (r *Registry) acquire(docID string) *Hub {
 	r.mu.Lock()
 	defer r.mu.Unlock()
+	if r.closed {
+		return nil
+	}
 	if h, ok := r.hubs[docID]; ok {
 		h.refs++
 		return h
@@ -134,7 +147,7 @@ func (r *Registry) acquire(docID string) *Hub {
 	h := newHub(docID, r)
 	h.refs = 1
 	r.hubs[docID] = h
-	go h.loop()
+	r.loops.Go(h.loop)
 	return h
 }
 

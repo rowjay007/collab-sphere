@@ -100,13 +100,13 @@ func main() {
 	signal.Notify(sigs, syscall.SIGINT, syscall.SIGTERM)
 	<-sigs
 
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	err = srv.Shutdown(ctx)
 	reg.Close()
 	if writer != nil {
 		writer.Close()
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-	defer cancel()
-	err = srv.Shutdown(ctx)
 	stopBus()
 	<-busDone
 	if err != nil {

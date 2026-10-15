@@ -171,6 +171,27 @@ func waitForQueuedEvents(t *testing.T, reg *Registry, docID string, want int) {
 	t.Fatalf("hub has fewer than %d queued events", want)
 }
 
+func TestClosedRegistryRefusesJoinsAndTellsPeers(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	reg := localRegistry(NewMemoryStore())
+	_, _, alice := join(t, ctx, reg, 1)
+	_, _, bob := join(t, ctx, reg, 2)
+
+	reg.Close()
+	for name, s := range map[string]*stream{"alice": alice, "bob": bob} {
+		if code := s.lastError(t, ctx); code != collabv1.ErrorMessage_CODE_UNAVAILABLE {
+			t.Fatalf("%s error code = %s", name, code)
+		}
+	}
+	if _, err := reg.Join(ctx, "doc", NewPeer(3), false, 0); !errors.Is(err, ErrStopped) {
+		t.Fatalf("Join after Close = %v, want ErrStopped", err)
+	}
+	if _, err := reg.Join(ctx, "other", NewPeer(3), false, 0); !errors.Is(err, ErrStopped) {
+		t.Fatalf("Join of a new document after Close = %v, want ErrStopped", err)
+	}
+}
+
 func TestStaleLeaveAfterFailStopDoesNotStopNewHub(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()

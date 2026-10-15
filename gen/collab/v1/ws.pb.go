@@ -83,6 +83,8 @@ const (
 	ErrorMessage_CODE_INVALID_RESUME     ErrorMessage_Code = 6
 	// Retryable: reconnect and resend unacknowledged ops.
 	ErrorMessage_CODE_UNAVAILABLE ErrorMessage_Code = 7
+	// A newer connection with this client ID joined the hub.
+	ErrorMessage_CODE_SUPERSEDED ErrorMessage_Code = 8
 )
 
 // Enum value maps for ErrorMessage_Code.
@@ -96,6 +98,7 @@ var (
 		5: "CODE_INTERNAL",
 		6: "CODE_INVALID_RESUME",
 		7: "CODE_UNAVAILABLE",
+		8: "CODE_SUPERSEDED",
 	}
 	ErrorMessage_Code_value = map[string]int32{
 		"CODE_UNSPECIFIED":        0,
@@ -106,6 +109,7 @@ var (
 		"CODE_INTERNAL":           5,
 		"CODE_INVALID_RESUME":     6,
 		"CODE_UNAVAILABLE":        7,
+		"CODE_SUPERSEDED":         8,
 	}
 )
 
@@ -1233,10 +1237,10 @@ const file_collab_v1_ws_proto_rawDesc = "" +
 	"\n" +
 	"operations\x18\x03 \x03(\v2\x12.crdt.v1.OperationR\n" +
 	"operations\x12\x10\n" +
-	"\x03seq\x18\x04 \x01(\x04R\x03seq\"\xaa\x02\n" +
+	"\x03seq\x18\x04 \x01(\x04R\x03seq\"\xbf\x02\n" +
 	"\fErrorMessage\x120\n" +
 	"\x04code\x18\x01 \x01(\x0e2\x1c.collab.v1.ErrorMessage.CodeR\x04code\x12\x18\n" +
-	"\amessage\x18\x02 \x01(\tR\amessage\"\xcd\x01\n" +
+	"\amessage\x18\x02 \x01(\tR\amessage\"\xe2\x01\n" +
 	"\x04Code\x12\x14\n" +
 	"\x10CODE_UNSPECIFIED\x10\x00\x12\x1a\n" +
 	"\x16CODE_MALFORMED_MESSAGE\x10\x01\x12\x1a\n" +
@@ -1245,7 +1249,8 @@ const file_collab_v1_ws_proto_rawDesc = "" +
 	"\x17CODE_MISSING_DEPENDENCY\x10\x04\x12\x11\n" +
 	"\rCODE_INTERNAL\x10\x05\x12\x17\n" +
 	"\x13CODE_INVALID_RESUME\x10\x06\x12\x14\n" +
-	"\x10CODE_UNAVAILABLE\x10\aB;Z9github.com/rowjay007/collab-sphere/gen/collab/v1;collabv1b\x06proto3"
+	"\x10CODE_UNAVAILABLE\x10\a\x12\x13\n" +
+	"\x0fCODE_SUPERSEDED\x10\bB;Z9github.com/rowjay007/collab-sphere/gen/collab/v1;collabv1b\x06proto3"
 
 var (
 	file_collab_v1_ws_proto_rawDescOnce sync.Once

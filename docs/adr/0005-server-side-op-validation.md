@@ -40,4 +40,8 @@ With several hubs, a client's replica is `log[1..seq]` plus its own unacknowledg
 
 Two other rejected options. A per-client `clock == vector[client]+1` check is wrong, because a Lamport clock legitimately jumps past ops seen from others. Removing the bound reopens the clock-exhaustion attack.
 
-A second live connection with the same client ID is no longer refused. The newest one wins and the old one is closed, as ADR 0007 describes.
+A second live connection with the same client ID is no longer refused. The newest one wins, as ADR 0007 describes. The old one gets `CODE_SUPERSEDED`, which is terminal, so two clients sharing an ID do not keep taking the slot back from each other.
+
+**Conflicts across hubs.** The five checks run against the hub's own document, which can lack an op another hub logged. A client can then send an op whose `(client, clock)` the log holds with different content. All five checks pass, and `Append` refuses the group. document-service answers `AlreadyExists` with a `google.rpc.ErrorInfo` detail: reason `OP_CONFLICT`, metadata `client` and `clock`. The hub sends the peer with that client ID `CODE_INVALID_OPERATION` ("operation conflicts with the log") and closes it, which is terminal for that client. The group is already applied to the hub's document and cannot be un-applied. So the hub then fail-stops for the remaining peers with `CODE_UNAVAILABLE`. Honest peers reconnect and resend, and the log dedupes their ops. Any other `Append` error fail-stops the hub as before.
+
+The residual risk is reconnect churn. Client IDs are unauthenticated. A malicious client that ignores the terminal error can reconnect and repeat the conflict, forcing every peer on one hub to reconnect each time. Closing that needs authenticated client IDs, a later phase.

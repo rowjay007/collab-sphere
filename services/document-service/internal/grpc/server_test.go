@@ -5,6 +5,7 @@ import (
 	"net"
 	"testing"
 
+	"google.golang.org/genproto/googleapis/rpc/errdetails"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/credentials/insecure"
@@ -133,6 +134,15 @@ func TestGRPCHappyAndErrors(t *testing.T) {
 	})
 	if status.Code(err) != codes.AlreadyExists {
 		t.Fatalf("conflict: %v", err)
+	}
+	var info *errdetails.ErrorInfo
+	for _, d := range status.Convert(err).Details() {
+		if i, ok := d.(*errdetails.ErrorInfo); ok {
+			info = i
+		}
+	}
+	if info.GetReason() != docgrpc.ConflictReason || info.GetMetadata()["client"] != "10" || info.GetMetadata()["clock"] != "1" {
+		t.Fatalf("conflict detail = %v", info)
 	}
 }
 

@@ -2,13 +2,18 @@ package docstore
 
 import (
 	"context"
+	"errors"
 	"strings"
 	"testing"
 
 	crdtv1 "github.com/rowjay007/collab-sphere/gen/crdt/v1"
 	documentv1 "github.com/rowjay007/collab-sphere/gen/document/v1"
 	"github.com/rowjay007/collab-sphere/pkg/crdt"
+	"github.com/rowjay007/collab-sphere/services/collab-hub/internal/hub"
+	"google.golang.org/genproto/googleapis/rpc/errdetails"
 	"google.golang.org/grpc"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
 )
 
 type archivedClient struct {
@@ -78,6 +83,35 @@ func TestAppendReturnsSeqs(t *testing.T) {
 	}
 	if _, err := New(logClient{seqs: []uint64{9}}).Append(t.Context(), "doc", []crdt.Op{opA, opB}); err == nil {
 		t.Fatal("Append accepted a response with too few seqs")
+	}
+}
+
+type conflictingClient struct {
+	documentv1.DocumentServiceClient
+	err error
+}
+
+func (c conflictingClient) AppendOperations(context.Context, *documentv1.AppendOperationsRequest, ...grpc.CallOption) (*documentv1.AppendOperationsResponse, error) {
+	return nil, c.err
+}
+
+func TestAppendConflictNamesClient(t *testing.T) {
+	st, err := status.New(codes.AlreadyExists, "conflict").WithDetails(&errdetails.ErrorInfo{
+		Reason:   conflictReason,
+		Metadata: map[string]string{"client": "50", "clock": "3"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = New(conflictingClient{err: st.Err()}).Append(t.Context(), "doc", []crdt.Op{opA})
+	var conflict hub.ConflictError
+	if !errors.As(err, &conflict) || conflict.Client != 50 {
+		t.Fatalf("Append error = %v, want a conflict for client 50", err)
+	}
+
+	_, err = New(conflictingClient{err: status.Error(codes.AlreadyExists, "conflict")}).Append(t.Context(), "doc", []crdt.Op{opA})
+	if err == nil || errors.As(err, &conflict) {
+		t.Fatalf("Append error = %v, want a plain error without the detail", err)
 	}
 }
 

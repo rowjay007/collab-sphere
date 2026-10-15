@@ -3,6 +3,7 @@ package client
 import (
 	"context"
 	"errors"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -11,6 +12,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/coder/websocket"
 	"google.golang.org/protobuf/proto"
 
 	collabv1 "github.com/rowjay007/collab-sphere/gen/collab/v1"
@@ -249,31 +251,34 @@ func TestClientAutoReconnect(t *testing.T) {
 	ctx, cancel := context.WithTimeout(t.Context(), 20*time.Second)
 	defer cancel()
 	store := hub.NewMemoryStore()
-	url, reg := serve(t, store)
-	x := dialWith(t, ctx, 1, collabclient.Options{URLs: []string{url}, AutoReconnect: true})
+	urlA, regA := serve(t, store)
+	urlB, _ := serve(t, store)
+	x := dialWith(t, ctx, 1, collabclient.Options{URLs: []string{urlA, urlB}, AutoReconnect: true})
 	ids := []crdt.ID{edit(t, x, appendAt(0, 'a')).OpID()}
 	if err := x.WaitAcked(ctx); err != nil {
 		t.Fatal(err)
 	}
 
-	reg.Close()
+	regA.Close()
 	ids = append(ids, edit(t, x, appendAt(1, 'b')).OpID())
 	converge(t, ctx, store, x)
 	if x.LastJoin() != collabclient.Missed {
 		t.Fatalf("LastJoin() = %v after the hub closed the socket, want Missed", x.LastJoin())
 	}
 
-	store.FailAppend(errors.New("disk on fire"))
-	ids = append(ids, edit(t, x, appendAt(2, 'c')).OpID())
-	unavailable := func() bool {
+	unavailable := func() int {
+		n := 0
 		for _, e := range x.Errors() {
 			if e.GetCode() == collabv1.ErrorMessage_CODE_UNAVAILABLE {
-				return true
+				n++
 			}
 		}
-		return false
+		return n
 	}
-	for !unavailable() {
+	before := unavailable()
+	store.FailAppend(errors.New("disk on fire"))
+	ids = append(ids, edit(t, x, appendAt(2, 'c')).OpID())
+	for unavailable() == before {
 		select {
 		case <-ctx.Done():
 			t.Fatal("hub never reported CODE_UNAVAILABLE")
@@ -316,6 +321,130 @@ func TestClientRejectedOperationIsTerminal(t *testing.T) {
 	if got := attempts.Load(); got != 1 {
 		t.Fatalf("connection attempts = %d, want 1", got)
 	}
+}
+
+func TestClientSupersededBySameIDIsTerminal(t *testing.T) {
+	ctx, cancel := context.WithTimeout(t.Context(), 10*time.Second)
+	defer cancel()
+	url, attempts := serveCounting(t, hub.NewMemoryStore())
+	older := dialWith(t, ctx, 7, collabclient.Options{URLs: []string{url}, AutoReconnect: true})
+	newer := dialWith(t, ctx, 7, collabclient.Options{URLs: []string{url}, AutoReconnect: true})
+
+	if err := older.WaitUntil(ctx, func(*crdt.Replica) bool { return false }); err == nil || ctx.Err() != nil {
+		t.Fatalf("older client did not end: %v", err)
+	}
+	errs := older.Errors()
+	if len(errs) == 0 || errs[len(errs)-1].GetCode() != collabv1.ErrorMessage_CODE_SUPERSEDED {
+		t.Fatalf("older client errors = %v, want CODE_SUPERSEDED last", errs)
+	}
+	time.Sleep(2 * time.Second)
+	if got := attempts.Load(); got != 2 {
+		t.Fatalf("%d joins after 2s, want 2", got)
+	}
+	if older.Connected() || !newer.Connected() {
+		t.Fatalf("older connected %v, newer connected %v", older.Connected(), newer.Connected())
+	}
+}
+
+// stalledHub answers every join with an empty DocumentSync and never reads.
+func stalledHub(t *testing.T, release <-chan struct{}) *httptest.Server {
+	t.Helper()
+	frame, err := proto.Marshal(&collabv1.ServerMessage{
+		Payload: &collabv1.ServerMessage_DocumentSync{DocumentSync: &collabv1.DocumentSync{
+			DocumentId: canonicalTestDocumentID("doc"),
+			Snapshot:   crdt.New().Snapshot(),
+		}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	srv := httptest.NewUnstartedServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		conn, err := websocket.Accept(w, r, nil)
+		if err != nil {
+			return
+		}
+		defer conn.CloseNow()
+		if conn.Write(r.Context(), websocket.MessageBinary, frame) != nil {
+			return
+		}
+		select {
+		case <-release:
+		case <-r.Context().Done():
+		}
+	}))
+	srv.Listener = smallReadBuffers{srv.Listener}
+	srv.Start()
+	return srv
+}
+
+// smallReadBuffers shrinks each accepted socket's receive buffer so a hub
+// that stops reading backs the client up after a few frames.
+type smallReadBuffers struct{ net.Listener }
+
+func (l smallReadBuffers) Accept() (net.Conn, error) {
+	conn, err := l.Listener.Accept()
+	if tcp, ok := conn.(*net.TCPConn); ok {
+		_ = tcp.SetReadBuffer(4096)
+	}
+	return conn, err
+}
+
+func TestClientNeverBlocksOnAStalledHub(t *testing.T) {
+	const chunk = 32
+	ctx, cancel := context.WithTimeout(t.Context(), 30*time.Second)
+	defer cancel()
+	release := make(chan struct{})
+	fake := stalledHub(t, release)
+	store := hub.NewMemoryStore()
+	hubURL, _ := serve(t, store)
+	x := dialWith(t, ctx, 1, collabclient.Options{
+		URLs:          []string{"ws" + strings.TrimPrefix(fake.URL, "http"), hubURL},
+		AutoReconnect: true,
+	})
+
+	quick := func(name string, fn func()) {
+		start := time.Now()
+		fn()
+		if d := time.Since(start); d > time.Second {
+			t.Fatalf("%s blocked for %s", name, d)
+		}
+	}
+	logged := func() bool {
+		_, opSeq, err := store.ReadOperations(ctx, canonicalTestDocumentID("doc"), 0, 0)
+		return err == nil && opSeq > 0
+	}
+	var ids []crdt.ID
+	last := crdt.Root
+	start := time.Now()
+	for !logged() {
+		if time.Since(start) > 8*time.Second {
+			t.Fatalf("the client was still on the stalled hub after %d ops; only the write deadline would move it", len(ids))
+		}
+		quick("Edit", func() {
+			if err := x.Edit(func(r *crdt.Replica) ([]crdt.Op, error) {
+				ops := make([]crdt.Op, chunk)
+				for i := range ops {
+					op, err := r.InsertAfter(last, 'x')
+					if err != nil {
+						return nil, err
+					}
+					ops[i], last = op, op.ID
+					ids = append(ids, op.ID)
+				}
+				return ops, nil
+			}); err != nil {
+				t.Fatal(err)
+			}
+		})
+		if len(ids)%(16*chunk) == 0 {
+			quick("Text", func() { x.Text() })
+			quick("Connected", func() { x.Connected() })
+		}
+	}
+	close(release)
+	fake.Close()
+	converge(t, ctx, store, x)
+	loggedOnce(t, store, ids)
 }
 
 type archivedLoadStore struct {

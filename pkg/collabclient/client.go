@@ -30,10 +30,15 @@ const (
 	handshakeTimeout = 10 * time.Second
 	minBackoff       = 50 * time.Millisecond
 	maxBackoff       = 2 * time.Second
+	sendQueue        = 1024
+	writeTimeout     = 10 * time.Second
+	pingInterval     = 30 * time.Second
+	pingTimeout      = 10 * time.Second
 )
 
 var (
 	errClosed       = errors.New("collabclient: connection closed")
+	errQueueFull    = errors.New("collabclient: send queue full")
 	errDisconnected = errors.New("collabclient: disconnected")
 	errOffline      = errors.New("collabclient: not attached")
 	errSuperseded   = errors.New("collabclient: superseded by a newer connection")
@@ -217,7 +222,7 @@ func (c *Client) MoveCursor(anchor, head crdt.ID) error {
 	})
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	if c.link == nil || !c.link.send(frame) {
+	if !c.send(frame) {
 		return errOffline
 	}
 	return nil
@@ -229,9 +234,7 @@ func (c *Client) SetName(name string) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	c.name = name
-	if c.link != nil {
-		c.link.send(c.nameFrame())
-	}
+	c.send(c.nameFrame())
 }
 
 func (c *Client) nameFrame() []byte {
@@ -361,7 +364,7 @@ func (c *Client) transmit(ops []crdt.Op) {
 				c.sentTimes[op.OpID()] = now
 			}
 		}
-		if !c.link.send(mustMarshal(&collabv1.ClientMessage{
+		if !c.send(mustMarshal(&collabv1.ClientMessage{
 			Payload: &collabv1.ClientMessage_OperationBatch{OperationBatch: pb},
 		})) {
 			return
@@ -369,11 +372,17 @@ func (c *Client) transmit(ops []crdt.Op) {
 	}
 }
 
-func (l *link) send(frame []byte) bool {
+// send queues frame on the current link without blocking, since callers
+// hold c.mu. A full queue loses the link; unacked ops wait for the next join.
+func (c *Client) send(frame []byte) bool {
+	if c.link == nil {
+		return false
+	}
 	select {
-	case l.out <- frame:
+	case c.link.out <- frame:
 		return true
-	case <-l.ctx.Done():
+	default:
+		c.lost(errQueueFull)
 		return false
 	}
 }
@@ -688,16 +697,17 @@ func (c *Client) rebuild(sync *collabv1.DocumentSync) error {
 
 func (c *Client) attach(conn *websocket.Conn, urlIdx int) {
 	ctx, cancel := context.WithCancel(c.life)
-	l := &link{gen: c.gen, conn: conn, out: make(chan []byte, 1024), ctx: ctx, cancel: cancel, done: make(chan struct{})}
+	l := &link{gen: c.gen, conn: conn, out: make(chan []byte, sendQueue), ctx: ctx, cancel: cancel, done: make(chan struct{})}
 	c.link, c.state, c.err = l, attached, nil
 	c.joinAwareness = nil
 	if urlIdx >= 0 {
 		c.urlIdx = urlIdx
 	}
 	go c.readLoop(l)
-	go c.writeLoop(l)
-	if c.name != "" {
-		l.send(c.nameFrame())
+	go writeLoop(l)
+	go pingLoop(l)
+	if c.name != "" && !c.send(c.nameFrame()) {
+		return
 	}
 	c.transmit(c.unacked)
 }
@@ -836,12 +846,36 @@ func (c *Client) ack(id crdt.ID, now time.Time) {
 	}
 }
 
-func (c *Client) writeLoop(l *link) {
+// writeLoop and pingLoop cancel the link when the hub stops taking frames
+// or answering pings, so readLoop's Read fails and the link is lost.
+func writeLoop(l *link) {
 	for {
 		select {
 		case frame := <-l.out:
-			if err := l.conn.Write(l.ctx, websocket.MessageBinary, frame); err != nil {
-				_ = l.conn.CloseNow()
+			ctx, cancel := context.WithTimeout(l.ctx, writeTimeout)
+			err := l.conn.Write(ctx, websocket.MessageBinary, frame)
+			cancel()
+			if err != nil {
+				l.cancel()
+				return
+			}
+		case <-l.ctx.Done():
+			return
+		}
+	}
+}
+
+func pingLoop(l *link) {
+	ticker := time.NewTicker(pingInterval)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ticker.C:
+			ctx, cancel := context.WithTimeout(l.ctx, pingTimeout)
+			err := l.conn.Ping(ctx)
+			cancel()
+			if err != nil {
+				l.cancel()
 				return
 			}
 		case <-l.ctx.Done():

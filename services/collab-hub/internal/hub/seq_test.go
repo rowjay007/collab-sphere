@@ -329,7 +329,7 @@ func TestNewestConnectionWins(t *testing.T) {
 	store := NewMemoryStore()
 	reg := localRegistry(store)
 	t.Cleanup(reg.Close)
-	oldSession, oldPeer, _ := join(t, ctx, reg, 1)
+	oldSession, oldPeer, oldStream := join(t, ctx, reg, 1)
 	_, _, bobStream := join(t, ctx, reg, 2)
 
 	newSession, newPeer, newStream := join(t, ctx, reg, 1)
@@ -340,6 +340,9 @@ func TestNewestConnectionWins(t *testing.T) {
 	}
 	if got := oldPeer.DropReason(); got != "superseded" {
 		t.Fatalf("old connection drop reason %q", got)
+	}
+	if code := oldStream.lastError(t, ctx); code != collabv1.ErrorMessage_CODE_SUPERSEDED {
+		t.Fatalf("old connection error code = %s", code)
 	}
 
 	newSession.SubmitOps(ctx, []crdt.Op{insert(1, 1)})
@@ -376,6 +379,37 @@ func TestAppendFailureIsRetryable(t *testing.T) {
 	alice.SubmitOps(ctx, []crdt.Op{insert(1, 1)})
 	if code := aliceStream.lastError(t, ctx); code != collabv1.ErrorMessage_CODE_UNAVAILABLE {
 		t.Fatalf("error code = %s", code)
+	}
+}
+
+func TestConflictingOpRejectsItsClientThenFailStops(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	store := NewMemoryStore()
+	reg := localRegistry(store)
+	t.Cleanup(reg.Close)
+	_, _, bystander := join(t, ctx, reg, 1)
+	claimant, _, claimantStream := join(t, ctx, reg, 50)
+
+	logged := insert(50, 1)
+	if _, err := store.AppendFromOtherWriter("doc", logged); err != nil {
+		t.Fatal(err)
+	}
+	clash := logged
+	clash.Value = 'z'
+	claimant.SubmitOps(ctx, []crdt.Op{clash})
+
+	if code := claimantStream.lastError(t, ctx); code != collabv1.ErrorMessage_CODE_INVALID_OPERATION {
+		t.Fatalf("claimant error code = %s", code)
+	}
+	if code := bystander.lastError(t, ctx); code != collabv1.ErrorMessage_CODE_UNAVAILABLE {
+		t.Fatalf("bystander error code = %s", code)
+	}
+	_, _, _, frames := claimantStream.snapshot()
+	for _, f := range frames {
+		if f.GetError().GetCode() == collabv1.ErrorMessage_CODE_UNAVAILABLE {
+			t.Fatal("claimant was told to reconnect")
+		}
 	}
 }
 

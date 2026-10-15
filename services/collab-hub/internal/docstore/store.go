@@ -3,6 +3,11 @@ package docstore
 import (
 	"context"
 	"fmt"
+	"strconv"
+
+	"google.golang.org/genproto/googleapis/rpc/errdetails"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
 
 	crdtv1 "github.com/rowjay007/collab-sphere/gen/crdt/v1"
 	documentv1 "github.com/rowjay007/collab-sphere/gen/document/v1"
@@ -10,6 +15,8 @@ import (
 	"github.com/rowjay007/collab-sphere/services/collab-hub/internal/fanout"
 	"github.com/rowjay007/collab-sphere/services/collab-hub/internal/hub"
 )
+
+const conflictReason = "OP_CONFLICT"
 
 // Store loads, appends and reads document state through DocumentService.
 type Store struct {
@@ -62,6 +69,9 @@ func (s *Store) Append(ctx context.Context, docID string, ops []crdt.Op) (hub.Ap
 		Operations: protoOps,
 	})
 	if err != nil {
+		if client, ok := conflictClient(err); ok {
+			return hub.AppendResult{}, hub.ConflictError{Client: client}
+		}
 		return hub.AppendResult{}, err
 	}
 	if len(resp.GetSeqs()) != len(ops) {
@@ -72,6 +82,27 @@ func (s *Store) Append(ctx context.Context, docID string, ops []crdt.Op) (hub.Ap
 		FirstNewSeq: resp.GetFirstNewSeq(),
 		Seqs:        resp.GetSeqs(),
 	}, nil
+}
+
+// conflictClient returns the client named by document-service's OP_CONFLICT
+// ErrorInfo on an AlreadyExists append.
+func conflictClient(err error) (crdt.ClientID, bool) {
+	st, ok := status.FromError(err)
+	if !ok || st.Code() != codes.AlreadyExists {
+		return 0, false
+	}
+	for _, d := range st.Details() {
+		info, ok := d.(*errdetails.ErrorInfo)
+		if !ok || info.GetReason() != conflictReason {
+			continue
+		}
+		client, err := strconv.ParseUint(info.GetMetadata()["client"], 10, 64)
+		if err != nil {
+			return 0, false
+		}
+		return crdt.ClientID(client), true
+	}
+	return 0, false
 }
 
 // ReadOperations reads up to limit ops after seq after.

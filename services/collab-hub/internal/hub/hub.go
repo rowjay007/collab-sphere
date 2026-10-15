@@ -134,7 +134,6 @@ type Hub struct {
 	presence chan *presencev1.Event
 	resync   chan struct{}
 	stopped  chan struct{}
-	done     chan struct{}
 	once     sync.Once
 	refs     int
 
@@ -159,13 +158,11 @@ func newHub(docID string, registry *Registry) *Hub {
 		presence: make(chan *presencev1.Event, presenceInbox),
 		resync:   make(chan struct{}, 1),
 		stopped:  make(chan struct{}),
-		done:     make(chan struct{}),
 		peers:    make(map[crdt.ClientID]*Peer),
 	}
 }
 
 func (h *Hub) loop() {
-	defer close(h.done)
 	h.subscribe()
 	ctx, cancel := context.WithTimeout(context.Background(), loadTimeout)
 	doc, delivered, err := h.store.Load(ctx, h.docID)
@@ -305,7 +302,9 @@ func (h *Hub) shutdown() {
 	h.closeStopped()
 	h.unsubscribe()
 	h.dead = true
+	frame := EncodeError(collabv1.ErrorMessage_CODE_UNAVAILABLE, "hub stopped")
 	for _, p := range h.peers {
+		p.TrySend(frame)
 		p.CloseWithReason("hub stopped")
 		h.leavePresence(p)
 	}
@@ -378,6 +377,7 @@ func (h *Hub) handleJoin(ev joinEvent) bool {
 	var superseded <-chan struct{}
 	if old, ok := h.peers[ev.peer.id]; ok {
 		delete(h.peers, old.id)
+		old.TrySend(EncodeError(collabv1.ErrorMessage_CODE_SUPERSEDED, "superseded by a newer connection"))
 		old.CloseWithReason("superseded")
 		superseded = old.joined
 	}
@@ -400,7 +400,7 @@ func (h *Hub) joinPresence(p *Peer, superseded <-chan struct{}) {
 	joined := make(chan struct{})
 	p.joined = joined
 	sess := p.presence()
-	go func() {
+	h.registry.presenceCalls.Go(func() {
 		defer close(joined)
 		if superseded != nil {
 			<-superseded
@@ -417,7 +417,7 @@ func (h *Hub) joinPresence(p *Peer, superseded <-chan struct{}) {
 			states, version = nil, 0
 		}
 		p.TrySend(encodeAwarenessSync(states, version, p.id))
-	}()
+	})
 }
 
 // leavePresence removes the peer's session once its Join has returned, so a
@@ -432,10 +432,10 @@ func (h *Hub) leavePresence(p *Peer) {
 	case <-joined:
 		h.pres.Leave(h.docID, sess)
 	default:
-		go func() {
+		h.registry.presenceCalls.Go(func() {
 			<-joined
 			h.pres.Leave(h.docID, sess)
-		}()
+		})
 	}
 }
 
@@ -589,6 +589,12 @@ func (h *Hub) persist(accepted []crdt.Op) bool {
 	res, err := h.store.Append(ctx, h.docID, accepted)
 	cancel()
 	if err != nil {
+		var conflict ConflictError
+		if errors.As(err, &conflict) {
+			if p, ok := h.peers[conflict.Client]; ok {
+				h.rejectOperation(p, collabv1.ErrorMessage_CODE_INVALID_OPERATION, "operation conflicts with the log")
+			}
+		}
 		h.failStop(collabv1.ErrorMessage_CODE_UNAVAILABLE, "document service unavailable")
 		return true
 	}

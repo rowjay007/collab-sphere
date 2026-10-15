@@ -3,8 +3,10 @@ package docgrpc
 import (
 	"context"
 	"errors"
+	"strconv"
 
 	"github.com/google/uuid"
+	"google.golang.org/genproto/googleapis/rpc/errdetails"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 	"google.golang.org/protobuf/types/known/timestamppb"
@@ -111,16 +113,32 @@ func parseID(raw string) (uuid.UUID, error) {
 	return id, nil
 }
 
+// ConflictReason is the ErrorInfo reason on an AlreadyExists append; its
+// metadata names the conflicting op's client and clock.
+const ConflictReason = "OP_CONFLICT"
+
 func mapError(err error) error {
+	var conflict *domain.ConflictError
 	switch {
+	case errors.As(err, &conflict):
+		st, detailErr := status.New(codes.AlreadyExists, err.Error()).WithDetails(&errdetails.ErrorInfo{
+			Reason: ConflictReason,
+			Domain: "document-service",
+			Metadata: map[string]string{
+				"client": strconv.FormatUint(conflict.Client, 10),
+				"clock":  strconv.FormatUint(conflict.Clock, 10),
+			},
+		})
+		if detailErr != nil {
+			return status.Error(codes.Internal, "internal error")
+		}
+		return st.Err()
 	case errors.Is(err, domain.ErrNotFound):
 		return status.Error(codes.NotFound, err.Error())
 	case errors.Is(err, domain.ErrArchived):
 		return status.Error(codes.FailedPrecondition, err.Error())
 	case errors.Is(err, domain.ErrInvalidArgument):
 		return status.Error(codes.InvalidArgument, err.Error())
-	case errors.Is(err, domain.ErrConflict):
-		return status.Error(codes.AlreadyExists, err.Error())
 	default:
 		return status.Error(codes.Internal, "internal error")
 	}

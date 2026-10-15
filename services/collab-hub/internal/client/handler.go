@@ -2,6 +2,7 @@ package client
 
 import (
 	"context"
+	"errors"
 	"net/http"
 	"strconv"
 	"time"
@@ -71,6 +72,9 @@ func Handler(reg *hub.Registry) http.Handler {
 
 		session, err := reg.Join(ctx, docID, peer, resume, seq)
 		if err != nil {
+			if errors.Is(err, hub.ErrStopped) {
+				peer.TrySend(hub.EncodeError(collabv1.ErrorMessage_CODE_UNAVAILABLE, "hub stopped"))
+			}
 			peer.Close()
 			<-writeDone
 			return
