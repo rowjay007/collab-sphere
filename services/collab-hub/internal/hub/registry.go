@@ -7,22 +7,30 @@ import (
 	"time"
 
 	"github.com/rowjay007/collab-sphere/pkg/crdt"
+	"github.com/rowjay007/collab-sphere/services/collab-hub/internal/fanout"
 )
 
 // Registry maps document IDs to live hubs and counts connected clients.
 type Registry struct {
 	store     Store
+	bus       fanout.Bus
 	gapGrace  time.Duration
+	idleSync  time.Duration
+	readyWait time.Duration
 	maxReplay uint64
 	mu        sync.Mutex
 	hubs      map[string]*Hub
 }
 
-// NewRegistry starts with no hubs. The first join for a document creates one.
-func NewRegistry(store Store) *Registry {
+// NewRegistry starts with no hubs. The first join for a document creates one,
+// which learns about other instances' appends through bus.
+func NewRegistry(store Store, bus fanout.Bus) *Registry {
 	return &Registry{
 		store:     store,
+		bus:       bus,
 		gapGrace:  defaultGapGrace,
+		idleSync:  defaultIdleSync,
+		readyWait: defaultReadyWait,
 		maxReplay: defaultMaxReplay,
 		hubs:      make(map[string]*Hub),
 	}

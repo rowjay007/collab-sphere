@@ -16,6 +16,7 @@ import (
 	collabv1 "github.com/rowjay007/collab-sphere/gen/collab/v1"
 	crdtv1 "github.com/rowjay007/collab-sphere/gen/crdt/v1"
 	"github.com/rowjay007/collab-sphere/pkg/crdt"
+	"github.com/rowjay007/collab-sphere/services/collab-hub/internal/fanout"
 	"github.com/rowjay007/collab-sphere/services/collab-hub/internal/hub"
 )
 
@@ -37,7 +38,7 @@ type testClient struct {
 func startHub(t *testing.T) (*httptest.Server, *hub.MemoryStore) {
 	t.Helper()
 	store := hub.NewMemoryStore()
-	reg := hub.NewRegistry(store)
+	reg := hub.NewRegistry(store, fanout.NewMemory())
 	t.Cleanup(reg.Close)
 	mux := http.NewServeMux()
 	mux.Handle("GET /ws/{docID}", Handler(reg))

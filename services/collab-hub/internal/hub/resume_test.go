@@ -9,6 +9,7 @@ import (
 
 	collabv1 "github.com/rowjay007/collab-sphere/gen/collab/v1"
 	"github.com/rowjay007/collab-sphere/pkg/crdt"
+	"github.com/rowjay007/collab-sphere/services/collab-hub/internal/fanout"
 )
 
 func chain(client crdt.ClientID, n int) []crdt.Op {
@@ -85,7 +86,7 @@ func TestResumeWithinWindowGetsMissedOps(t *testing.T) {
 	store := NewMemoryStore()
 	log := chain(50, 5)
 	seedLog(t, store, log)
-	reg := NewRegistry(store)
+	reg := NewRegistry(store, fanout.NewMemory())
 	t.Cleanup(reg.Close)
 
 	_, peer := resumeJoin(t, ctx, reg, 1, 2)
@@ -109,7 +110,7 @@ func TestResumeBeyondMaxReplayGetsDocumentSync(t *testing.T) {
 	defer cancel()
 	store := NewMemoryStore()
 	seedLog(t, store, chain(50, 5))
-	reg := NewRegistry(store)
+	reg := NewRegistry(store, fanout.NewMemory())
 	reg.maxReplay = 3
 	t.Cleanup(reg.Close)
 
@@ -130,7 +131,7 @@ func TestResumeAboveLogIsInvalid(t *testing.T) {
 	defer cancel()
 	store := NewMemoryStore()
 	seedLog(t, store, chain(50, 3))
-	reg := NewRegistry(store)
+	reg := NewRegistry(store, fanout.NewMemory())
 	t.Cleanup(reg.Close)
 
 	peer := NewPeer(1)
@@ -146,7 +147,7 @@ func TestResumeCatchesUpBeforeValidating(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 	store := NewMemoryStore()
-	reg := NewRegistry(store)
+	reg := NewRegistry(store, fanout.NewMemory())
 	reg.gapGrace = time.Hour
 	t.Cleanup(reg.Close)
 	_, _, aliceStream := join(t, ctx, reg, 1)
@@ -185,7 +186,7 @@ func TestResumeCatchUpReadFailureIsUnavailable(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 	store := &failingReadStore{MemoryStore: NewMemoryStore()}
-	reg := NewRegistry(store)
+	reg := NewRegistry(store, fanout.NewMemory())
 	reg.gapGrace = time.Hour
 	t.Cleanup(reg.Close)
 	join(t, ctx, reg, 1)
@@ -207,7 +208,7 @@ func TestMissedOpsSplitsIntoFrames(t *testing.T) {
 	store := NewMemoryStore()
 	log := chain(50, n)
 	seedLog(t, store, log)
-	reg := NewRegistry(store)
+	reg := NewRegistry(store, fanout.NewMemory())
 	t.Cleanup(reg.Close)
 
 	_, peer := resumeJoin(t, ctx, reg, 1, 0)

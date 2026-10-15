@@ -1,0 +1,15 @@
+syntax = "proto3";
+
+package fanout.v1;
+
+import "crdt/v1/snapshot.proto";
+
+option go_package = "github.com/rowjay007/collab-sphere/gen/fanout/v1;fanoutv1";
+
+// SequencedOps is the Redis payload on doc:{id}, never sent on the WebSocket.
+// It holds the ops one Append newly stored, at seqs first_seq onward.
+message SequencedOps {
+  string origin = 1;
+  uint64 first_seq = 2;
+  repeated crdt.v1.Operation operations = 3;
+}

@@ -9,6 +9,7 @@ import (
 
 	collabv1 "github.com/rowjay007/collab-sphere/gen/collab/v1"
 	crdtv1 "github.com/rowjay007/collab-sphere/gen/crdt/v1"
+	presencev1 "github.com/rowjay007/collab-sphere/gen/presence/v1"
 	"github.com/rowjay007/collab-sphere/pkg/crdt"
 	"github.com/rowjay007/collab-sphere/services/collab-hub/internal/fanout"
 )
@@ -23,6 +24,9 @@ const (
 	maxBufferedRanges = 64
 	maxFillFailures   = 3
 	defaultMaxReplay  = 20_000
+	defaultIdleSync   = time.Second
+	defaultReadyWait  = 2 * time.Second
+	remoteInbox       = 1024
 	// A frame of this many ops stays far below the client's read limit, and
 	// defaultMaxReplay/missedFrameOps frames fit in a new peer's empty buffer.
 	missedFrameOps = 4096
@@ -77,6 +81,18 @@ type timerEvent struct{ gen uint64 }
 
 func (timerEvent) isEvent() {}
 
+type remoteOpsEvent struct{ b fanout.Batch }
+
+func (remoteOpsEvent) isEvent() {}
+
+type resyncEvent struct{}
+
+func (resyncEvent) isEvent() {}
+
+type idleEvent struct{}
+
+func (idleEvent) isEvent() {}
+
 type stopEvent struct{}
 
 func (stopEvent) isEvent() {}
@@ -103,10 +119,13 @@ type Hub struct {
 	registry *Registry
 	gapGrace time.Duration
 	events   chan event
+	remote   chan fanout.Batch
+	resync   chan struct{}
 	stopped  chan struct{}
 	once     sync.Once
 	refs     int
 
+	sub     fanout.Subscription
 	doc     *crdt.Doc
 	seq     *fanout.Sequencer
 	gap     gapTimer
@@ -123,6 +142,8 @@ func newHub(docID string, registry *Registry) *Hub {
 		registry: registry,
 		gapGrace: registry.gapGrace,
 		events:   make(chan event, 256),
+		remote:   make(chan fanout.Batch, remoteInbox),
+		resync:   make(chan struct{}, 1),
 		stopped:  make(chan struct{}),
 		peers:    make(map[crdt.ClientID]*Peer),
 		cursors:  make(map[crdt.ClientID]cursor),
@@ -130,24 +151,36 @@ func newHub(docID string, registry *Registry) *Hub {
 }
 
 func (h *Hub) loop() {
+	h.subscribe()
 	ctx, cancel := context.WithTimeout(context.Background(), loadTimeout)
 	doc, delivered, err := h.store.Load(ctx, h.docID)
 	cancel()
 	if err != nil {
 		h.loadErr = err
+		h.unsubscribe()
 	} else {
 		h.doc = doc
 		h.seq = fanout.NewSequencer(delivered)
 	}
 
+	idle := time.NewTimer(h.registry.idleSync)
+	defer idle.Stop()
 	var pending event
 	for {
-		var ev event
-		if pending != nil {
-			ev, pending = pending, nil
-		} else {
-			ev = <-h.events
+		ev := pending
+		pending = nil
+		if ev == nil {
+			select {
+			case ev = <-h.events:
+			case b := <-h.remote:
+				ev = remoteOpsEvent{b: b}
+			case <-h.resync:
+				ev = resyncEvent{}
+			case <-idle.C:
+				ev = idleEvent{}
+			}
 		}
+		before := h.delivered()
 		var stop bool
 		switch ev := ev.(type) {
 		case stopEvent:
@@ -162,12 +195,77 @@ func (h *Hub) loop() {
 			h.handleCursor(ev)
 		case timerEvent:
 			stop = h.handleTimer(ev)
+		case remoteOpsEvent:
+			stop = h.handleRemote(ev.b)
+		case resyncEvent:
+			stop = h.poll()
+		case idleEvent:
+			if len(h.peers) > 0 {
+				stop = h.poll()
+			}
+			idle.Reset(h.registry.idleSync)
 		}
 		if stop {
 			h.shutdown()
 			return
 		}
+		if h.delivered() != before {
+			idle.Reset(h.registry.idleSync)
+		}
 	}
+}
+
+// subscribe joins the bus before Load so no batch can fall between the two.
+// If Redis does not confirm in time the hub starts degraded and resyncs once
+// it does.
+func (h *Hub) subscribe() {
+	sub := h.registry.bus.Join(h.docID, h)
+	h.sub = sub
+	select {
+	case <-sub.Ready():
+	case <-time.After(h.registry.readyWait):
+		go func() {
+			select {
+			case <-sub.Ready():
+				h.Resync()
+			case <-h.stopped:
+			}
+		}()
+	}
+}
+
+func (h *Hub) unsubscribe() {
+	if h.sub != nil {
+		h.sub.Close()
+		h.sub = nil
+	}
+}
+
+// RemoteOps hands a batch from the bus to the loop. A full inbox drops it,
+// and gap or idle healing recovers what it held.
+func (h *Hub) RemoteOps(b fanout.Batch) {
+	select {
+	case h.remote <- b:
+	default:
+	}
+}
+
+// Presence ignores presence events until the hub integrates presence-service.
+func (h *Hub) Presence(*presencev1.Event) {}
+
+// Resync asks the loop to read the log. Repeated requests coalesce.
+func (h *Hub) Resync() {
+	select {
+	case h.resync <- struct{}{}:
+	default:
+	}
+}
+
+func (h *Hub) delivered() uint64 {
+	if h.seq == nil {
+		return 0
+	}
+	return h.seq.Delivered()
 }
 
 func (h *Hub) closeStopped() {
@@ -176,6 +274,7 @@ func (h *Hub) closeStopped() {
 
 func (h *Hub) shutdown() {
 	h.closeStopped()
+	h.unsubscribe()
 	h.dead = true
 	for _, p := range h.peers {
 		p.CloseWithReason("hub stopped")
@@ -394,9 +493,9 @@ func (h *Hub) rejectOperation(p *Peer, code collabv1.ErrorMessage_Code, message 
 	h.dropPeer(p, true)
 }
 
-// persist appends the group and offers every seq run to the Sequencer. A run
-// can hold ops the log already had above D, which reveals a gap. It reports
-// whether the hub fail-stopped.
+// persist appends the group, publishes what the log newly stored, and offers
+// every seq run to the Sequencer. A run can hold ops the log already had
+// above D, which reveals a gap. It reports whether the hub fail-stopped.
 func (h *Hub) persist(accepted []crdt.Op) bool {
 	if len(accepted) == 0 {
 		return false
@@ -408,12 +507,32 @@ func (h *Hub) persist(accepted []crdt.Op) bool {
 		h.failStop(collabv1.ErrorMessage_CODE_UNAVAILABLE, "document service unavailable")
 		return true
 	}
+	if b, ok := newlyStored(accepted, res); ok {
+		h.registry.bus.Publish(h.docID, b)
+	}
 	for _, run := range seqRuns(accepted, res.Seqs) {
 		if err := h.deliver(h.seq.Offer(run)); err != nil {
 			h.failStop(collabv1.ErrorMessage_CODE_INTERNAL, "internal error")
 			return true
 		}
 	}
+	return h.watchGap()
+}
+
+func (h *Hub) handleRemote(b fanout.Batch) bool {
+	if h.dead || h.seq == nil {
+		return false
+	}
+	if err := h.deliver(h.seq.Offer(b)); err != nil {
+		h.failStop(collabv1.ErrorMessage_CODE_INTERNAL, "internal error")
+		return true
+	}
+	return h.watchGap()
+}
+
+// watchGap arms the grace timer for an open gap, or fills at once when too
+// many ranges wait. It reports whether the hub fail-stopped.
+func (h *Hub) watchGap() bool {
 	open, buffered := h.seq.Gap()
 	switch {
 	case !open:
@@ -436,6 +555,21 @@ func seqRuns(ops []crdt.Op, seqs []uint64) []fanout.Batch {
 		runs = append(runs, fanout.Batch{FirstSeq: seqs[i], Ops: []crdt.Op{op}})
 	}
 	return runs
+}
+
+// newlyStored returns the ops Append stored for the first time, which hold
+// exactly the seqs FirstNewSeq..OpSeq.
+func newlyStored(ops []crdt.Op, res AppendResult) (fanout.Batch, bool) {
+	if res.FirstNewSeq == 0 {
+		return fanout.Batch{}, false
+	}
+	run := make([]crdt.Op, res.OpSeq-res.FirstNewSeq+1)
+	for i, seq := range res.Seqs {
+		if seq >= res.FirstNewSeq {
+			run[seq-res.FirstNewSeq] = ops[i]
+		}
+	}
+	return fanout.Batch{FirstSeq: res.FirstNewSeq, Ops: run}, true
 }
 
 // deliver applies each batch to doc and sends it to every peer. The hub's own
@@ -486,7 +620,7 @@ func (h *Hub) armGap() {
 // the fail-stop; a target beyond the log does not. h.dead reports whether
 // the hub fail-stopped.
 func (h *Hub) heal(target uint64) error {
-	err := h.fill(target)
+	err := h.fill(target, false)
 	switch {
 	case err == nil:
 		h.gap.failures = 0
@@ -507,9 +641,26 @@ func (h *Hub) heal(target uint64) error {
 	return err
 }
 
-func (h *Hub) fill(target uint64) error {
+// poll reads the log to its end. The idle and resync paths use it, so finding
+// nothing is the normal outcome, and a failed read waits for the next idle
+// tick instead of counting toward fail-stop. It reports whether the hub
+// fail-stopped.
+func (h *Hub) poll() bool {
+	if h.dead || h.seq == nil {
+		return false
+	}
+	if err := h.fill(0, true); errors.Is(err, errDiverged) {
+		h.failStop(collabv1.ErrorMessage_CODE_INTERNAL, "internal error")
+		return true
+	}
+	return false
+}
+
+// fill reads the log after D until no gap is open and D is at least target.
+// With toHead it first learns the log's end and makes that the target.
+func (h *Hub) fill(target uint64, toHead bool) error {
 	for {
-		if open, _ := h.seq.Gap(); !open && h.seq.Delivered() >= target {
+		if !toHead && h.caughtUp(target) {
 			return nil
 		}
 		ctx, cancel := context.WithTimeout(context.Background(), readTimeout)
@@ -521,14 +672,25 @@ func (h *Hub) fill(target uint64) error {
 		if opSeq < target {
 			return ErrInvalidResume
 		}
+		if toHead {
+			target, toHead = opSeq, false
+		}
 		ready := h.seq.Offer(b)
 		if len(ready) == 0 {
+			if h.caughtUp(target) {
+				return nil
+			}
 			return errNoProgress
 		}
 		if err := h.deliver(ready); err != nil {
 			return err
 		}
 	}
+}
+
+func (h *Hub) caughtUp(target uint64) bool {
+	open, _ := h.seq.Gap()
+	return !open && h.seq.Delivered() >= target
 }
 
 func (h *Hub) handleCursor(ev cursorEvent) {
@@ -562,6 +724,7 @@ func (h *Hub) failStop(code collabv1.ErrorMessage_Code, message string) {
 	h.peers = nil
 	h.cursors = nil
 	h.dead = true
+	h.unsubscribe()
 	h.registry.evict(h)
 }
 

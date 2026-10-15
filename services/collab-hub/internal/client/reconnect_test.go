@@ -16,12 +16,13 @@ import (
 	collabv1 "github.com/rowjay007/collab-sphere/gen/collab/v1"
 	"github.com/rowjay007/collab-sphere/pkg/collabclient"
 	"github.com/rowjay007/collab-sphere/pkg/crdt"
+	"github.com/rowjay007/collab-sphere/services/collab-hub/internal/fanout"
 	"github.com/rowjay007/collab-sphere/services/collab-hub/internal/hub"
 )
 
 func serve(t *testing.T, store hub.Store) (string, *hub.Registry) {
 	t.Helper()
-	reg := hub.NewRegistry(store)
+	reg := hub.NewRegistry(store, fanout.NewMemory())
 	t.Cleanup(reg.Close)
 	mux := http.NewServeMux()
 	mux.Handle("GET /ws/{docID}", Handler(reg))
@@ -32,7 +33,7 @@ func serve(t *testing.T, store hub.Store) (string, *hub.Registry) {
 
 func serveCounting(t *testing.T, store hub.Store) (string, *atomic.Int64) {
 	t.Helper()
-	reg := hub.NewRegistry(store)
+	reg := hub.NewRegistry(store, fanout.NewMemory())
 	t.Cleanup(reg.Close)
 	var attempts atomic.Int64
 	handler := Handler(reg)

@@ -45,3 +45,10 @@ type Bus interface {
 	Join(docID string, sink Sink) Subscription
 	Publish(docID string, b Batch)
 }
+
+// DocChannel carries a document's SequencedOps.
+func DocChannel(docID string) string { return "doc:" + docID }
+
+// PresenceChannel carries a document's presence events. presence-service
+// publishes on the same name.
+func PresenceChannel(docID string) string { return "presence-events:" + docID }

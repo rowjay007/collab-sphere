@@ -9,6 +9,7 @@ import (
 
 	collabv1 "github.com/rowjay007/collab-sphere/gen/collab/v1"
 	"github.com/rowjay007/collab-sphere/pkg/crdt"
+	"github.com/rowjay007/collab-sphere/services/collab-hub/internal/fanout"
 	"google.golang.org/protobuf/proto"
 )
 
@@ -16,7 +17,7 @@ func TestRejectedOperationDropsPeerAfterPersistingPrefix(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 	defer cancel()
 	store := NewMemoryStore()
-	reg := NewRegistry(store)
+	reg := NewRegistry(store, fanout.NewMemory())
 	t.Cleanup(reg.Close)
 	peer := NewPeer(1)
 	session, err := reg.Join(ctx, "doc", peer, false, 0)
@@ -45,7 +46,7 @@ func TestOperationClockBeyondHubFrontierIsRejected(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 	defer cancel()
 	store := NewMemoryStore()
-	reg := NewRegistry(store)
+	reg := NewRegistry(store, fanout.NewMemory())
 	t.Cleanup(reg.Close)
 	peer := NewPeer(1)
 	session, err := reg.Join(ctx, "doc", peer, false, 0)
@@ -74,7 +75,7 @@ func TestOperationClockBeyondHubFrontierIsRejected(t *testing.T) {
 func TestInvalidCursorIsIgnored(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 	defer cancel()
-	reg := NewRegistry(NewMemoryStore())
+	reg := NewRegistry(NewMemoryStore(), fanout.NewMemory())
 	t.Cleanup(reg.Close)
 
 	peer := NewPeer(1)
@@ -175,7 +176,7 @@ func TestHubGroupsQueuedClientBatches(t *testing.T) {
 		firstStarted: make(chan struct{}),
 		releaseFirst: make(chan struct{}),
 	}
-	reg := NewRegistry(store)
+	reg := NewRegistry(store, fanout.NewMemory())
 	t.Cleanup(reg.Close)
 
 	peers := make([]*Peer, clients)
