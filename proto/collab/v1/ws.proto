@@ -71,7 +71,10 @@ message DocumentSync {
   uint64 seq = 3;
 }
 
-// The ops a resuming client missed, seqs first_seq..seq. Sent even when empty.
+// The ops a resuming client missed, seqs first_seq..first_seq+len-1. seq is
+// the last seq the resume covers. A long resume arrives as several frames
+// with contiguous first_seq that all carry the same seq, and the client is
+// attached once it holds seq. Sent even when empty.
 message MissedOps {
   string document_id = 1;
   uint64 first_seq = 2;

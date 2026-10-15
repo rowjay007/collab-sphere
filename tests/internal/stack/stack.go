@@ -244,6 +244,9 @@ func (s *Stack) CreateDocument(ctx context.Context) string {
 	return doc.GetId()
 }
 
+// HubURL is the hub's WebSocket base URL.
+func (s *Stack) HubURL() string { return s.hubBase }
+
 func (s *Stack) Dial(ctx context.Context, docID string, client crdt.ClientID) *collabclient.Client {
 	s.t.Helper()
 	c, err := collabclient.Dial(ctx, s.hubBase, docID, client)

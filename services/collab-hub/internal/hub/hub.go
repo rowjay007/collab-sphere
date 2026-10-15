@@ -22,6 +22,10 @@ const (
 	fillLimit         = 4096
 	maxBufferedRanges = 64
 	maxFillFailures   = 3
+	defaultMaxReplay  = 20_000
+	// A frame of this many ops stays far below the client's read limit, and
+	// defaultMaxReplay/missedFrameOps frames fit in a new peer's empty buffer.
+	missedFrameOps = 4096
 )
 
 var (
@@ -29,6 +33,8 @@ var (
 	ErrStopped = errors.New("hub stopped")
 	// ErrUnavailable is returned when a join cannot be served until the log is readable.
 	ErrUnavailable = errors.New("document log unavailable")
+	// ErrInvalidResume is returned when a client resumes from a seq the log never reached.
+	ErrInvalidResume = errors.New("resume seq is beyond the document log")
 
 	errDiverged   = errors.New("sequenced op does not apply")
 	errNoProgress = errors.New("log read returned nothing new")
@@ -37,8 +43,10 @@ var (
 type event interface{ isEvent() }
 
 type joinEvent struct {
-	peer  *Peer
-	reply chan error
+	peer   *Peer
+	resume bool
+	seq    uint64
+	reply  chan error
 }
 
 func (joinEvent) isEvent() {}
@@ -199,26 +207,42 @@ func (h *Hub) handleJoin(ev joinEvent) bool {
 		return false
 	}
 	if h.loadErr != nil {
-		message := "failed to load document"
 		if errors.Is(h.loadErr, ErrArchived) {
-			message = "document archived"
+			ev.peer.TrySend(EncodeError(collabv1.ErrorMessage_CODE_INTERNAL, "document archived"))
+		} else {
+			ev.peer.TrySend(EncodeError(collabv1.ErrorMessage_CODE_UNAVAILABLE, "failed to load document"))
 		}
-		ev.peer.TrySend(EncodeError(collabv1.ErrorMessage_CODE_INTERNAL, message))
 		ev.reply <- h.loadErr
 		return false
 	}
-	// A snapshot holding an op above D would let the joiner build on an op
-	// another hub has not delivered, so the snapshot must be exactly log[1..D].
-	if open, _ := h.seq.Gap(); open {
-		if h.heal() {
+	// A resuming client holds log[1..seq], so D must reach seq before its ops
+	// are validated. A snapshot holding an op above D would let the joiner
+	// build on an op another hub has not delivered, so G must be empty too.
+	var target uint64
+	if ev.resume {
+		target = ev.seq
+	}
+	if open, _ := h.seq.Gap(); open || h.seq.Delivered() < target {
+		err := h.heal(target)
+		switch {
+		case h.dead:
 			ev.reply <- ErrStopped
 			return true
-		}
-		if open, _ := h.seq.Gap(); open {
+		case errors.Is(err, ErrInvalidResume):
+			ev.peer.TrySend(EncodeError(collabv1.ErrorMessage_CODE_INVALID_RESUME, ErrInvalidResume.Error()))
+			ev.reply <- ErrInvalidResume
+			return false
+		case err != nil:
 			ev.peer.TrySend(EncodeError(collabv1.ErrorMessage_CODE_UNAVAILABLE, "document log unavailable"))
 			ev.reply <- ErrUnavailable
 			return false
 		}
+	}
+	frames, err := h.joinFrames(ev.resume, ev.seq)
+	if err != nil {
+		ev.peer.TrySend(EncodeError(collabv1.ErrorMessage_CODE_UNAVAILABLE, "document log unavailable"))
+		ev.reply <- ErrUnavailable
+		return false
 	}
 
 	if old, ok := h.peers[ev.peer.id]; ok {
@@ -226,16 +250,11 @@ func (h *Hub) handleJoin(ev joinEvent) bool {
 		old.CloseWithReason("superseded")
 	}
 	h.peers[ev.peer.id] = ev.peer
-	sync := mustMarshal(&collabv1.ServerMessage{
-		Payload: &collabv1.ServerMessage_DocumentSync{DocumentSync: &collabv1.DocumentSync{
-			DocumentId: h.docID,
-			Snapshot:   h.doc.Snapshot(),
-			Seq:        h.seq.Delivered(),
-		}},
-	})
-	if !h.sendOrDrop(ev.peer, sync) {
-		ev.reply <- errors.New("send buffer full")
-		return false
+	for _, frame := range frames {
+		if !h.sendOrDrop(ev.peer, frame) {
+			ev.reply <- errors.New("send buffer full")
+			return false
+		}
 	}
 	for id, cur := range h.cursors {
 		if id == ev.peer.id {
@@ -254,6 +273,55 @@ func (h *Hub) handleJoin(ev joinEvent) bool {
 	}
 	ev.reply <- nil
 	return false
+}
+
+// joinFrames answers a resume within maxReplay with MissedOps for
+// log(seq, D] and anything else with a DocumentSync of log[1..D]. MissedOps
+// is split into frames of at most missedFrameOps ops with contiguous
+// first_seq, and every frame carries seq D so the client knows when it has
+// them all. It is sent even when empty.
+func (h *Hub) joinFrames(resume bool, seq uint64) ([][]byte, error) {
+	d := h.seq.Delivered()
+	if !resume || d-seq > h.registry.maxReplay {
+		return [][]byte{mustMarshal(&collabv1.ServerMessage{
+			Payload: &collabv1.ServerMessage_DocumentSync{DocumentSync: &collabv1.DocumentSync{
+				DocumentId: h.docID,
+				Snapshot:   h.doc.Snapshot(),
+				Seq:        d,
+			}},
+		})}, nil
+	}
+	var frames [][]byte
+	for after := seq; ; {
+		var ops []*crdtv1.Operation
+		if after < d {
+			ctx, cancel := context.WithTimeout(context.Background(), readTimeout)
+			b, _, err := h.store.ReadOperations(ctx, h.docID, after, int(min(d-after, missedFrameOps)))
+			cancel()
+			if err != nil {
+				return nil, err
+			}
+			if len(b.Ops) == 0 {
+				return nil, errNoProgress
+			}
+			ops = make([]*crdtv1.Operation, len(b.Ops))
+			for i, op := range b.Ops {
+				ops[i] = crdt.OpToProto(op)
+			}
+		}
+		frames = append(frames, mustMarshal(&collabv1.ServerMessage{
+			Payload: &collabv1.ServerMessage_MissedOps{MissedOps: &collabv1.MissedOps{
+				DocumentId: h.docID,
+				FirstSeq:   after + 1,
+				Operations: ops,
+				Seq:        d,
+			}},
+		}))
+		after += uint64(len(ops))
+		if after == d {
+			return frames, nil
+		}
+	}
 }
 
 func (h *Hub) handleLeave(ev leaveEvent) {
@@ -351,7 +419,8 @@ func (h *Hub) persist(accepted []crdt.Op) bool {
 	case !open:
 		return false
 	case buffered > maxBufferedRanges:
-		return h.heal()
+		_ = h.heal(0)
+		return h.dead
 	}
 	h.armGap()
 	return false
@@ -396,7 +465,8 @@ func (h *Hub) handleTimer(ev timerEvent) bool {
 		return false
 	}
 	h.gap.armed = false
-	return h.heal()
+	_ = h.heal(0)
+	return h.dead
 }
 
 func (h *Hub) armGap() {
@@ -411,38 +481,45 @@ func (h *Hub) armGap() {
 	})
 }
 
-// heal fills the gap from the log and schedules a retry with backoff when it
-// cannot. It reports whether the hub fail-stopped.
-func (h *Hub) heal() bool {
-	err := h.fill()
+// heal fills from the log until no gap is open and D is at least target, and
+// schedules a retry with backoff when it cannot. A failed read counts toward
+// the fail-stop; a target beyond the log does not. h.dead reports whether
+// the hub fail-stopped.
+func (h *Hub) heal(target uint64) error {
+	err := h.fill(target)
 	switch {
 	case err == nil:
 		h.gap.failures = 0
 		h.gap.armed = false
-		return false
+		return nil
+	case errors.Is(err, ErrInvalidResume):
+		return err
 	case errors.Is(err, errDiverged):
 		h.failStop(collabv1.ErrorMessage_CODE_INTERNAL, "internal error")
-		return true
+		return err
 	}
 	h.gap.failures++
 	if h.gap.failures >= maxFillFailures {
 		h.failStop(collabv1.ErrorMessage_CODE_UNAVAILABLE, "document log unavailable")
-		return true
+		return err
 	}
 	h.armGap()
-	return false
+	return err
 }
 
-func (h *Hub) fill() error {
+func (h *Hub) fill(target uint64) error {
 	for {
-		if open, _ := h.seq.Gap(); !open {
+		if open, _ := h.seq.Gap(); !open && h.seq.Delivered() >= target {
 			return nil
 		}
 		ctx, cancel := context.WithTimeout(context.Background(), readTimeout)
-		b, _, err := h.store.ReadOperations(ctx, h.docID, h.seq.Delivered(), fillLimit)
+		b, opSeq, err := h.store.ReadOperations(ctx, h.docID, h.seq.Delivered(), fillLimit)
 		cancel()
 		if err != nil {
 			return err
+		}
+		if opSeq < target {
+			return ErrInvalidResume
 		}
 		ready := h.seq.Offer(b)
 		if len(ready) == 0 {
@@ -458,12 +535,11 @@ func (h *Hub) handleCursor(ev cursorEvent) {
 	if h.dead {
 		return
 	}
-	p, ok := h.peers[ev.id]
+	_, ok := h.peers[ev.id]
 	if !ok {
 		return
 	}
 	if !h.doc.Has(ev.anchor) || !h.doc.Has(ev.head) {
-		p.TrySend(EncodeError(collabv1.ErrorMessage_CODE_INVALID_OPERATION, "invalid operation"))
 		return
 	}
 	cur := cursor{anchor: ev.anchor, head: ev.head}

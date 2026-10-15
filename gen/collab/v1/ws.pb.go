@@ -759,7 +759,10 @@ func (x *DocumentSync) GetSeq() uint64 {
 	return 0
 }
 
-// The ops a resuming client missed, seqs first_seq..seq. Sent even when empty.
+// The ops a resuming client missed, seqs first_seq..first_seq+len-1. seq is
+// the last seq the resume covers. A long resume arrives as several frames
+// with contiguous first_seq that all carry the same seq, and the client is
+// attached once it holds seq. Sent even when empty.
 type MissedOps struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	DocumentId    string                 `protobuf:"bytes,1,opt,name=document_id,json=documentId,proto3" json:"document_id,omitempty"`

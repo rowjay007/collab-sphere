@@ -23,7 +23,8 @@ const (
 	keepaliveInterval = 30 * time.Second
 )
 
-// Handler serves GET /ws/{docID}?client=<nonzero uint64>.
+// Handler serves GET /ws/{docID}?client=<nonzero uint64>[&seq=<uint64>].
+// seq is the last seq a resuming client holds; without it the join is fresh.
 func Handler(reg *hub.Registry) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		docID := r.PathValue("docID")
@@ -31,10 +32,20 @@ func Handler(reg *hub.Registry) http.Handler {
 			http.Error(w, "missing document id", http.StatusBadRequest)
 			return
 		}
-		clientID, err := parseClient(r.URL.Query().Get("client"))
+		query := r.URL.Query()
+		clientID, err := parseClient(query.Get("client"))
 		if err != nil {
 			http.Error(w, "invalid client", http.StatusBadRequest)
 			return
+		}
+		resume := query.Has("seq")
+		var seq uint64
+		if resume {
+			seq, err = strconv.ParseUint(query.Get("seq"), 10, 64)
+			if err != nil {
+				http.Error(w, "invalid seq", http.StatusBadRequest)
+				return
+			}
 		}
 
 		conn, err := websocket.Accept(w, r, nil)
@@ -55,7 +66,7 @@ func Handler(reg *hub.Registry) http.Handler {
 			cancel()
 		}()
 
-		session, err := reg.Join(ctx, docID, peer)
+		session, err := reg.Join(ctx, docID, peer, resume, seq)
 		if err != nil {
 			peer.Close()
 			<-writeDone

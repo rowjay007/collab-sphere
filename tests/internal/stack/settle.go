@@ -6,6 +6,7 @@ import (
 
 	"google.golang.org/protobuf/proto"
 
+	collabv1 "github.com/rowjay007/collab-sphere/gen/collab/v1"
 	documentv1 "github.com/rowjay007/collab-sphere/gen/document/v1"
 	"github.com/rowjay007/collab-sphere/pkg/collabclient"
 	"github.com/rowjay007/collab-sphere/pkg/crdt"
@@ -45,8 +46,10 @@ func Settle(t *testing.T, ctx context.Context, clients []*collabclient.Client) s
 	want := clients[0].Snapshot()
 	text := clients[0].Text()
 	for i, c := range clients {
-		if errs := c.Errors(); len(errs) > 0 {
-			t.Fatalf("client %d got hub errors: %v", i, errs)
+		for _, err := range c.Errors() {
+			if err.GetCode() != collabv1.ErrorMessage_CODE_UNAVAILABLE {
+				t.Fatalf("client %d got hub error: %v", i, err)
+			}
 		}
 		if got := c.Text(); got != text {
 			t.Fatalf("client %d text diverged:\n got %q\nwant %q", i, got, text)
@@ -59,6 +62,32 @@ func Settle(t *testing.T, ctx context.Context, clients []*collabclient.Client) s
 }
 
 func LoadText(t *testing.T, ctx context.Context, docs documentv1.DocumentServiceClient, docID string) (string, *documentv1.Document) {
+	t.Helper()
+	doc, meta := loadState(t, ctx, docs, docID)
+	return doc.Text(), meta
+}
+
+// AssertExactlyOnce checks that the log holds each generated op exactly once:
+// op_seq equals the number of distinct generated op IDs, and the stored
+// document contains every one of them.
+func AssertExactlyOnce(t *testing.T, ctx context.Context, docs documentv1.DocumentServiceClient, docID string, generated []crdt.ID) {
+	t.Helper()
+	doc, meta := loadState(t, ctx, docs, docID)
+	distinct := make(map[crdt.ID]struct{}, len(generated))
+	for _, id := range generated {
+		distinct[id] = struct{}{}
+	}
+	if meta.GetOpSeq() != uint64(len(distinct)) {
+		t.Fatalf("op_seq = %d, want %d distinct generated ops", meta.GetOpSeq(), len(distinct))
+	}
+	for id := range distinct {
+		if !doc.Contains(id) {
+			t.Fatalf("stored document lacks generated op %s", id)
+		}
+	}
+}
+
+func loadState(t *testing.T, ctx context.Context, docs documentv1.DocumentServiceClient, docID string) (*crdt.Doc, *documentv1.Document) {
 	t.Helper()
 	resp, err := docs.LoadState(ctx, &documentv1.LoadStateRequest{Id: docID})
 	if err != nil {
@@ -77,5 +106,5 @@ func LoadText(t *testing.T, ctx context.Context, docs documentv1.DocumentService
 			t.Fatal(err)
 		}
 	}
-	return doc.Text(), resp.GetDocument()
+	return doc, resp.GetDocument()
 }

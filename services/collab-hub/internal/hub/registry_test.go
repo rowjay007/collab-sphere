@@ -7,6 +7,7 @@ import (
 	"testing"
 	"time"
 
+	collabv1 "github.com/rowjay007/collab-sphere/gen/collab/v1"
 	"github.com/rowjay007/collab-sphere/pkg/crdt"
 )
 
@@ -25,21 +26,45 @@ type archivedStore struct {
 	Store
 }
 
+type failedLoadStore struct {
+	Store
+}
+
 func (s archivedStore) Load(context.Context, string) (*crdt.Doc, uint64, error) {
 	return nil, 0, ErrArchived
+}
+
+func (s failedLoadStore) Load(context.Context, string) (*crdt.Doc, uint64, error) {
+	return nil, 0, errors.New("load failed")
 }
 
 func TestArchivedDocumentJoinReportsArchived(t *testing.T) {
 	reg := NewRegistry(archivedStore{Store: NewMemoryStore()})
 	t.Cleanup(reg.Close)
 	peer := NewPeer(1)
-	_, err := reg.Join(t.Context(), "doc", peer)
+	_, err := reg.Join(t.Context(), "doc", peer, false, 0)
 	if !errors.Is(err, ErrArchived) {
 		t.Fatalf("Join error = %v", err)
 	}
 	msg := readServerMessage(t, t.Context(), peer)
 	if got := msg.GetError().GetMessage(); got != "document archived" {
 		t.Fatalf("error message = %q", got)
+	}
+	if got := msg.GetError().GetCode(); got != collabv1.ErrorMessage_CODE_INTERNAL {
+		t.Fatalf("error code = %s, want CODE_INTERNAL", got)
+	}
+}
+
+func TestDocumentLoadFailureIsUnavailable(t *testing.T) {
+	reg := NewRegistry(failedLoadStore{Store: NewMemoryStore()})
+	t.Cleanup(reg.Close)
+	peer := NewPeer(1)
+	if _, err := reg.Join(t.Context(), "doc", peer, false, 0); err == nil {
+		t.Fatal("Join succeeded after load failure")
+	}
+	msg := readServerMessage(t, t.Context(), peer)
+	if got := msg.GetError().GetCode(); got != collabv1.ErrorMessage_CODE_UNAVAILABLE {
+		t.Fatalf("error code = %s, want CODE_UNAVAILABLE", got)
 	}
 }
 
@@ -53,7 +78,7 @@ func (s deadlineLoadStore) Load(ctx context.Context, docID string) (*crdt.Doc, u
 func TestHubLoadHasDeadline(t *testing.T) {
 	reg := NewRegistry(deadlineLoadStore{Store: NewMemoryStore()})
 	t.Cleanup(reg.Close)
-	session, err := reg.Join(t.Context(), "doc", NewPeer(1))
+	session, err := reg.Join(t.Context(), "doc", NewPeer(1), false, 0)
 	if err != nil {
 		t.Fatalf("Join: %v", err)
 	}
@@ -82,7 +107,7 @@ func TestCancelledJoinRemovesAdmittedPeer(t *testing.T) {
 	cancelledCtx, cancel := context.WithCancel(t.Context())
 	cancelled := make(chan error, 1)
 	go func() {
-		_, err := reg.Join(cancelledCtx, "doc", NewPeer(1))
+		_, err := reg.Join(cancelledCtx, "doc", NewPeer(1), false, 0)
 		cancelled <- err
 	}()
 	<-store.started
@@ -91,7 +116,7 @@ func TestCancelledJoinRemovesAdmittedPeer(t *testing.T) {
 	keeper := make(chan *Session, 1)
 	keeperErr := make(chan error, 1)
 	go func() {
-		session, err := reg.Join(t.Context(), "doc", NewPeer(2))
+		session, err := reg.Join(t.Context(), "doc", NewPeer(2), false, 0)
 		if err != nil {
 			keeperErr <- err
 			return
@@ -124,7 +149,7 @@ func TestCancelledJoinRemovesAdmittedPeer(t *testing.T) {
 	}
 	t.Cleanup(func() { keeperSession.Leave(context.Background()) })
 
-	fresh, err := reg.Join(t.Context(), "doc", NewPeer(1))
+	fresh, err := reg.Join(t.Context(), "doc", NewPeer(1), false, 0)
 	if err != nil {
 		t.Fatalf("fresh Join after cancelled Join: %v", err)
 	}
@@ -154,7 +179,7 @@ func TestStaleLeaveAfterFailStopDoesNotStopNewHub(t *testing.T) {
 	t.Cleanup(reg.Close)
 
 	alice := NewPeer(1)
-	aliceSession, err := reg.Join(ctx, "doc", alice)
+	aliceSession, err := reg.Join(ctx, "doc", alice, false, 0)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -168,7 +193,7 @@ func TestStaleLeaveAfterFailStopDoesNotStopNewHub(t *testing.T) {
 	store.FailAppend(nil)
 
 	bob := NewPeer(2)
-	bobSession, err := reg.Join(ctx, "doc", bob)
+	bobSession, err := reg.Join(ctx, "doc", bob, false, 0)
 	if err != nil {
 		t.Fatal(err)
 	}

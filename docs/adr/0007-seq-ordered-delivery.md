@@ -22,6 +22,10 @@ Between events the hub's document is `log[1..D]` plus `G`, the ops this hub appe
 
 **Acknowledgement.** A sender's op is acknowledged when it appears in the sequenced stream. There is no separate ack frame. The echo proves the op is durable and tells the client its seq.
 
+**Resume.** A reconnecting client joins with `seq`, the last seq it holds. The hub first catches up. While `D < seq` it reads the log after `D` and delivers to its peers as usual. If the log ends below `seq`, it sends `CODE_INVALID_RESUME` and refuses the join, because the client claims ops the log never had. A failed read refuses the join with `CODE_UNAVAILABLE` and counts toward the three gap-fill failures. The same fill also empties `G`, so the hub has one rule for every join: `D ≥ seq` and nothing waits above `D`. Then, if `D - seq ≤ maxReplay` (20,000), it sends `MissedOps` holding `log(seq, D]`, read from the log. Otherwise it sends a `DocumentSync` exactly as for a fresh join. `MissedOps` goes out even when empty, since it tells the client it is attached and should resend its unacknowledged ops.
+
+**MissedOps framing.** Each `MissedOps` frame holds at most 4,096 ops, one log read each. The frames have contiguous `first_seq`, and every one carries `seq: D`, so the client knows it is attached when it holds `D`. A frame of 4,096 ops is a few hundred kilobytes at most, far below the client's 64 MiB read limit. A resume of 20,000 ops is five frames. The hub queues them in its loop before registering anything else for the new peer, whose 256-frame send buffer is still empty, so they never block the loop. A full buffer would drop the peer as a slow consumer, never a silent loss.
+
 **Newest connection wins.** A second join for a client ID already on this hub closes the old peer with reason `superseded` and admits the new one. Nobody sees a Left, because the client is still here. An auto-reconnect that lands on the same hub while the old socket is half-open therefore succeeds.
 
 **Append failure** still fail-stops the hub. Peers now get `CODE_UNAVAILABLE`, which tells them to reconnect and resend.
@@ -34,4 +38,4 @@ Between events the hub's document is `log[1..D]` plus `G`, the ops this hub appe
 
 ## Consequences
 
-An echo can wait for a gap to heal, at worst the grace period plus one range read. The fan-out unit measures this under cross-hub contention and tunes the grace period. The hub works with no bus at all. Its own appends are the only source of ranges, and a log written by another hub shows up through the duplicate signal or the next append's gap. `collabclient` checks that each frame starts at `Seq()+1` and closes the connection otherwise, since a break in the stream is a server bug.
+An echo can wait for a gap to heal, at worst the grace period plus one range read. The fan-out unit measures this under cross-hub contention and tunes the grace period. The hub works with no bus at all. Its own appends are the only source of ranges, and a log written by another hub shows up through the duplicate signal or the next append's gap. `collabclient` checks that each frame starts at `Seq()+1` and closes the connection otherwise, since a break in the stream is a server bug. It does not reconnect after a broken stream or `CODE_INVALID_RESUME`, because a new connection fixes neither.

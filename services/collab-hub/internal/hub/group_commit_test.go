@@ -19,7 +19,7 @@ func TestRejectedOperationDropsPeerAfterPersistingPrefix(t *testing.T) {
 	reg := NewRegistry(store)
 	t.Cleanup(reg.Close)
 	peer := NewPeer(1)
-	session, err := reg.Join(ctx, "doc", peer)
+	session, err := reg.Join(ctx, "doc", peer, false, 0)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -48,7 +48,7 @@ func TestOperationClockBeyondHubFrontierIsRejected(t *testing.T) {
 	reg := NewRegistry(store)
 	t.Cleanup(reg.Close)
 	peer := NewPeer(1)
-	session, err := reg.Join(ctx, "doc", peer)
+	session, err := reg.Join(ctx, "doc", peer, false, 0)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -68,6 +68,51 @@ func TestOperationClockBeyondHubFrontierIsRejected(t *testing.T) {
 	}
 	if doc := store.Doc("doc"); doc != nil && doc.Text() != "" {
 		t.Fatalf("stored text = %q", doc.Text())
+	}
+}
+
+func TestInvalidCursorIsIgnored(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+	reg := NewRegistry(NewMemoryStore())
+	t.Cleanup(reg.Close)
+
+	peer := NewPeer(1)
+	session, err := reg.Join(ctx, "doc", peer, false, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	readServerMessage(t, ctx, peer)
+	session.MoveCursor(ctx, crdt.ID{Client: 99, Clock: 1}, crdt.ID{Client: 99, Clock: 1})
+
+	observer := NewPeer(2)
+	observerSession, err := reg.Join(ctx, "doc", observer, false, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { observerSession.Leave(context.Background()) })
+	if msg := readServerMessage(t, ctx, observer); msg.GetDocumentSync() == nil {
+		t.Fatalf("observer first frame = %T, want DocumentSync", msg.GetPayload())
+	}
+	select {
+	case frame := <-observer.Frames():
+		msg := &collabv1.ServerMessage{}
+		if err := proto.Unmarshal(frame, msg); err != nil {
+			t.Fatal(err)
+		}
+		t.Fatalf("observer got frame %T for invalid cursor", msg.GetPayload())
+	default:
+	}
+	select {
+	case frame := <-peer.Frames():
+		msg := &collabv1.ServerMessage{}
+		if err := proto.Unmarshal(frame, msg); err != nil {
+			t.Fatal(err)
+		}
+		t.Fatalf("sender got frame %T for invalid cursor", msg.GetPayload())
+	case <-peer.Done():
+		t.Fatal("sender was dropped for invalid cursor")
+	default:
 	}
 }
 
@@ -137,7 +182,7 @@ func TestHubGroupsQueuedClientBatches(t *testing.T) {
 	sessions := make([]*Session, clients)
 	for i := range peers {
 		peers[i] = NewPeer(crdt.ClientID(i + 1))
-		session, err := reg.Join(ctx, "doc", peers[i])
+		session, err := reg.Join(ctx, "doc", peers[i], false, 0)
 		if err != nil {
 			t.Fatal(err)
 		}

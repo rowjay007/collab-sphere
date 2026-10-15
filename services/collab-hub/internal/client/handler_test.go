@@ -242,8 +242,11 @@ func TestProtocolErrors(t *testing.T) {
 	if err := a.sendCursor(crdt.ID{Client: 99, Clock: 1}, crdt.ID{Client: 99, Clock: 1}); err != nil {
 		t.Fatal(err)
 	}
-	if err := a.waitError(ctx, collabv1.ErrorMessage_CODE_INVALID_OPERATION); err != nil {
-		t.Fatalf("INVALID_OPERATION cursor: %v", err)
+	if err := a.sendPing(41); err != nil {
+		t.Fatal(err)
+	}
+	if err := a.waitPong(ctx, 41); err != nil {
+		t.Fatalf("invalid cursor disconnected peer: %v", err)
 	}
 
 	superseded := a
@@ -447,5 +450,17 @@ func TestInvalidClientQuery(t *testing.T) {
 	_, _, err := websocket.Dial(ctx, wsURL(srv, "doc", 0), nil)
 	if err == nil {
 		t.Fatal("expected dial to fail for client=0")
+	}
+}
+
+func TestInvalidSeqQuery(t *testing.T) {
+	srv, _ := startHub(t)
+	ctx, cancel := context.WithTimeout(t.Context(), 2*time.Second)
+	defer cancel()
+	for _, seq := range []string{"", "-1", "abc"} {
+		_, resp, err := websocket.Dial(ctx, wsURL(srv, "doc", 1)+"&seq="+seq, nil)
+		if err == nil || resp == nil || resp.StatusCode != http.StatusBadRequest {
+			t.Fatalf("seq=%q: dial error %v, response %v", seq, err, resp)
+		}
 	}
 }

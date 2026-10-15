@@ -11,18 +11,20 @@ import (
 
 // Registry maps document IDs to live hubs and counts connected clients.
 type Registry struct {
-	store    Store
-	gapGrace time.Duration
-	mu       sync.Mutex
-	hubs     map[string]*Hub
+	store     Store
+	gapGrace  time.Duration
+	maxReplay uint64
+	mu        sync.Mutex
+	hubs      map[string]*Hub
 }
 
 // NewRegistry starts with no hubs. The first join for a document creates one.
 func NewRegistry(store Store) *Registry {
 	return &Registry{
-		store:    store,
-		gapGrace: defaultGapGrace,
-		hubs:     make(map[string]*Hub),
+		store:     store,
+		gapGrace:  defaultGapGrace,
+		maxReplay: defaultMaxReplay,
+		hubs:      make(map[string]*Hub),
 	}
 }
 
@@ -34,12 +36,14 @@ type Session struct {
 	peer *Peer
 }
 
-// Join attaches peer to docID. The caller must Leave the returned session on disconnect.
-func (r *Registry) Join(ctx context.Context, docID string, peer *Peer) (*Session, error) {
+// Join attaches peer to docID. A resuming client holds log[1..seq] and gets
+// MissedOps instead of a DocumentSync when it is close enough. The caller
+// must Leave the returned session on disconnect.
+func (r *Registry) Join(ctx context.Context, docID string, peer *Peer, resume bool, seq uint64) (*Session, error) {
 	for {
 		h := r.acquire(docID)
 		reply := make(chan error, 1)
-		if err := h.send(ctx, joinEvent{peer: peer, reply: reply}); err != nil {
+		if err := h.send(ctx, joinEvent{peer: peer, resume: resume, seq: seq, reply: reply}); err != nil {
 			r.release(h)
 			if err == ErrStopped {
 				continue

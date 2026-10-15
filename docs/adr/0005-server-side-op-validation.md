@@ -16,7 +16,9 @@ For each op in a batch, the hub checks five things in order and stops at the fir
 4. `Apply` accepts it. Otherwise it sends `CODE_INVALID_OPERATION`.
 5. An op the document already holds is skipped silently, so a client that resends is safe.
 
-The hub persists and broadcasts the valid prefix before the rejected op. It sends the error to the sender and then drops that peer. The client must reconnect and replace its local state with a fresh `DocumentSync`.
+The hub persists and broadcasts the valid prefix before the rejected op. It sends the error to the sender and then drops that peer. The client records the error and stops.
+
+`CODE_UNAVAILABLE` is the only retryable error code. Every other error frame is terminal and the hub closes or refuses that connection. A cursor whose anchor or head is absent from the hub document is a benign race with the sender's in-flight ops, so the hub drops that cursor update silently.
 
 The connecting client picks its ID with the `client` query parameter. The hub refuses a second live connection with the same ID on the same document.
 
@@ -34,7 +36,7 @@ Phase 2 multi-hub fan-out must revisit the clock bound. A hub may receive a vali
 
 ## Amendment, Phase 2. The clock bound stays
 
-With several hubs, a client's replica is `log[1..seq]` plus its own unacknowledged ops, where `seq` is the last seq it holds. Before admitting a resuming client, its hub reads the log until its own delivered seq is at least the client's. After that, every op and clock the client has seen is in the hub's document, and its own ops arrive in order. So the bound `clock ≤ doc.Clock()+1` holds across hubs, and the five checks stay as written. This catch-up on join lands with the resume unit. Until then a client always joins with a fresh `DocumentSync`, which ADR 0007 keeps to exactly the delivered prefix.
+With several hubs, a client's replica is `log[1..seq]` plus its own unacknowledged ops, where `seq` is the last seq it holds. Before admitting a resuming client, its hub reads the log until its own delivered seq is at least the client's. After that, every op and clock the client has seen is in the hub's document, and its own ops arrive in order. So the bound `clock ≤ doc.Clock()+1` holds across hubs, and the five checks stay as written. The hub implements this catch-up on every resuming join, before it answers with `MissedOps` or a `DocumentSync` (ADR 0007, Resume). A client that resumes from a seq above the log is refused with `CODE_INVALID_RESUME`.
 
 Two other rejected options. A per-client `clock == vector[client]+1` check is wrong, because a Lamport clock legitimately jumps past ops seen from others. Removing the bound reopens the clock-exhaustion attack.
 
