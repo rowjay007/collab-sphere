@@ -27,6 +27,7 @@ type Client struct {
 	mu        sync.Mutex
 	changed   chan struct{}
 	replica   *crdt.Replica
+	seq       uint64
 	sentAt    map[crdt.ID]time.Time
 	sentTimes map[crdt.ID]time.Time
 	received  map[crdt.ID]time.Time
@@ -85,6 +86,7 @@ func Dial(ctx context.Context, baseURL, docID string, client crdt.ClientID) (*Cl
 		out:       make(chan []byte, 1024),
 		changed:   make(chan struct{}),
 		replica:   replica,
+		seq:       sync.GetSeq(),
 		sentAt:    make(map[crdt.ID]time.Time),
 		sentTimes: make(map[crdt.ID]time.Time),
 		received:  make(map[crdt.ID]time.Time),
@@ -175,6 +177,13 @@ func (c *Client) Text() string {
 	return c.replica.Text()
 }
 
+// Seq returns the highest seq of the hub's op stream this client has applied.
+func (c *Client) Seq() uint64 {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.seq
+}
+
 func (c *Client) Snapshot() *crdtv1.Snapshot {
 	c.mu.Lock()
 	defer c.mu.Unlock()
@@ -259,6 +268,7 @@ func (c *Client) readLoop(ctx context.Context) {
 			err = c.handle(msg)
 			if err != nil {
 				c.readErr = err
+				_ = c.conn.CloseNow()
 			}
 		}
 		close(c.changed)
@@ -274,25 +284,45 @@ func (c *Client) readLoop(ctx context.Context) {
 func (c *Client) handle(msg *collabv1.ServerMessage) error {
 	switch p := msg.GetPayload().(type) {
 	case *collabv1.ServerMessage_OperationBroadcast:
-		now := time.Now()
-		for _, pop := range p.OperationBroadcast.GetOperations() {
-			op, err := crdt.OpFromProto(pop)
-			if err != nil {
-				return err
-			}
-			if _, err := c.replica.Apply(op); err != nil {
-				return err
-			}
-			if op.OpID().Client != c.replica.Client() {
-				c.received[op.OpID()] = now
-			}
-			if at, ok := c.sentAt[op.OpID()]; ok {
-				c.latencies = append(c.latencies, now.Sub(at))
-				delete(c.sentAt, op.OpID())
-			}
+		b := p.OperationBroadcast
+		if err := c.applySequenced(b.GetFirstSeq(), b.GetOperations()); err != nil {
+			return err
 		}
+		c.seq += uint64(len(b.GetOperations()))
+	case *collabv1.ServerMessage_MissedOps:
+		m := p.MissedOps
+		if err := c.applySequenced(m.GetFirstSeq(), m.GetOperations()); err != nil {
+			return err
+		}
+		c.seq = m.GetSeq()
 	case *collabv1.ServerMessage_Error:
 		c.errs = append(c.errs, p.Error)
+	}
+	return nil
+}
+
+// applySequenced applies ops that must continue the stream at c.seq+1. A gap
+// or overlap is a hub bug, so it ends the connection.
+func (c *Client) applySequenced(firstSeq uint64, ops []*crdtv1.Operation) error {
+	if firstSeq != c.seq+1 {
+		return fmt.Errorf("collabclient: hub sent seq %d after seq %d", firstSeq, c.seq)
+	}
+	now := time.Now()
+	for _, pop := range ops {
+		op, err := crdt.OpFromProto(pop)
+		if err != nil {
+			return err
+		}
+		if _, err := c.replica.Apply(op); err != nil {
+			return err
+		}
+		if op.OpID().Client != c.replica.Client() {
+			c.received[op.OpID()] = now
+		}
+		if at, ok := c.sentAt[op.OpID()]; ok {
+			c.latencies = append(c.latencies, now.Sub(at))
+			delete(c.sentAt, op.OpID())
+		}
 	}
 	return nil
 }

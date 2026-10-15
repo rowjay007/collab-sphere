@@ -4,22 +4,25 @@ import (
 	"context"
 	"errors"
 	"sync"
+	"time"
 
 	"github.com/rowjay007/collab-sphere/pkg/crdt"
 )
 
 // Registry maps document IDs to live hubs and counts connected clients.
 type Registry struct {
-	store Store
-	mu    sync.Mutex
-	hubs  map[string]*Hub
+	store    Store
+	gapGrace time.Duration
+	mu       sync.Mutex
+	hubs     map[string]*Hub
 }
 
 // NewRegistry starts with no hubs. The first join for a document creates one.
 func NewRegistry(store Store) *Registry {
 	return &Registry{
-		store: store,
-		hubs:  make(map[string]*Hub),
+		store:    store,
+		gapGrace: defaultGapGrace,
+		hubs:     make(map[string]*Hub),
 	}
 }
 
@@ -104,7 +107,7 @@ func (r *Registry) acquire(docID string) *Hub {
 		h.refs++
 		return h
 	}
-	h := newHub(docID, r.store, r)
+	h := newHub(docID, r)
 	h.refs = 1
 	r.hubs[docID] = h
 	go h.loop()

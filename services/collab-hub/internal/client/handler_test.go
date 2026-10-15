@@ -129,26 +129,26 @@ func randomEdits(c *testClient, seed uint64, n int) ([]crdt.ID, error) {
 	rng := rand.New(rand.NewPCG(seed, seed^1))
 	ids := make([]crdt.ID, 0, n)
 	for i := 0; i < n; i++ {
+		var op crdt.Op
+		var err error
 		c.mu.Lock()
-		length := c.replica.Len()
-		c.mu.Unlock()
-		if length == 0 || rng.IntN(3) != 0 {
+		if length := c.replica.Len(); length == 0 || rng.IntN(3) != 0 {
 			idx := 0
 			if length > 0 {
 				idx = rng.IntN(length + 1)
 			}
-			op, err := c.insertAt(idx, rune('a'+rng.IntN(26)))
-			if err != nil {
-				return ids, err
-			}
-			ids = append(ids, op.OpID())
-			continue
+			op, err = c.replica.InsertAt(idx, rune('a'+rng.IntN(26)))
+		} else {
+			op, err = c.replica.DeleteAt(rng.IntN(length))
 		}
-		op, err := c.deleteAt(rng.IntN(length))
+		c.mu.Unlock()
 		if err != nil {
 			return ids, err
 		}
 		ids = append(ids, op.OpID())
+		if err := c.sendOps([]crdt.Op{op}); err != nil {
+			return ids, err
+		}
 	}
 	return ids, nil
 }
@@ -246,10 +246,14 @@ func TestProtocolErrors(t *testing.T) {
 		t.Fatalf("INVALID_OPERATION cursor: %v", err)
 	}
 
-	_, err = dialErr(ctx, srv, "doc", 1)
-	var je *joinError
-	if !errors.As(err, &je) || je.err.GetCode() != collabv1.ErrorMessage_CODE_CLIENT_MISMATCH {
-		t.Fatalf("duplicate client: %v", err)
+	superseded := a
+	a = dial(t, srv, "doc", 1)
+	var closeErr error
+	if err := superseded.waitUntil(ctx, func(tc *testClient) bool { closeErr = tc.readErr; return closeErr != nil }); err != nil {
+		t.Fatalf("superseded connection stayed open: %v", err)
+	}
+	if websocket.CloseStatus(closeErr) != websocket.StatusPolicyViolation {
+		t.Fatalf("superseded connection: %v", closeErr)
 	}
 
 	if err := a.conn.Write(ctx, websocket.MessageBinary, []byte("not-a-protobuf")); err != nil {
@@ -343,7 +347,7 @@ func TestAppendFailStopReloads(t *testing.T) {
 			return true
 		}
 		for _, e := range tc.errs {
-			if e.GetCode() == collabv1.ErrorMessage_CODE_INTERNAL {
+			if e.GetCode() == collabv1.ErrorMessage_CODE_UNAVAILABLE {
 				return true
 			}
 		}

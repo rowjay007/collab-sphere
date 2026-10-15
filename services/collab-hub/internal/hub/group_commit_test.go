@@ -93,7 +93,7 @@ type blockingAppendStore struct {
 	releaseFirst chan struct{}
 }
 
-func (s *blockingAppendStore) Append(ctx context.Context, docID string, ops []crdt.Op) error {
+func (s *blockingAppendStore) Append(ctx context.Context, docID string, ops []crdt.Op) (AppendResult, error) {
 	s.mu.Lock()
 	call := len(s.calls)
 	s.calls = append(s.calls, append([]crdt.Op(nil), ops...))
@@ -104,7 +104,7 @@ func (s *blockingAppendStore) Append(ctx context.Context, docID string, ops []cr
 		select {
 		case <-s.releaseFirst:
 		case <-ctx.Done():
-			return ctx.Err()
+			return AppendResult{}, ctx.Err()
 		}
 	}
 	return s.Store.Append(ctx, docID, ops)

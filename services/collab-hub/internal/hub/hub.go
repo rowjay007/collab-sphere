@@ -3,25 +3,35 @@ package hub
 import (
 	"context"
 	"errors"
+	"fmt"
 	"sync"
 	"time"
 
 	collabv1 "github.com/rowjay007/collab-sphere/gen/collab/v1"
 	crdtv1 "github.com/rowjay007/collab-sphere/gen/crdt/v1"
 	"github.com/rowjay007/collab-sphere/pkg/crdt"
+	"github.com/rowjay007/collab-sphere/services/collab-hub/internal/fanout"
 )
 
 const (
-	appendTimeout  = 5 * time.Second
-	loadTimeout    = 10 * time.Second
-	maxOpsPerGroup = 4096
+	appendTimeout     = 5 * time.Second
+	loadTimeout       = 10 * time.Second
+	readTimeout       = 5 * time.Second
+	maxOpsPerGroup    = 4096
+	defaultGapGrace   = 30 * time.Millisecond
+	fillLimit         = 4096
+	maxBufferedRanges = 64
+	maxFillFailures   = 3
 )
 
 var (
-	// ErrDuplicateClient is returned when that ClientID is already on the document.
-	ErrDuplicateClient = errors.New("client already connected")
 	// ErrStopped is returned when a request lands on a hub that is shutting down.
 	ErrStopped = errors.New("hub stopped")
+	// ErrUnavailable is returned when a join cannot be served until the log is readable.
+	ErrUnavailable = errors.New("document log unavailable")
+
+	errDiverged   = errors.New("sequenced op does not apply")
+	errNoProgress = errors.New("log read returned nothing new")
 )
 
 type event interface{ isEvent() }
@@ -55,6 +65,10 @@ type cursorEvent struct {
 
 func (cursorEvent) isEvent() {}
 
+type timerEvent struct{ gen uint64 }
+
+func (timerEvent) isEvent() {}
+
 type stopEvent struct{}
 
 func (stopEvent) isEvent() {}
@@ -64,43 +78,58 @@ type cursor struct {
 	head   crdt.ID
 }
 
+// gapTimer is the gap-healing state: at most one armed timer, tagged with a
+// generation so a stale one is ignored, and the consecutive failed fills
+// that set its backoff.
+type gapTimer struct {
+	gen      uint64
+	armed    bool
+	failures int
+}
+
+// Hub owns one document. Between events, doc holds log[1..D] plus the ops
+// this hub appended that still wait above D in seq, where D is seq.Delivered().
 type Hub struct {
 	docID    string
 	store    Store
 	registry *Registry
+	gapGrace time.Duration
 	events   chan event
 	stopped  chan struct{}
 	once     sync.Once
 	refs     int
 
 	doc     *crdt.Doc
+	seq     *fanout.Sequencer
+	gap     gapTimer
 	loadErr error
 	peers   map[crdt.ClientID]*Peer
 	cursors map[crdt.ClientID]cursor
 	dead    bool
 }
 
-func newHub(docID string, store Store, registry *Registry) *Hub {
-	h := &Hub{
+func newHub(docID string, registry *Registry) *Hub {
+	return &Hub{
 		docID:    docID,
-		store:    store,
+		store:    registry.store,
 		registry: registry,
+		gapGrace: registry.gapGrace,
 		events:   make(chan event, 256),
 		stopped:  make(chan struct{}),
 		peers:    make(map[crdt.ClientID]*Peer),
 		cursors:  make(map[crdt.ClientID]cursor),
 	}
-	return h
 }
 
 func (h *Hub) loop() {
 	ctx, cancel := context.WithTimeout(context.Background(), loadTimeout)
-	doc, err := h.store.Load(ctx, h.docID)
+	doc, delivered, err := h.store.Load(ctx, h.docID)
 	cancel()
 	if err != nil {
 		h.loadErr = err
 	} else {
 		h.doc = doc
+		h.seq = fanout.NewSequencer(delivered)
 	}
 
 	var pending event
@@ -111,23 +140,24 @@ func (h *Hub) loop() {
 		} else {
 			ev = <-h.events
 		}
+		var stop bool
 		switch ev := ev.(type) {
 		case stopEvent:
-			h.shutdown()
-			return
+			stop = true
 		case joinEvent:
-			h.handleJoin(ev)
+			stop = h.handleJoin(ev)
 		case leaveEvent:
 			h.handleLeave(ev)
 		case opsEvent:
-			var failed bool
-			pending, failed = h.handleOpsGroup(ev)
-			if failed {
-				h.shutdown()
-				return
-			}
+			pending, stop = h.handleOpsGroup(ev)
 		case cursorEvent:
 			h.handleCursor(ev)
+		case timerEvent:
+			stop = h.handleTimer(ev)
+		}
+		if stop {
+			h.shutdown()
+			return
 		}
 	}
 }
@@ -163,10 +193,10 @@ func (h *Hub) reject(ev event) {
 	}
 }
 
-func (h *Hub) handleJoin(ev joinEvent) {
+func (h *Hub) handleJoin(ev joinEvent) bool {
 	if h.dead {
 		ev.reply <- ErrStopped
-		return
+		return false
 	}
 	if h.loadErr != nil {
 		message := "failed to load document"
@@ -175,24 +205,37 @@ func (h *Hub) handleJoin(ev joinEvent) {
 		}
 		ev.peer.TrySend(EncodeError(collabv1.ErrorMessage_CODE_INTERNAL, message))
 		ev.reply <- h.loadErr
-		return
+		return false
 	}
-	if _, ok := h.peers[ev.peer.id]; ok {
-		ev.peer.TrySend(EncodeError(collabv1.ErrorMessage_CODE_CLIENT_MISMATCH, "client already connected"))
-		ev.reply <- ErrDuplicateClient
-		return
+	// A snapshot holding an op above D would let the joiner build on an op
+	// another hub has not delivered, so the snapshot must be exactly log[1..D].
+	if open, _ := h.seq.Gap(); open {
+		if h.heal() {
+			ev.reply <- ErrStopped
+			return true
+		}
+		if open, _ := h.seq.Gap(); open {
+			ev.peer.TrySend(EncodeError(collabv1.ErrorMessage_CODE_UNAVAILABLE, "document log unavailable"))
+			ev.reply <- ErrUnavailable
+			return false
+		}
 	}
 
+	if old, ok := h.peers[ev.peer.id]; ok {
+		delete(h.peers, old.id)
+		old.CloseWithReason("superseded")
+	}
 	h.peers[ev.peer.id] = ev.peer
 	sync := mustMarshal(&collabv1.ServerMessage{
 		Payload: &collabv1.ServerMessage_DocumentSync{DocumentSync: &collabv1.DocumentSync{
 			DocumentId: h.docID,
 			Snapshot:   h.doc.Snapshot(),
+			Seq:        h.seq.Delivered(),
 		}},
 	})
 	if !h.sendOrDrop(ev.peer, sync) {
 		ev.reply <- errors.New("send buffer full")
-		return
+		return false
 	}
 	for id, cur := range h.cursors {
 		if id == ev.peer.id {
@@ -206,10 +249,11 @@ func (h *Hub) handleJoin(ev joinEvent) {
 		})
 		if !h.sendOrDrop(ev.peer, frame) {
 			ev.reply <- errors.New("send buffer full")
-			return
+			return false
 		}
 	}
 	ev.reply <- nil
+	return false
 }
 
 func (h *Hub) handleLeave(ev leaveEvent) {
@@ -225,18 +269,18 @@ func (h *Hub) handleOpsGroup(first opsEvent) (event, bool) {
 		case next := <-h.events:
 			ev, ok := next.(opsEvent)
 			if !ok {
-				return next, h.persistAndBroadcast(accepted)
+				return next, h.persist(accepted)
 			}
 			if len(ev.ops) > maxOpsPerGroup-opCount {
-				return ev, h.persistAndBroadcast(accepted)
+				return ev, h.persist(accepted)
 			}
 			opCount += len(ev.ops)
 			accepted = append(accepted, h.applyOps(ev)...)
 		default:
-			return nil, h.persistAndBroadcast(accepted)
+			return nil, h.persist(accepted)
 		}
 	}
-	return nil, h.persistAndBroadcast(accepted)
+	return nil, h.persist(accepted)
 }
 
 func (h *Hub) applyOps(ev opsEvent) []crdt.Op {
@@ -282,28 +326,132 @@ func (h *Hub) rejectOperation(p *Peer, code collabv1.ErrorMessage_Code, message 
 	h.dropPeer(p, true)
 }
 
-func (h *Hub) persistAndBroadcast(accepted []crdt.Op) bool {
+// persist appends the group and offers every seq run to the Sequencer. A run
+// can hold ops the log already had above D, which reveals a gap. It reports
+// whether the hub fail-stopped.
+func (h *Hub) persist(accepted []crdt.Op) bool {
 	if len(accepted) == 0 {
 		return false
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), appendTimeout)
-	err := h.store.Append(ctx, h.docID, accepted)
+	res, err := h.store.Append(ctx, h.docID, accepted)
 	cancel()
 	if err != nil {
-		h.failStop()
+		h.failStop(collabv1.ErrorMessage_CODE_UNAVAILABLE, "document service unavailable")
 		return true
 	}
-	pb := make([]*crdtv1.Operation, len(accepted))
-	for i, op := range accepted {
-		pb[i] = crdt.OpToProto(op)
+	for _, run := range seqRuns(accepted, res.Seqs) {
+		if err := h.deliver(h.seq.Offer(run)); err != nil {
+			h.failStop(collabv1.ErrorMessage_CODE_INTERNAL, "internal error")
+			return true
+		}
 	}
-	frame := mustMarshal(&collabv1.ServerMessage{
-		Payload: &collabv1.ServerMessage_OperationBroadcast{OperationBroadcast: &collabv1.OperationBroadcast{
-			Operations: pb,
-		}},
-	})
-	h.broadcast(frame, 0, true)
+	open, buffered := h.seq.Gap()
+	switch {
+	case !open:
+		return false
+	case buffered > maxBufferedRanges:
+		return h.heal()
+	}
+	h.armGap()
 	return false
+}
+
+func seqRuns(ops []crdt.Op, seqs []uint64) []fanout.Batch {
+	var runs []fanout.Batch
+	for i, op := range ops {
+		if n := len(runs); n > 0 && runs[n-1].Next() == seqs[i] {
+			runs[n-1].Ops = append(runs[n-1].Ops, op)
+			continue
+		}
+		runs = append(runs, fanout.Batch{FirstSeq: seqs[i], Ops: []crdt.Op{op}})
+	}
+	return runs
+}
+
+// deliver applies each batch to doc and sends it to every peer. The hub's own
+// ops are already in doc and come back Duplicate.
+func (h *Hub) deliver(ready []fanout.Batch) error {
+	for _, b := range ready {
+		pb := make([]*crdtv1.Operation, len(b.Ops))
+		for i, op := range b.Ops {
+			if _, err := h.doc.Apply(op); err != nil {
+				return fmt.Errorf("%w: seq %d: %v", errDiverged, b.FirstSeq+uint64(i), err)
+			}
+			pb[i] = crdt.OpToProto(op)
+		}
+		frame := mustMarshal(&collabv1.ServerMessage{
+			Payload: &collabv1.ServerMessage_OperationBroadcast{OperationBroadcast: &collabv1.OperationBroadcast{
+				Operations: pb,
+				FirstSeq:   b.FirstSeq,
+			}},
+		})
+		h.broadcast(frame, 0, true)
+	}
+	return nil
+}
+
+func (h *Hub) handleTimer(ev timerEvent) bool {
+	if h.dead || !h.gap.armed || ev.gen != h.gap.gen {
+		return false
+	}
+	h.gap.armed = false
+	return h.heal()
+}
+
+func (h *Hub) armGap() {
+	if h.gap.armed {
+		return
+	}
+	h.gap.gen++
+	h.gap.armed = true
+	gen := h.gap.gen
+	time.AfterFunc(h.gapGrace<<h.gap.failures, func() {
+		_ = h.send(context.Background(), timerEvent{gen: gen})
+	})
+}
+
+// heal fills the gap from the log and schedules a retry with backoff when it
+// cannot. It reports whether the hub fail-stopped.
+func (h *Hub) heal() bool {
+	err := h.fill()
+	switch {
+	case err == nil:
+		h.gap.failures = 0
+		h.gap.armed = false
+		return false
+	case errors.Is(err, errDiverged):
+		h.failStop(collabv1.ErrorMessage_CODE_INTERNAL, "internal error")
+		return true
+	}
+	h.gap.failures++
+	if h.gap.failures >= maxFillFailures {
+		h.failStop(collabv1.ErrorMessage_CODE_UNAVAILABLE, "document log unavailable")
+		return true
+	}
+	h.armGap()
+	return false
+}
+
+func (h *Hub) fill() error {
+	for {
+		if open, _ := h.seq.Gap(); !open {
+			return nil
+		}
+		ctx, cancel := context.WithTimeout(context.Background(), readTimeout)
+		b, _, err := h.store.ReadOperations(ctx, h.docID, h.seq.Delivered(), fillLimit)
+		cancel()
+		if err != nil {
+			return err
+		}
+		ready := h.seq.Offer(b)
+		if len(ready) == 0 {
+			return errNoProgress
+		}
+		if err := h.deliver(ready); err != nil {
+			return err
+		}
+	}
 }
 
 func (h *Hub) handleCursor(ev cursorEvent) {
@@ -329,8 +477,8 @@ func (h *Hub) handleCursor(ev cursorEvent) {
 	h.broadcast(frame, ev.id, false)
 }
 
-func (h *Hub) failStop() {
-	frame := EncodeError(collabv1.ErrorMessage_CODE_INTERNAL, "internal error")
+func (h *Hub) failStop(code collabv1.ErrorMessage_Code, message string) {
+	frame := EncodeError(code, message)
 	for _, p := range h.peers {
 		p.TrySend(frame)
 		p.CloseWithReason("persistence failure")

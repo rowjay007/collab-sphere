@@ -31,6 +31,9 @@ const (
 	ErrorMessage_CODE_CLIENT_MISMATCH    ErrorMessage_Code = 3
 	ErrorMessage_CODE_MISSING_DEPENDENCY ErrorMessage_Code = 4
 	ErrorMessage_CODE_INTERNAL           ErrorMessage_Code = 5
+	ErrorMessage_CODE_INVALID_RESUME     ErrorMessage_Code = 6
+	// Retryable: reconnect and resend unacknowledged ops.
+	ErrorMessage_CODE_UNAVAILABLE ErrorMessage_Code = 7
 )
 
 // Enum value maps for ErrorMessage_Code.
@@ -42,6 +45,8 @@ var (
 		3: "CODE_CLIENT_MISMATCH",
 		4: "CODE_MISSING_DEPENDENCY",
 		5: "CODE_INTERNAL",
+		6: "CODE_INVALID_RESUME",
+		7: "CODE_UNAVAILABLE",
 	}
 	ErrorMessage_Code_value = map[string]int32{
 		"CODE_UNSPECIFIED":        0,
@@ -50,6 +55,8 @@ var (
 		"CODE_CLIENT_MISMATCH":    3,
 		"CODE_MISSING_DEPENDENCY": 4,
 		"CODE_INTERNAL":           5,
+		"CODE_INVALID_RESUME":     6,
+		"CODE_UNAVAILABLE":        7,
 	}
 )
 
@@ -77,7 +84,7 @@ func (x ErrorMessage_Code) Number() protoreflect.EnumNumber {
 
 // Deprecated: Use ErrorMessage_Code.Descriptor instead.
 func (ErrorMessage_Code) EnumDescriptor() ([]byte, []int) {
-	return file_collab_v1_ws_proto_rawDescGZIP(), []int{10, 0}
+	return file_collab_v1_ws_proto_rawDescGZIP(), []int{11, 0}
 }
 
 type ClientMessage struct {
@@ -185,6 +192,7 @@ type ServerMessage struct {
 	//	*ServerMessage_OperationBroadcast
 	//	*ServerMessage_PresenceBroadcast
 	//	*ServerMessage_DocumentSync
+	//	*ServerMessage_MissedOps
 	//	*ServerMessage_Error
 	//	*ServerMessage_Pong
 	Payload       isServerMessage_Payload `protobuf_oneof:"payload"`
@@ -256,6 +264,15 @@ func (x *ServerMessage) GetDocumentSync() *DocumentSync {
 	return nil
 }
 
+func (x *ServerMessage) GetMissedOps() *MissedOps {
+	if x != nil {
+		if x, ok := x.Payload.(*ServerMessage_MissedOps); ok {
+			return x.MissedOps
+		}
+	}
+	return nil
+}
+
 func (x *ServerMessage) GetError() *ErrorMessage {
 	if x != nil {
 		if x, ok := x.Payload.(*ServerMessage_Error); ok {
@@ -290,6 +307,10 @@ type ServerMessage_DocumentSync struct {
 	DocumentSync *DocumentSync `protobuf:"bytes,3,opt,name=document_sync,json=documentSync,proto3,oneof"`
 }
 
+type ServerMessage_MissedOps struct {
+	MissedOps *MissedOps `protobuf:"bytes,4,opt,name=missed_ops,json=missedOps,proto3,oneof"`
+}
+
 type ServerMessage_Error struct {
 	Error *ErrorMessage `protobuf:"bytes,5,opt,name=error,proto3,oneof"`
 }
@@ -303,6 +324,8 @@ func (*ServerMessage_OperationBroadcast) isServerMessage_Payload() {}
 func (*ServerMessage_PresenceBroadcast) isServerMessage_Payload() {}
 
 func (*ServerMessage_DocumentSync) isServerMessage_Payload() {}
+
+func (*ServerMessage_MissedOps) isServerMessage_Payload() {}
 
 func (*ServerMessage_Error) isServerMessage_Payload() {}
 
@@ -495,9 +518,12 @@ func (x *Pong) GetNonce() uint64 {
 	return 0
 }
 
+// Operations hold the contiguous seqs first_seq..first_seq+len-1. Each frame
+// starts one past the last seq the connection has received.
 type OperationBroadcast struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	Operations    []*v1.Operation        `protobuf:"bytes,1,rep,name=operations,proto3" json:"operations,omitempty"`
+	FirstSeq      uint64                 `protobuf:"varint,2,opt,name=first_seq,json=firstSeq,proto3" json:"first_seq,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -537,6 +563,13 @@ func (x *OperationBroadcast) GetOperations() []*v1.Operation {
 		return x.Operations
 	}
 	return nil
+}
+
+func (x *OperationBroadcast) GetFirstSeq() uint64 {
+	if x != nil {
+		return x.FirstSeq
+	}
+	return 0
 }
 
 type PresenceLeft struct {
@@ -665,10 +698,12 @@ func (*PresenceBroadcast_Cursor) isPresenceBroadcast_State() {}
 
 func (*PresenceBroadcast_Left) isPresenceBroadcast_State() {}
 
+// The snapshot holds exactly seqs 1..seq.
 type DocumentSync struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	DocumentId    string                 `protobuf:"bytes,1,opt,name=document_id,json=documentId,proto3" json:"document_id,omitempty"`
 	Snapshot      *v1.Snapshot           `protobuf:"bytes,2,opt,name=snapshot,proto3" json:"snapshot,omitempty"`
+	Seq           uint64                 `protobuf:"varint,3,opt,name=seq,proto3" json:"seq,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -717,6 +752,82 @@ func (x *DocumentSync) GetSnapshot() *v1.Snapshot {
 	return nil
 }
 
+func (x *DocumentSync) GetSeq() uint64 {
+	if x != nil {
+		return x.Seq
+	}
+	return 0
+}
+
+// The ops a resuming client missed, seqs first_seq..seq. Sent even when empty.
+type MissedOps struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	DocumentId    string                 `protobuf:"bytes,1,opt,name=document_id,json=documentId,proto3" json:"document_id,omitempty"`
+	FirstSeq      uint64                 `protobuf:"varint,2,opt,name=first_seq,json=firstSeq,proto3" json:"first_seq,omitempty"`
+	Operations    []*v1.Operation        `protobuf:"bytes,3,rep,name=operations,proto3" json:"operations,omitempty"`
+	Seq           uint64                 `protobuf:"varint,4,opt,name=seq,proto3" json:"seq,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *MissedOps) Reset() {
+	*x = MissedOps{}
+	mi := &file_collab_v1_ws_proto_msgTypes[10]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *MissedOps) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*MissedOps) ProtoMessage() {}
+
+func (x *MissedOps) ProtoReflect() protoreflect.Message {
+	mi := &file_collab_v1_ws_proto_msgTypes[10]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use MissedOps.ProtoReflect.Descriptor instead.
+func (*MissedOps) Descriptor() ([]byte, []int) {
+	return file_collab_v1_ws_proto_rawDescGZIP(), []int{10}
+}
+
+func (x *MissedOps) GetDocumentId() string {
+	if x != nil {
+		return x.DocumentId
+	}
+	return ""
+}
+
+func (x *MissedOps) GetFirstSeq() uint64 {
+	if x != nil {
+		return x.FirstSeq
+	}
+	return 0
+}
+
+func (x *MissedOps) GetOperations() []*v1.Operation {
+	if x != nil {
+		return x.Operations
+	}
+	return nil
+}
+
+func (x *MissedOps) GetSeq() uint64 {
+	if x != nil {
+		return x.Seq
+	}
+	return 0
+}
+
 type ErrorMessage struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	Code          ErrorMessage_Code      `protobuf:"varint,1,opt,name=code,proto3,enum=collab.v1.ErrorMessage_Code" json:"code,omitempty"`
@@ -727,7 +838,7 @@ type ErrorMessage struct {
 
 func (x *ErrorMessage) Reset() {
 	*x = ErrorMessage{}
-	mi := &file_collab_v1_ws_proto_msgTypes[10]
+	mi := &file_collab_v1_ws_proto_msgTypes[11]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -739,7 +850,7 @@ func (x *ErrorMessage) String() string {
 func (*ErrorMessage) ProtoMessage() {}
 
 func (x *ErrorMessage) ProtoReflect() protoreflect.Message {
-	mi := &file_collab_v1_ws_proto_msgTypes[10]
+	mi := &file_collab_v1_ws_proto_msgTypes[11]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -752,7 +863,7 @@ func (x *ErrorMessage) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ErrorMessage.ProtoReflect.Descriptor instead.
 func (*ErrorMessage) Descriptor() ([]byte, []int) {
-	return file_collab_v1_ws_proto_rawDescGZIP(), []int{10}
+	return file_collab_v1_ws_proto_rawDescGZIP(), []int{11}
 }
 
 func (x *ErrorMessage) GetCode() ErrorMessage_Code {
@@ -779,15 +890,16 @@ const file_collab_v1_ws_proto_rawDesc = "" +
 	"\vcursor_move\x18\x02 \x01(\v2\x15.collab.v1.CursorMoveH\x00R\n" +
 	"cursorMove\x12%\n" +
 	"\x04ping\x18\x04 \x01(\v2\x0f.collab.v1.PingH\x00R\x04pingB\t\n" +
-	"\apayloadJ\x04\b\x03\x10\x04R\x10awareness_update\"\xe5\x02\n" +
+	"\apayloadJ\x04\b\x03\x10\x04R\x10awareness_update\"\x8a\x03\n" +
 	"\rServerMessage\x12P\n" +
 	"\x13operation_broadcast\x18\x01 \x01(\v2\x1d.collab.v1.OperationBroadcastH\x00R\x12operationBroadcast\x12M\n" +
 	"\x12presence_broadcast\x18\x02 \x01(\v2\x1c.collab.v1.PresenceBroadcastH\x00R\x11presenceBroadcast\x12>\n" +
-	"\rdocument_sync\x18\x03 \x01(\v2\x17.collab.v1.DocumentSyncH\x00R\fdocumentSync\x12/\n" +
+	"\rdocument_sync\x18\x03 \x01(\v2\x17.collab.v1.DocumentSyncH\x00R\fdocumentSync\x125\n" +
+	"\n" +
+	"missed_ops\x18\x04 \x01(\v2\x14.collab.v1.MissedOpsH\x00R\tmissedOps\x12/\n" +
 	"\x05error\x18\x05 \x01(\v2\x17.collab.v1.ErrorMessageH\x00R\x05error\x12%\n" +
 	"\x04pong\x18\x06 \x01(\v2\x0f.collab.v1.PongH\x00R\x04pongB\t\n" +
-	"\apayloadJ\x04\b\x04\x10\x05R\n" +
-	"missed_ops\"D\n" +
+	"\apayload\"D\n" +
 	"\x0eOperationBatch\x122\n" +
 	"\n" +
 	"operations\x18\x01 \x03(\v2\x12.crdt.v1.OperationR\n" +
@@ -799,31 +911,43 @@ const file_collab_v1_ws_proto_rawDesc = "" +
 	"\x04Ping\x12\x14\n" +
 	"\x05nonce\x18\x01 \x01(\x04R\x05nonce\"\x1c\n" +
 	"\x04Pong\x12\x14\n" +
-	"\x05nonce\x18\x01 \x01(\x04R\x05nonce\"H\n" +
+	"\x05nonce\x18\x01 \x01(\x04R\x05nonce\"e\n" +
 	"\x12OperationBroadcast\x122\n" +
 	"\n" +
 	"operations\x18\x01 \x03(\v2\x12.crdt.v1.OperationR\n" +
-	"operations\"\x0e\n" +
+	"operations\x12\x1b\n" +
+	"\tfirst_seq\x18\x02 \x01(\x04R\bfirstSeq\"\x0e\n" +
 	"\fPresenceLeft\"\x94\x01\n" +
 	"\x11PresenceBroadcast\x12\x16\n" +
 	"\x06client\x18\x01 \x01(\x04R\x06client\x12/\n" +
 	"\x06cursor\x18\x02 \x01(\v2\x15.collab.v1.CursorMoveH\x00R\x06cursor\x12-\n" +
 	"\x04left\x18\x03 \x01(\v2\x17.collab.v1.PresenceLeftH\x00R\x04leftB\a\n" +
-	"\x05state\"^\n" +
+	"\x05state\"p\n" +
 	"\fDocumentSync\x12\x1f\n" +
 	"\vdocument_id\x18\x01 \x01(\tR\n" +
 	"documentId\x12-\n" +
-	"\bsnapshot\x18\x02 \x01(\v2\x11.crdt.v1.SnapshotR\bsnapshot\"\xfb\x01\n" +
+	"\bsnapshot\x18\x02 \x01(\v2\x11.crdt.v1.SnapshotR\bsnapshot\x12\x10\n" +
+	"\x03seq\x18\x03 \x01(\x04R\x03seq\"\x8f\x01\n" +
+	"\tMissedOps\x12\x1f\n" +
+	"\vdocument_id\x18\x01 \x01(\tR\n" +
+	"documentId\x12\x1b\n" +
+	"\tfirst_seq\x18\x02 \x01(\x04R\bfirstSeq\x122\n" +
+	"\n" +
+	"operations\x18\x03 \x03(\v2\x12.crdt.v1.OperationR\n" +
+	"operations\x12\x10\n" +
+	"\x03seq\x18\x04 \x01(\x04R\x03seq\"\xaa\x02\n" +
 	"\fErrorMessage\x120\n" +
 	"\x04code\x18\x01 \x01(\x0e2\x1c.collab.v1.ErrorMessage.CodeR\x04code\x12\x18\n" +
-	"\amessage\x18\x02 \x01(\tR\amessage\"\x9e\x01\n" +
+	"\amessage\x18\x02 \x01(\tR\amessage\"\xcd\x01\n" +
 	"\x04Code\x12\x14\n" +
 	"\x10CODE_UNSPECIFIED\x10\x00\x12\x1a\n" +
 	"\x16CODE_MALFORMED_MESSAGE\x10\x01\x12\x1a\n" +
 	"\x16CODE_INVALID_OPERATION\x10\x02\x12\x18\n" +
 	"\x14CODE_CLIENT_MISMATCH\x10\x03\x12\x1b\n" +
 	"\x17CODE_MISSING_DEPENDENCY\x10\x04\x12\x11\n" +
-	"\rCODE_INTERNAL\x10\x05B;Z9github.com/rowjay007/collab-sphere/gen/collab/v1;collabv1b\x06proto3"
+	"\rCODE_INTERNAL\x10\x05\x12\x17\n" +
+	"\x13CODE_INVALID_RESUME\x10\x06\x12\x14\n" +
+	"\x10CODE_UNAVAILABLE\x10\aB;Z9github.com/rowjay007/collab-sphere/gen/collab/v1;collabv1b\x06proto3"
 
 var (
 	file_collab_v1_ws_proto_rawDescOnce sync.Once
@@ -838,7 +962,7 @@ func file_collab_v1_ws_proto_rawDescGZIP() []byte {
 }
 
 var file_collab_v1_ws_proto_enumTypes = make([]protoimpl.EnumInfo, 1)
-var file_collab_v1_ws_proto_msgTypes = make([]protoimpl.MessageInfo, 11)
+var file_collab_v1_ws_proto_msgTypes = make([]protoimpl.MessageInfo, 12)
 var file_collab_v1_ws_proto_goTypes = []any{
 	(ErrorMessage_Code)(0),     // 0: collab.v1.ErrorMessage.Code
 	(*ClientMessage)(nil),      // 1: collab.v1.ClientMessage
@@ -851,10 +975,11 @@ var file_collab_v1_ws_proto_goTypes = []any{
 	(*PresenceLeft)(nil),       // 8: collab.v1.PresenceLeft
 	(*PresenceBroadcast)(nil),  // 9: collab.v1.PresenceBroadcast
 	(*DocumentSync)(nil),       // 10: collab.v1.DocumentSync
-	(*ErrorMessage)(nil),       // 11: collab.v1.ErrorMessage
-	(*v1.Operation)(nil),       // 12: crdt.v1.Operation
-	(*v1.OpID)(nil),            // 13: crdt.v1.OpID
-	(*v1.Snapshot)(nil),        // 14: crdt.v1.Snapshot
+	(*MissedOps)(nil),          // 11: collab.v1.MissedOps
+	(*ErrorMessage)(nil),       // 12: collab.v1.ErrorMessage
+	(*v1.Operation)(nil),       // 13: crdt.v1.Operation
+	(*v1.OpID)(nil),            // 14: crdt.v1.OpID
+	(*v1.Snapshot)(nil),        // 15: crdt.v1.Snapshot
 }
 var file_collab_v1_ws_proto_depIdxs = []int32{
 	3,  // 0: collab.v1.ClientMessage.operation_batch:type_name -> collab.v1.OperationBatch
@@ -863,21 +988,23 @@ var file_collab_v1_ws_proto_depIdxs = []int32{
 	7,  // 3: collab.v1.ServerMessage.operation_broadcast:type_name -> collab.v1.OperationBroadcast
 	9,  // 4: collab.v1.ServerMessage.presence_broadcast:type_name -> collab.v1.PresenceBroadcast
 	10, // 5: collab.v1.ServerMessage.document_sync:type_name -> collab.v1.DocumentSync
-	11, // 6: collab.v1.ServerMessage.error:type_name -> collab.v1.ErrorMessage
-	6,  // 7: collab.v1.ServerMessage.pong:type_name -> collab.v1.Pong
-	12, // 8: collab.v1.OperationBatch.operations:type_name -> crdt.v1.Operation
-	13, // 9: collab.v1.CursorMove.anchor:type_name -> crdt.v1.OpID
-	13, // 10: collab.v1.CursorMove.head:type_name -> crdt.v1.OpID
-	12, // 11: collab.v1.OperationBroadcast.operations:type_name -> crdt.v1.Operation
-	4,  // 12: collab.v1.PresenceBroadcast.cursor:type_name -> collab.v1.CursorMove
-	8,  // 13: collab.v1.PresenceBroadcast.left:type_name -> collab.v1.PresenceLeft
-	14, // 14: collab.v1.DocumentSync.snapshot:type_name -> crdt.v1.Snapshot
-	0,  // 15: collab.v1.ErrorMessage.code:type_name -> collab.v1.ErrorMessage.Code
-	16, // [16:16] is the sub-list for method output_type
-	16, // [16:16] is the sub-list for method input_type
-	16, // [16:16] is the sub-list for extension type_name
-	16, // [16:16] is the sub-list for extension extendee
-	0,  // [0:16] is the sub-list for field type_name
+	11, // 6: collab.v1.ServerMessage.missed_ops:type_name -> collab.v1.MissedOps
+	12, // 7: collab.v1.ServerMessage.error:type_name -> collab.v1.ErrorMessage
+	6,  // 8: collab.v1.ServerMessage.pong:type_name -> collab.v1.Pong
+	13, // 9: collab.v1.OperationBatch.operations:type_name -> crdt.v1.Operation
+	14, // 10: collab.v1.CursorMove.anchor:type_name -> crdt.v1.OpID
+	14, // 11: collab.v1.CursorMove.head:type_name -> crdt.v1.OpID
+	13, // 12: collab.v1.OperationBroadcast.operations:type_name -> crdt.v1.Operation
+	4,  // 13: collab.v1.PresenceBroadcast.cursor:type_name -> collab.v1.CursorMove
+	8,  // 14: collab.v1.PresenceBroadcast.left:type_name -> collab.v1.PresenceLeft
+	15, // 15: collab.v1.DocumentSync.snapshot:type_name -> crdt.v1.Snapshot
+	13, // 16: collab.v1.MissedOps.operations:type_name -> crdt.v1.Operation
+	0,  // 17: collab.v1.ErrorMessage.code:type_name -> collab.v1.ErrorMessage.Code
+	18, // [18:18] is the sub-list for method output_type
+	18, // [18:18] is the sub-list for method input_type
+	18, // [18:18] is the sub-list for extension type_name
+	18, // [18:18] is the sub-list for extension extendee
+	0,  // [0:18] is the sub-list for field type_name
 }
 
 func init() { file_collab_v1_ws_proto_init() }
@@ -894,6 +1021,7 @@ func file_collab_v1_ws_proto_init() {
 		(*ServerMessage_OperationBroadcast)(nil),
 		(*ServerMessage_PresenceBroadcast)(nil),
 		(*ServerMessage_DocumentSync)(nil),
+		(*ServerMessage_MissedOps)(nil),
 		(*ServerMessage_Error)(nil),
 		(*ServerMessage_Pong)(nil),
 	}
@@ -907,7 +1035,7 @@ func file_collab_v1_ws_proto_init() {
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_collab_v1_ws_proto_rawDesc), len(file_collab_v1_ws_proto_rawDesc)),
 			NumEnums:      1,
-			NumMessages:   11,
+			NumMessages:   12,
 			NumExtensions: 0,
 			NumServices:   0,
 		},

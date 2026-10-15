@@ -25,8 +25,8 @@ type archivedStore struct {
 	Store
 }
 
-func (s archivedStore) Load(context.Context, string) (*crdt.Doc, error) {
-	return nil, ErrArchived
+func (s archivedStore) Load(context.Context, string) (*crdt.Doc, uint64, error) {
+	return nil, 0, ErrArchived
 }
 
 func TestArchivedDocumentJoinReportsArchived(t *testing.T) {
@@ -43,9 +43,9 @@ func TestArchivedDocumentJoinReportsArchived(t *testing.T) {
 	}
 }
 
-func (s deadlineLoadStore) Load(ctx context.Context, docID string) (*crdt.Doc, error) {
+func (s deadlineLoadStore) Load(ctx context.Context, docID string) (*crdt.Doc, uint64, error) {
 	if _, ok := ctx.Deadline(); !ok {
-		return nil, errors.New("load context has no deadline")
+		return nil, 0, errors.New("load context has no deadline")
 	}
 	return s.Store.Load(ctx, docID)
 }
@@ -60,12 +60,12 @@ func TestHubLoadHasDeadline(t *testing.T) {
 	session.Leave(context.Background())
 }
 
-func (s *blockingLoadStore) Load(ctx context.Context, docID string) (*crdt.Doc, error) {
+func (s *blockingLoadStore) Load(ctx context.Context, docID string) (*crdt.Doc, uint64, error) {
 	s.once.Do(func() { close(s.started) })
 	select {
 	case <-s.release:
 	case <-ctx.Done():
-		return nil, ctx.Err()
+		return nil, 0, ctx.Err()
 	}
 	return s.Store.Load(ctx, docID)
 }

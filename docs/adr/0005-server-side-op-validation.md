@@ -31,3 +31,11 @@ Every clock an honest client sends is at most the hub document clock plus one wh
 Phase 1 has no authentication, so a client can claim any free client ID. The permission service in Phase 4 binds client IDs to authenticated sessions and checks a role on every message. Client IDs should be random 64-bit values so two devices never collide.
 
 Phase 2 multi-hub fan-out must revisit the clock bound. A hub may receive a valid op before it has observed the latest clock accepted by another hub.
+
+## Amendment, Phase 2. The clock bound stays
+
+With several hubs, a client's replica is `log[1..seq]` plus its own unacknowledged ops, where `seq` is the last seq it holds. Before admitting a resuming client, its hub reads the log until its own delivered seq is at least the client's. After that, every op and clock the client has seen is in the hub's document, and its own ops arrive in order. So the bound `clock ≤ doc.Clock()+1` holds across hubs, and the five checks stay as written. This catch-up on join lands with the resume unit. Until then a client always joins with a fresh `DocumentSync`, which ADR 0007 keeps to exactly the delivered prefix.
+
+Two other rejected options. A per-client `clock == vector[client]+1` check is wrong, because a Lamport clock legitimately jumps past ops seen from others. Removing the bound reopens the clock-exhaustion attack.
+
+A second live connection with the same client ID is no longer refused. The newest one wins and the old one is closed, as ADR 0007 describes.

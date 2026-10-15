@@ -5,7 +5,9 @@ import (
 	"strings"
 	"testing"
 
+	crdtv1 "github.com/rowjay007/collab-sphere/gen/crdt/v1"
 	documentv1 "github.com/rowjay007/collab-sphere/gen/document/v1"
+	"github.com/rowjay007/collab-sphere/pkg/crdt"
 	"google.golang.org/grpc"
 )
 
@@ -20,8 +22,74 @@ func (archivedClient) LoadState(context.Context, *documentv1.LoadStateRequest, .
 }
 
 func TestLoadRejectsArchivedDocument(t *testing.T) {
-	_, err := New(archivedClient{}).Load(t.Context(), "doc")
+	_, _, err := New(archivedClient{}).Load(t.Context(), "doc")
 	if err == nil || !strings.Contains(err.Error(), "document archived") {
 		t.Fatalf("Load error = %v", err)
+	}
+}
+
+var (
+	opA = crdt.Insert{ID: crdt.ID{Client: 1, Clock: 1}, Parent: crdt.Root, Value: 'a'}
+	opB = crdt.Insert{ID: crdt.ID{Client: 1, Clock: 2}, Parent: opA.ID, Value: 'b'}
+)
+
+type logClient struct {
+	documentv1.DocumentServiceClient
+	seqs     []uint64
+	firstSeq uint64
+}
+
+func (logClient) LoadState(context.Context, *documentv1.LoadStateRequest, ...grpc.CallOption) (*documentv1.LoadStateResponse, error) {
+	return &documentv1.LoadStateResponse{
+		Document:   &documentv1.Document{Status: documentv1.Document_STATUS_ACTIVE, OpSeq: 7},
+		Operations: []*crdtv1.Operation{crdt.OpToProto(opA)},
+	}, nil
+}
+
+func (c logClient) AppendOperations(context.Context, *documentv1.AppendOperationsRequest, ...grpc.CallOption) (*documentv1.AppendOperationsResponse, error) {
+	return &documentv1.AppendOperationsResponse{OpSeq: 9, Seqs: c.seqs, FirstNewSeq: 9}, nil
+}
+
+func (c logClient) ReadOperations(context.Context, *documentv1.ReadOperationsRequest, ...grpc.CallOption) (*documentv1.ReadOperationsResponse, error) {
+	return &documentv1.ReadOperationsResponse{
+		FirstSeq:   c.firstSeq,
+		Operations: []*crdtv1.Operation{crdt.OpToProto(opA), crdt.OpToProto(opB)},
+		OpSeq:      9,
+	}, nil
+}
+
+func TestLoadReturnsOpSeq(t *testing.T) {
+	doc, seq, err := New(logClient{}).Load(t.Context(), "doc")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if seq != 7 || doc.Text() != "a" {
+		t.Fatalf("seq=%d text=%q", seq, doc.Text())
+	}
+}
+
+func TestAppendReturnsSeqs(t *testing.T) {
+	res, err := New(logClient{seqs: []uint64{4, 9}}).Append(t.Context(), "doc", []crdt.Op{opA, opB})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.OpSeq != 9 || res.FirstNewSeq != 9 || len(res.Seqs) != 2 || res.Seqs[0] != 4 || res.Seqs[1] != 9 {
+		t.Fatalf("result = %+v", res)
+	}
+	if _, err := New(logClient{seqs: []uint64{9}}).Append(t.Context(), "doc", []crdt.Op{opA, opB}); err == nil {
+		t.Fatal("Append accepted a response with too few seqs")
+	}
+}
+
+func TestReadOperations(t *testing.T) {
+	b, opSeq, err := New(logClient{firstSeq: 8}).ReadOperations(t.Context(), "doc", 7, 10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if b.FirstSeq != 8 || len(b.Ops) != 2 || b.Ops[1] != crdt.Op(opB) || opSeq != 9 {
+		t.Fatalf("batch=%+v opSeq=%d", b, opSeq)
+	}
+	if _, _, err := New(logClient{firstSeq: 5}).ReadOperations(t.Context(), "doc", 7, 10); err == nil {
+		t.Fatal("ReadOperations accepted a range that does not start after the requested seq")
 	}
 }

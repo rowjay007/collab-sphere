@@ -17,12 +17,11 @@ message ClientMessage {
 }
 
 message ServerMessage {
-  reserved 4;
-  reserved "missed_ops";
   oneof payload {
     OperationBroadcast operation_broadcast = 1;
     PresenceBroadcast presence_broadcast = 2;
     DocumentSync document_sync = 3;
+    MissedOps missed_ops = 4;
     ErrorMessage error = 5;
     Pong pong = 6;
   }
@@ -48,8 +47,11 @@ message Pong {
   uint64 nonce = 1;
 }
 
+// Operations hold the contiguous seqs first_seq..first_seq+len-1. Each frame
+// starts one past the last seq the connection has received.
 message OperationBroadcast {
   repeated crdt.v1.Operation operations = 1;
+  uint64 first_seq = 2;
 }
 
 message PresenceLeft {}
@@ -62,9 +64,19 @@ message PresenceBroadcast {
   }
 }
 
+// The snapshot holds exactly seqs 1..seq.
 message DocumentSync {
   string document_id = 1;
   crdt.v1.Snapshot snapshot = 2;
+  uint64 seq = 3;
+}
+
+// The ops a resuming client missed, seqs first_seq..seq. Sent even when empty.
+message MissedOps {
+  string document_id = 1;
+  uint64 first_seq = 2;
+  repeated crdt.v1.Operation operations = 3;
+  uint64 seq = 4;
 }
 
 message ErrorMessage {
@@ -75,6 +87,9 @@ message ErrorMessage {
     CODE_CLIENT_MISMATCH = 3;
     CODE_MISSING_DEPENDENCY = 4;
     CODE_INTERNAL = 5;
+    CODE_INVALID_RESUME = 6;
+    // Retryable: reconnect and resend unacknowledged ops.
+    CODE_UNAVAILABLE = 7;
   }
   Code code = 1;
   string message = 2;

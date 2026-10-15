@@ -84,6 +84,11 @@ func TestTwoClientsConvergeAndSurviveRestarts(t *testing.T) {
 	if meta.GetOpSeq() != 700 {
 		t.Fatalf("op_seq = %d, want 700", meta.GetOpSeq())
 	}
+	for i, c := range clients {
+		if c.Seq() != meta.GetOpSeq() {
+			t.Fatalf("client %d Seq() = %d, want op_seq %d", i, c.Seq(), meta.GetOpSeq())
+		}
+	}
 
 	alice.Close()
 	bob.Close()

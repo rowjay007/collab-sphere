@@ -246,6 +246,21 @@ func (d *Doc) Has(id ID) bool {
 	return ok
 }
 
+// Contains reports whether the insert or delete with this ID is held,
+// integrated or pending, or was removed by GC.
+func (d *Doc) Contains(id ID) bool {
+	if d == nil || id.IsRoot() {
+		return false
+	}
+	if _, ok := d.inserts[id]; ok {
+		return true
+	}
+	if _, ok := d.deletes[id]; ok {
+		return true
+	}
+	return d.collected.Covers(id)
+}
+
 // Text returns the visible document text.
 func (d *Doc) Text() string {
 	if d == nil || d.visible == 0 {
