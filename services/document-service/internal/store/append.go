@@ -28,27 +28,44 @@ type pendingOp struct {
 	key  opKey
 	raw  []byte
 	skip bool
+	seq  uint64
 }
 
-func (s *Store) Append(ctx context.Context, id uuid.UUID, ops []*crdtv1.Operation) (uint64, error) {
+type existingOp struct {
+	seq uint64
+	raw []byte
+}
+
+type AppendResult struct {
+	OpSeq       uint64
+	FirstNewSeq uint64
+	Seqs        []uint64
+}
+
+const (
+	defaultReadLimit = 1000
+	maxReadLimit     = 10000
+)
+
+func (s *Store) Append(ctx context.Context, id uuid.UUID, ops []*crdtv1.Operation) (AppendResult, error) {
 	tx, err := s.pool.Begin(ctx)
 	if err != nil {
-		return 0, fmt.Errorf("begin append: %w", err)
+		return AppendResult{}, fmt.Errorf("begin append: %w", err)
 	}
 	defer tx.Rollback(ctx)
 
 	doc, err := lockDocument(ctx, tx, id)
 	if err != nil {
-		return 0, err
+		return AppendResult{}, err
 	}
 
 	pending, err := classifyOps(ctx, tx, id, ops)
 	if err != nil {
-		return 0, err
+		return AppendResult{}, err
 	}
 
 	next := doc.OpSeq
-	seqs := make([]int64, 0, len(pending))
+	insertSeqs := make([]int64, 0, len(pending))
 	clients := make([]string, 0, len(pending))
 	clocks := make([]string, 0, len(pending))
 	rawOps := make([][]byte, 0, len(pending))
@@ -57,20 +74,28 @@ func (s *Store) Append(ctx context.Context, id uuid.UUID, ops []*crdtv1.Operatio
 			continue
 		}
 		next++
-		seqs = append(seqs, int64(next))
+		pending[i].seq = next
+		insertSeqs = append(insertSeqs, int64(next))
 		clients = append(clients, strconv.FormatUint(pending[i].key.client, 10))
 		clocks = append(clocks, strconv.FormatUint(pending[i].key.clock, 10))
 		rawOps = append(rawOps, pending[i].raw)
 	}
+	result := AppendResult{
+		OpSeq: next,
+		Seqs:  seqsOf(pending),
+	}
+	if next > doc.OpSeq {
+		result.FirstNewSeq = doc.OpSeq + 1
+	}
 
 	if next == doc.OpSeq {
 		if err := tx.Commit(ctx); err != nil {
-			return 0, fmt.Errorf("commit append: %w", err)
+			return AppendResult{}, fmt.Errorf("commit append: %w", err)
 		}
 		if doc.OpSeq-doc.SnapshotSeq >= domain.SnapshotEvery {
 			s.triggerCompaction(id, doc.SnapshotSeq)
 		}
-		return doc.OpSeq, nil
+		return result, nil
 	}
 
 	if _, err := tx.Exec(ctx, `
@@ -78,23 +103,23 @@ func (s *Store) Append(ctx context.Context, id uuid.UUID, ops []*crdtv1.Operatio
 		SELECT $1, seq, op_client, op_clock, op
 		FROM unnest($2::bigint[], $3::numeric[], $4::numeric[], $5::bytea[])
 			AS pending(seq, op_client, op_clock, op)`,
-		id, seqs, clients, clocks, rawOps); err != nil {
-		return 0, fmt.Errorf("insert ops: %w", err)
+		id, insertSeqs, clients, clocks, rawOps); err != nil {
+		return AppendResult{}, fmt.Errorf("insert ops: %w", err)
 	}
 
 	if _, err := tx.Exec(ctx, `
 		UPDATE documents
 		SET op_seq = $2, updated_at = now()
 		WHERE id = $1`, id, int64(next)); err != nil {
-		return 0, fmt.Errorf("bump seq: %w", err)
+		return AppendResult{}, fmt.Errorf("bump seq: %w", err)
 	}
 	if err := tx.Commit(ctx); err != nil {
-		return 0, fmt.Errorf("commit append: %w", err)
+		return AppendResult{}, fmt.Errorf("commit append: %w", err)
 	}
 	if next-doc.SnapshotSeq >= domain.SnapshotEvery {
 		s.triggerCompaction(id, doc.SnapshotSeq)
 	}
-	return next, nil
+	return result, nil
 }
 
 // Compact holds no lock while it rebuilds: operations and snapshots are
@@ -169,6 +194,56 @@ func (s *Store) LoadState(ctx context.Context, id uuid.UUID) (domain.Document, *
 	return doc, snap, ops, nil
 }
 
+func (s *Store) ReadOperations(ctx context.Context, id uuid.UUID, after uint64, limit int) (uint64, []*crdtv1.Operation, uint64, error) {
+	if limit < 0 {
+		return 0, nil, 0, fmt.Errorf("%w: limit %d", domain.ErrInvalidArgument, limit)
+	}
+	if limit == 0 {
+		limit = defaultReadLimit
+	}
+	if limit > maxReadLimit {
+		return 0, nil, 0, fmt.Errorf("%w: limit %d", domain.ErrInvalidArgument, limit)
+	}
+
+	tx, err := s.pool.BeginTx(ctx, pgx.TxOptions{
+		IsoLevel:   pgx.RepeatableRead,
+		AccessMode: pgx.ReadOnly,
+	})
+	if err != nil {
+		return 0, nil, 0, fmt.Errorf("begin read ops: %w", err)
+	}
+	defer tx.Rollback(ctx)
+
+	row := tx.QueryRow(ctx, `SELECT `+documentColumns+` FROM documents WHERE id = $1`, id)
+	doc, err := scanDocument(row)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return 0, nil, 0, domain.ErrNotFound
+		}
+		return 0, nil, 0, err
+	}
+	if after > doc.OpSeq {
+		return 0, nil, 0, fmt.Errorf("%w: after_seq %d exceeds op_seq %d", domain.ErrInvalidArgument, after, doc.OpSeq)
+	}
+
+	rows, err := tx.Query(ctx, `
+		SELECT seq, op FROM operations
+		WHERE document_id = $1 AND seq > $2
+		ORDER BY seq
+		LIMIT $3`, id, int64(after), limit)
+	if err != nil {
+		return 0, nil, 0, fmt.Errorf("read ops: %w", err)
+	}
+	firstSeq, ops, err := scanOps(rows)
+	if err != nil {
+		return 0, nil, 0, err
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return 0, nil, 0, fmt.Errorf("commit read ops: %w", err)
+	}
+	return firstSeq, ops, doc.OpSeq, nil
+}
+
 func lockDocument(ctx context.Context, tx pgx.Tx, id uuid.UUID) (domain.Document, error) {
 	row := tx.QueryRow(ctx, `SELECT `+documentColumns+` FROM documents WHERE id = $1 FOR UPDATE`, id)
 	doc, err := scanDocument(row)
@@ -222,12 +297,27 @@ func classifyOps(ctx context.Context, tx pgx.Tx, id uuid.UUID, ops []*crdtv1.Ope
 		if !ok {
 			continue
 		}
-		if !bytes.Equal(held, pending[i].raw) {
+		if !bytes.Equal(held.raw, pending[i].raw) {
 			return nil, domain.ErrConflict
 		}
 		pending[i].skip = true
+		pending[i].seq = held.seq
 	}
 	return pending, nil
+}
+
+func seqsOf(pending []pendingOp) []uint64 {
+	out := make([]uint64, len(pending))
+	first := make(map[opKey]uint64, len(pending))
+	for i, p := range pending {
+		if seq, ok := first[p.key]; ok {
+			out[i] = seq
+			continue
+		}
+		out[i] = p.seq
+		first[p.key] = p.seq
+	}
+	return out
 }
 
 func keysOf(seen map[opKey][]byte) []opKey {
@@ -238,7 +328,7 @@ func keysOf(seen map[opKey][]byte) []opKey {
 	return keys
 }
 
-func existingOps(ctx context.Context, tx pgx.Tx, id uuid.UUID, keys []opKey) (map[opKey][]byte, error) {
+func existingOps(ctx context.Context, tx pgx.Tx, id uuid.UUID, keys []opKey) (map[opKey]existingOp, error) {
 	if len(keys) == 0 {
 		return nil, nil
 	}
@@ -249,7 +339,7 @@ func existingOps(ctx context.Context, tx pgx.Tx, id uuid.UUID, keys []opKey) (ma
 		clocks[i] = strconv.FormatUint(k.clock, 10)
 	}
 	rows, err := tx.Query(ctx, `
-		SELECT e.op_client::text, e.op_clock::text, e.op
+		SELECT e.op_client::text, e.op_clock::text, e.seq, e.op
 		FROM operations e
 		JOIN unnest($2::numeric[], $3::numeric[]) AS v(op_client, op_clock)
 		  ON e.op_client = v.op_client AND e.op_clock = v.op_clock
@@ -259,11 +349,12 @@ func existingOps(ctx context.Context, tx pgx.Tx, id uuid.UUID, keys []opKey) (ma
 	}
 	defer rows.Close()
 
-	out := make(map[opKey][]byte)
+	out := make(map[opKey]existingOp)
 	for rows.Next() {
 		var clientText, clockText string
+		var seq int64
 		var raw []byte
-		if err := rows.Scan(&clientText, &clockText, &raw); err != nil {
+		if err := rows.Scan(&clientText, &clockText, &seq, &raw); err != nil {
 			return nil, fmt.Errorf("scan stored op: %w", err)
 		}
 		client, err := strconv.ParseUint(clientText, 10, 64)
@@ -274,7 +365,7 @@ func existingOps(ctx context.Context, tx pgx.Tx, id uuid.UUID, keys []opKey) (ma
 		if err != nil {
 			return nil, fmt.Errorf("parse op_clock: %w", err)
 		}
-		out[opKey{client: client, clock: clock}] = raw
+		out[opKey{client: client, clock: clock}] = existingOp{seq: uint64(seq), raw: raw}
 	}
 	return out, rows.Err()
 }
@@ -316,27 +407,14 @@ func writeSnapshot(ctx context.Context, tx pgx.Tx, id uuid.UUID, fromSeq, toSeq 
 
 func loadOpsRange(ctx context.Context, tx pgx.Tx, id uuid.UUID, after, through uint64) ([]*crdtv1.Operation, error) {
 	rows, err := tx.Query(ctx, `
-		SELECT op FROM operations
+		SELECT seq, op FROM operations
 		WHERE document_id = $1 AND seq > $2 AND seq <= $3
 		ORDER BY seq`, id, int64(after), int64(through))
 	if err != nil {
 		return nil, fmt.Errorf("load ops: %w", err)
 	}
-	defer rows.Close()
-
-	var ops []*crdtv1.Operation
-	for rows.Next() {
-		var raw []byte
-		if err := rows.Scan(&raw); err != nil {
-			return nil, fmt.Errorf("scan op: %w", err)
-		}
-		op := &crdtv1.Operation{}
-		if err := proto.Unmarshal(raw, op); err != nil {
-			return nil, fmt.Errorf("unmarshal op: %w", err)
-		}
-		ops = append(ops, op)
-	}
-	return ops, rows.Err()
+	_, ops, err := scanOps(rows)
+	return ops, err
 }
 
 func loadSnapshot(ctx context.Context, tx pgx.Tx, id uuid.UUID, seq uint64) (*crdtv1.Snapshot, error) {
@@ -361,25 +439,34 @@ func loadSnapshot(ctx context.Context, tx pgx.Tx, id uuid.UUID, seq uint64) (*cr
 
 func loadOpsAfter(ctx context.Context, tx pgx.Tx, id uuid.UUID, seq uint64) ([]*crdtv1.Operation, error) {
 	rows, err := tx.Query(ctx, `
-		SELECT op FROM operations
+		SELECT seq, op FROM operations
 		WHERE document_id = $1 AND seq > $2
 		ORDER BY seq`, id, int64(seq))
 	if err != nil {
 		return nil, fmt.Errorf("load ops: %w", err)
 	}
-	defer rows.Close()
+	_, ops, err := scanOps(rows)
+	return ops, err
+}
 
+func scanOps(rows pgx.Rows) (uint64, []*crdtv1.Operation, error) {
+	defer rows.Close()
+	var firstSeq uint64
 	var ops []*crdtv1.Operation
 	for rows.Next() {
+		var seq int64
 		var raw []byte
-		if err := rows.Scan(&raw); err != nil {
-			return nil, fmt.Errorf("scan op: %w", err)
+		if err := rows.Scan(&seq, &raw); err != nil {
+			return 0, nil, fmt.Errorf("scan op: %w", err)
 		}
 		op := &crdtv1.Operation{}
 		if err := proto.Unmarshal(raw, op); err != nil {
-			return nil, fmt.Errorf("unmarshal op: %w", err)
+			return 0, nil, fmt.Errorf("unmarshal op: %w", err)
+		}
+		if len(ops) == 0 {
+			firstSeq = uint64(seq)
 		}
 		ops = append(ops, op)
 	}
-	return ops, rows.Err()
+	return firstSeq, ops, rows.Err()
 }

@@ -43,15 +43,15 @@ func TestAppendIdempotentAndConflict(t *testing.T) {
 	if err != nil {
 		t.Fatalf("first append: %v", err)
 	}
-	if seq1 != 2 {
-		t.Fatalf("op_seq %d", seq1)
+	if seq1.OpSeq != 2 {
+		t.Fatalf("op_seq %d", seq1.OpSeq)
 	}
 	seq2, err := st.Append(ctx, doc.ID, batch)
 	if err != nil {
 		t.Fatalf("second append: %v", err)
 	}
-	if seq2 != seq1 {
-		t.Fatalf("idempotent seq %d vs %d", seq2, seq1)
+	if seq2.OpSeq != seq1.OpSeq {
+		t.Fatalf("idempotent seq %d vs %d", seq2.OpSeq, seq1.OpSeq)
 	}
 
 	conflict := proto.Clone(testdb.ProtoFromInsert(a)).(*crdtv1.Operation)
@@ -434,4 +434,226 @@ func TestConcurrentAppends(t *testing.T) {
 	if restored.Text() != merged.Text() {
 		t.Fatalf("merged text %q vs %q", restored.Text(), merged.Text())
 	}
+}
+
+func TestAppendSeqs(t *testing.T) {
+	st, _ := testdb.Open(t)
+	ctx := t.Context()
+
+	t.Run("new ops", func(t *testing.T) {
+		doc, err := st.Create(ctx, "new", "owner")
+		if err != nil {
+			t.Fatal(err)
+		}
+		ops := nInserts(t, 11, 3)
+		got, err := st.Append(ctx, doc.ID, ops)
+		if err != nil {
+			t.Fatal(err)
+		}
+		want := []uint64{1, 2, 3}
+		if got.OpSeq != 3 || got.FirstNewSeq != 1 || !equalSeqs(got.Seqs, want) {
+			t.Fatalf("got %+v want seqs %v", got, want)
+		}
+	})
+
+	t.Run("mix stored and new", func(t *testing.T) {
+		doc, err := st.Create(ctx, "mix", "owner")
+		if err != nil {
+			t.Fatal(err)
+		}
+		first := nInserts(t, 12, 2)
+		if _, err := st.Append(ctx, doc.ID, first); err != nil {
+			t.Fatal(err)
+		}
+		r, err := crdt.NewReplica(12, nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err := r.InsertAt(0, 'a'); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := r.InsertAt(1, 'b'); err != nil {
+			t.Fatal(err)
+		}
+		c, err := r.InsertAt(2, 'c')
+		if err != nil {
+			t.Fatal(err)
+		}
+		d, err := r.InsertAt(3, 'd')
+		if err != nil {
+			t.Fatal(err)
+		}
+		mixed := []*crdtv1.Operation{first[0], first[1], testdb.ProtoFromInsert(c), testdb.ProtoFromInsert(d)}
+		got, err := st.Append(ctx, doc.ID, mixed)
+		if err != nil {
+			t.Fatal(err)
+		}
+		want := []uint64{1, 2, 3, 4}
+		if got.OpSeq != 4 || got.FirstNewSeq != 3 || !equalSeqs(got.Seqs, want) {
+			t.Fatalf("got %+v want seqs %v", got, want)
+		}
+	})
+
+	t.Run("in-batch repeat", func(t *testing.T) {
+		doc, err := st.Create(ctx, "repeat", "owner")
+		if err != nil {
+			t.Fatal(err)
+		}
+		ops := nInserts(t, 13, 2)
+		batch := []*crdtv1.Operation{ops[0], ops[1], ops[0]}
+		got, err := st.Append(ctx, doc.ID, batch)
+		if err != nil {
+			t.Fatal(err)
+		}
+		want := []uint64{1, 2, 1}
+		if got.OpSeq != 2 || got.FirstNewSeq != 1 || !equalSeqs(got.Seqs, want) {
+			t.Fatalf("got %+v want seqs %v", got, want)
+		}
+	})
+}
+
+func TestReadOperations(t *testing.T) {
+	st, _ := testdb.Open(t)
+	ctx := t.Context()
+	doc, err := st.Create(ctx, "read", "owner")
+	if err != nil {
+		t.Fatal(err)
+	}
+	ops := nInserts(t, 21, 5)
+	if _, err := st.Append(ctx, doc.ID, ops); err != nil {
+		t.Fatal(err)
+	}
+
+	type want struct {
+		firstSeq uint64
+		n        int
+		opSeq    uint64
+		err      error
+	}
+	cases := []struct {
+		name  string
+		id    uuid.UUID
+		after uint64
+		limit int
+		want  want
+	}{
+		{name: "after 0", id: doc.ID, after: 0, limit: 100, want: want{firstSeq: 1, n: 5, opSeq: 5}},
+		{name: "after middle", id: doc.ID, after: 2, limit: 100, want: want{firstSeq: 3, n: 3, opSeq: 5}},
+		{name: "after op_seq", id: doc.ID, after: 5, limit: 100, want: want{firstSeq: 0, n: 0, opSeq: 5}},
+		{name: "limit truncation", id: doc.ID, after: 0, limit: 2, want: want{firstSeq: 1, n: 2, opSeq: 5}},
+		{name: "limit 0 default", id: doc.ID, after: 0, limit: 0, want: want{firstSeq: 1, n: 5, opSeq: 5}},
+		{name: "limit too large", id: doc.ID, after: 0, limit: 10001, want: want{err: domain.ErrInvalidArgument}},
+		{name: "after_seq beyond op_seq", id: doc.ID, after: 6, limit: 10, want: want{err: domain.ErrInvalidArgument}},
+		{name: "unknown doc", id: uuid.New(), after: 0, limit: 10, want: want{err: domain.ErrNotFound}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			firstSeq, got, opSeq, err := st.ReadOperations(ctx, tc.id, tc.after, tc.limit)
+			if tc.want.err != nil {
+				if !errors.Is(err, tc.want.err) {
+					t.Fatalf("err %v", err)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatal(err)
+			}
+			if firstSeq != tc.want.firstSeq || len(got) != tc.want.n || opSeq != tc.want.opSeq {
+				t.Fatalf("first=%d n=%d op_seq=%d", firstSeq, len(got), opSeq)
+			}
+			for i, op := range got {
+				if !proto.Equal(op, ops[tc.after+uint64(i)]) {
+					t.Fatalf("op %d", i)
+				}
+			}
+		})
+	}
+
+	t.Run("archived readable", func(t *testing.T) {
+		if _, err := st.Archive(ctx, doc.ID); err != nil {
+			t.Fatal(err)
+		}
+		firstSeq, got, opSeq, err := st.ReadOperations(ctx, doc.ID, 0, 10)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if firstSeq != 1 || len(got) != 5 || opSeq != 5 {
+			t.Fatalf("first=%d n=%d op_seq=%d", firstSeq, len(got), opSeq)
+		}
+	})
+
+	t.Run("across compaction", func(t *testing.T) {
+		compacted, err := st.Create(ctx, "compact-read", "owner")
+		if err != nil {
+			t.Fatal(err)
+		}
+		all := nInserts(t, 22, int(domain.SnapshotEvery)+20)
+		if _, err := st.Append(ctx, compacted.ID, all); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := st.Compact(ctx, compacted.ID); err != nil {
+			t.Fatal(err)
+		}
+		gotDoc, err := st.Get(ctx, compacted.ID)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if gotDoc.SnapshotSeq == 0 {
+			t.Fatal("expected snapshot")
+		}
+		firstSeq, got, opSeq, err := st.ReadOperations(ctx, compacted.ID, 0, 0)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if firstSeq != 1 || len(got) != len(all) || opSeq != uint64(len(all)) {
+			t.Fatalf("first=%d n=%d op_seq=%d", firstSeq, len(got), opSeq)
+		}
+	})
+
+	t.Run("limit 0 caps at 1000", func(t *testing.T) {
+		wide, err := st.Create(ctx, "wide", "owner")
+		if err != nil {
+			t.Fatal(err)
+		}
+		all := nInserts(t, 23, 1001)
+		if _, err := st.Append(ctx, wide.ID, all); err != nil {
+			t.Fatal(err)
+		}
+		firstSeq, got, opSeq, err := st.ReadOperations(ctx, wide.ID, 0, 0)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if firstSeq != 1 || len(got) != 1000 || opSeq != 1001 {
+			t.Fatalf("first=%d n=%d op_seq=%d", firstSeq, len(got), opSeq)
+		}
+	})
+}
+
+func nInserts(t *testing.T, client crdt.ClientID, n int) []*crdtv1.Operation {
+	t.Helper()
+	r, err := crdt.NewReplica(client, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ops := make([]*crdtv1.Operation, 0, n)
+	for range n {
+		op, err := r.InsertAt(r.Len(), 'x')
+		if err != nil {
+			t.Fatal(err)
+		}
+		ops = append(ops, testdb.ProtoFromInsert(op))
+	}
+	return ops
+}
+
+func equalSeqs(got, want []uint64) bool {
+	if len(got) != len(want) {
+		return false
+	}
+	for i := range got {
+		if got[i] != want[i] {
+			return false
+		}
+	}
+	return true
 }

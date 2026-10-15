@@ -136,6 +136,111 @@ func TestGRPCHappyAndErrors(t *testing.T) {
 	}
 }
 
+func TestGRPCAppendSeqsAndReadOperations(t *testing.T) {
+	st, _ := testdb.Open(t)
+	client, stop := startGRPC(t, st)
+	defer stop()
+	ctx := t.Context()
+
+	doc, err := client.CreateDocument(ctx, &documentv1.CreateDocumentRequest{Title: "seqs", OwnerId: "o"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	r, err := crdt.NewReplica(31, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var protoOps []*crdtv1.Operation
+	for range 4 {
+		op, err := r.InsertAt(r.Len(), 's')
+		if err != nil {
+			t.Fatal(err)
+		}
+		protoOps = append(protoOps, testdb.ProtoFromInsert(op))
+	}
+
+	first, err := client.AppendOperations(ctx, &documentv1.AppendOperationsRequest{
+		Id:         doc.GetId(),
+		Operations: protoOps[:2],
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if first.GetOpSeq() != 2 || first.GetFirstNewSeq() != 1 || len(first.GetSeqs()) != 2 || first.GetSeqs()[0] != 1 || first.GetSeqs()[1] != 2 {
+		t.Fatalf("first %+v", first)
+	}
+
+	mixed, err := client.AppendOperations(ctx, &documentv1.AppendOperationsRequest{
+		Id:         doc.GetId(),
+		Operations: []*crdtv1.Operation{protoOps[0], protoOps[2], protoOps[2]},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if mixed.GetOpSeq() != 3 || mixed.GetFirstNewSeq() != 3 || len(mixed.GetSeqs()) != 3 {
+		t.Fatalf("mixed %+v", mixed)
+	}
+	if mixed.GetSeqs()[0] != 1 || mixed.GetSeqs()[1] != 3 || mixed.GetSeqs()[2] != 3 {
+		t.Fatalf("mixed seqs %v", mixed.GetSeqs())
+	}
+
+	after0, err := client.ReadOperations(ctx, &documentv1.ReadOperationsRequest{Id: doc.GetId(), AfterSeq: 0, Limit: 10})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if after0.GetFirstSeq() != 1 || after0.GetOpSeq() != 3 || len(after0.GetOperations()) != 3 {
+		t.Fatalf("after0 %+v n=%d", after0, len(after0.GetOperations()))
+	}
+
+	afterMid, err := client.ReadOperations(ctx, &documentv1.ReadOperationsRequest{Id: doc.GetId(), AfterSeq: 1, Limit: 10})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if afterMid.GetFirstSeq() != 2 || len(afterMid.GetOperations()) != 2 {
+		t.Fatalf("after mid %+v n=%d", afterMid, len(afterMid.GetOperations()))
+	}
+
+	empty, err := client.ReadOperations(ctx, &documentv1.ReadOperationsRequest{Id: doc.GetId(), AfterSeq: 3})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if empty.GetFirstSeq() != 0 || len(empty.GetOperations()) != 0 || empty.GetOpSeq() != 3 {
+		t.Fatalf("empty %+v n=%d", empty, len(empty.GetOperations()))
+	}
+
+	trunc, err := client.ReadOperations(ctx, &documentv1.ReadOperationsRequest{Id: doc.GetId(), AfterSeq: 0, Limit: 1})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if trunc.GetFirstSeq() != 1 || len(trunc.GetOperations()) != 1 || trunc.GetOpSeq() != 3 {
+		t.Fatalf("trunc %+v n=%d", trunc, len(trunc.GetOperations()))
+	}
+
+	_, err = client.ReadOperations(ctx, &documentv1.ReadOperationsRequest{Id: doc.GetId(), AfterSeq: 0, Limit: 10001})
+	if status.Code(err) != codes.InvalidArgument {
+		t.Fatalf("limit too large: %v", err)
+	}
+	_, err = client.ReadOperations(ctx, &documentv1.ReadOperationsRequest{Id: doc.GetId(), AfterSeq: 4})
+	if status.Code(err) != codes.InvalidArgument {
+		t.Fatalf("after beyond: %v", err)
+	}
+	_, err = client.ReadOperations(ctx, &documentv1.ReadOperationsRequest{Id: "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa"})
+	if status.Code(err) != codes.NotFound {
+		t.Fatalf("unknown: %v", err)
+	}
+
+	if _, err := client.ArchiveDocument(ctx, &documentv1.ArchiveDocumentRequest{Id: doc.GetId()}); err != nil {
+		t.Fatal(err)
+	}
+	archived, err := client.ReadOperations(ctx, &documentv1.ReadOperationsRequest{Id: doc.GetId(), AfterSeq: 0})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if archived.GetFirstSeq() != 1 || len(archived.GetOperations()) != 3 {
+		t.Fatalf("archived n=%d", len(archived.GetOperations()))
+	}
+}
+
 func startGRPC(t *testing.T, st *store.Store) (documentv1.DocumentServiceClient, func()) {
 	t.Helper()
 	lis := bufconn.Listen(1024 * 1024)

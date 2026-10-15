@@ -76,11 +76,31 @@ func (s *Server) AppendOperations(ctx context.Context, req *documentv1.AppendOpe
 	if err != nil {
 		return nil, err
 	}
-	seq, err := s.store.Append(ctx, id, req.GetOperations())
+	result, err := s.store.Append(ctx, id, req.GetOperations())
 	if err != nil {
 		return nil, mapError(err)
 	}
-	return &documentv1.AppendOperationsResponse{OpSeq: seq}, nil
+	return &documentv1.AppendOperationsResponse{
+		OpSeq:       result.OpSeq,
+		Seqs:        result.Seqs,
+		FirstNewSeq: result.FirstNewSeq,
+	}, nil
+}
+
+func (s *Server) ReadOperations(ctx context.Context, req *documentv1.ReadOperationsRequest) (*documentv1.ReadOperationsResponse, error) {
+	id, err := parseID(req.GetId())
+	if err != nil {
+		return nil, err
+	}
+	firstSeq, ops, opSeq, err := s.store.ReadOperations(ctx, id, req.GetAfterSeq(), int(req.GetLimit()))
+	if err != nil {
+		return nil, mapError(err)
+	}
+	return &documentv1.ReadOperationsResponse{
+		FirstSeq:   firstSeq,
+		Operations: ops,
+		OpSeq:      opSeq,
+	}, nil
 }
 
 func parseID(raw string) (uuid.UUID, error) {

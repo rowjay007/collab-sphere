@@ -469,8 +469,14 @@ func (x *AppendOperationsRequest) GetOperations() []*v1.Operation {
 }
 
 type AppendOperationsResponse struct {
-	state         protoimpl.MessageState `protogen:"open.v1"`
-	OpSeq         uint64                 `protobuf:"varint,1,opt,name=op_seq,json=opSeq,proto3" json:"op_seq,omitempty"`
+	state protoimpl.MessageState `protogen:"open.v1"`
+	OpSeq uint64                 `protobuf:"varint,1,opt,name=op_seq,json=opSeq,proto3" json:"op_seq,omitempty"`
+	// Parallel to the request's operations. A newly stored op gets its new seq. An op already stored
+	// gets its existing seq. A repeat inside the same request gets the seq of its first occurrence.
+	Seqs []uint64 `protobuf:"varint,2,rep,packed,name=seqs,proto3" json:"seqs,omitempty"`
+	// Lowest seq this call assigned, or 0 when every op was already stored. Newly stored ops hold
+	// exactly first_new_seq..op_seq. Existing seqs are always below first_new_seq.
+	FirstNewSeq   uint64 `protobuf:"varint,3,opt,name=first_new_seq,json=firstNewSeq,proto3" json:"first_new_seq,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -506,6 +512,142 @@ func (*AppendOperationsResponse) Descriptor() ([]byte, []int) {
 }
 
 func (x *AppendOperationsResponse) GetOpSeq() uint64 {
+	if x != nil {
+		return x.OpSeq
+	}
+	return 0
+}
+
+func (x *AppendOperationsResponse) GetSeqs() []uint64 {
+	if x != nil {
+		return x.Seqs
+	}
+	return nil
+}
+
+func (x *AppendOperationsResponse) GetFirstNewSeq() uint64 {
+	if x != nil {
+		return x.FirstNewSeq
+	}
+	return 0
+}
+
+type ReadOperationsRequest struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Id            string                 `protobuf:"bytes,1,opt,name=id,proto3" json:"id,omitempty"`
+	AfterSeq      uint64                 `protobuf:"varint,2,opt,name=after_seq,json=afterSeq,proto3" json:"after_seq,omitempty"`
+	Limit         uint32                 `protobuf:"varint,3,opt,name=limit,proto3" json:"limit,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *ReadOperationsRequest) Reset() {
+	*x = ReadOperationsRequest{}
+	mi := &file_document_v1_document_proto_msgTypes[8]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *ReadOperationsRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*ReadOperationsRequest) ProtoMessage() {}
+
+func (x *ReadOperationsRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_document_v1_document_proto_msgTypes[8]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use ReadOperationsRequest.ProtoReflect.Descriptor instead.
+func (*ReadOperationsRequest) Descriptor() ([]byte, []int) {
+	return file_document_v1_document_proto_rawDescGZIP(), []int{8}
+}
+
+func (x *ReadOperationsRequest) GetId() string {
+	if x != nil {
+		return x.Id
+	}
+	return ""
+}
+
+func (x *ReadOperationsRequest) GetAfterSeq() uint64 {
+	if x != nil {
+		return x.AfterSeq
+	}
+	return 0
+}
+
+func (x *ReadOperationsRequest) GetLimit() uint32 {
+	if x != nil {
+		return x.Limit
+	}
+	return 0
+}
+
+type ReadOperationsResponse struct {
+	state protoimpl.MessageState `protogen:"open.v1"`
+	// Seq of operations[0]; operations are contiguous seqs first_seq..first_seq+len-1.
+	// Zero when operations is empty.
+	FirstSeq      uint64          `protobuf:"varint,1,opt,name=first_seq,json=firstSeq,proto3" json:"first_seq,omitempty"`
+	Operations    []*v1.Operation `protobuf:"bytes,2,rep,name=operations,proto3" json:"operations,omitempty"`
+	OpSeq         uint64          `protobuf:"varint,3,opt,name=op_seq,json=opSeq,proto3" json:"op_seq,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *ReadOperationsResponse) Reset() {
+	*x = ReadOperationsResponse{}
+	mi := &file_document_v1_document_proto_msgTypes[9]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *ReadOperationsResponse) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*ReadOperationsResponse) ProtoMessage() {}
+
+func (x *ReadOperationsResponse) ProtoReflect() protoreflect.Message {
+	mi := &file_document_v1_document_proto_msgTypes[9]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use ReadOperationsResponse.ProtoReflect.Descriptor instead.
+func (*ReadOperationsResponse) Descriptor() ([]byte, []int) {
+	return file_document_v1_document_proto_rawDescGZIP(), []int{9}
+}
+
+func (x *ReadOperationsResponse) GetFirstSeq() uint64 {
+	if x != nil {
+		return x.FirstSeq
+	}
+	return 0
+}
+
+func (x *ReadOperationsResponse) GetOperations() []*v1.Operation {
+	if x != nil {
+		return x.Operations
+	}
+	return nil
+}
+
+func (x *ReadOperationsResponse) GetOpSeq() uint64 {
 	if x != nil {
 		return x.OpSeq
 	}
@@ -551,15 +693,28 @@ const file_document_v1_document_proto_rawDesc = "" +
 	"\x02id\x18\x01 \x01(\tR\x02id\x122\n" +
 	"\n" +
 	"operations\x18\x02 \x03(\v2\x12.crdt.v1.OperationR\n" +
-	"operations\"1\n" +
+	"operations\"i\n" +
 	"\x18AppendOperationsResponse\x12\x15\n" +
-	"\x06op_seq\x18\x01 \x01(\x04R\x05opSeq2\xa1\x03\n" +
+	"\x06op_seq\x18\x01 \x01(\x04R\x05opSeq\x12\x12\n" +
+	"\x04seqs\x18\x02 \x03(\x04R\x04seqs\x12\"\n" +
+	"\rfirst_new_seq\x18\x03 \x01(\x04R\vfirstNewSeq\"Z\n" +
+	"\x15ReadOperationsRequest\x12\x0e\n" +
+	"\x02id\x18\x01 \x01(\tR\x02id\x12\x1b\n" +
+	"\tafter_seq\x18\x02 \x01(\x04R\bafterSeq\x12\x14\n" +
+	"\x05limit\x18\x03 \x01(\rR\x05limit\"\x80\x01\n" +
+	"\x16ReadOperationsResponse\x12\x1b\n" +
+	"\tfirst_seq\x18\x01 \x01(\x04R\bfirstSeq\x122\n" +
+	"\n" +
+	"operations\x18\x02 \x03(\v2\x12.crdt.v1.OperationR\n" +
+	"operations\x12\x15\n" +
+	"\x06op_seq\x18\x03 \x01(\x04R\x05opSeq2\xfc\x03\n" +
 	"\x0fDocumentService\x12K\n" +
 	"\x0eCreateDocument\x12\".document.v1.CreateDocumentRequest\x1a\x15.document.v1.Document\x12E\n" +
 	"\vGetDocument\x12\x1f.document.v1.GetDocumentRequest\x1a\x15.document.v1.Document\x12M\n" +
 	"\x0fArchiveDocument\x12#.document.v1.ArchiveDocumentRequest\x1a\x15.document.v1.Document\x12J\n" +
 	"\tLoadState\x12\x1d.document.v1.LoadStateRequest\x1a\x1e.document.v1.LoadStateResponse\x12_\n" +
-	"\x10AppendOperations\x12$.document.v1.AppendOperationsRequest\x1a%.document.v1.AppendOperationsResponseB?Z=github.com/rowjay007/collab-sphere/gen/document/v1;documentv1b\x06proto3"
+	"\x10AppendOperations\x12$.document.v1.AppendOperationsRequest\x1a%.document.v1.AppendOperationsResponse\x12Y\n" +
+	"\x0eReadOperations\x12\".document.v1.ReadOperationsRequest\x1a#.document.v1.ReadOperationsResponseB?Z=github.com/rowjay007/collab-sphere/gen/document/v1;documentv1b\x06proto3"
 
 var (
 	file_document_v1_document_proto_rawDescOnce sync.Once
@@ -574,7 +729,7 @@ func file_document_v1_document_proto_rawDescGZIP() []byte {
 }
 
 var file_document_v1_document_proto_enumTypes = make([]protoimpl.EnumInfo, 1)
-var file_document_v1_document_proto_msgTypes = make([]protoimpl.MessageInfo, 8)
+var file_document_v1_document_proto_msgTypes = make([]protoimpl.MessageInfo, 10)
 var file_document_v1_document_proto_goTypes = []any{
 	(Document_Status)(0),             // 0: document.v1.Document.Status
 	(*Document)(nil),                 // 1: document.v1.Document
@@ -585,33 +740,38 @@ var file_document_v1_document_proto_goTypes = []any{
 	(*LoadStateResponse)(nil),        // 6: document.v1.LoadStateResponse
 	(*AppendOperationsRequest)(nil),  // 7: document.v1.AppendOperationsRequest
 	(*AppendOperationsResponse)(nil), // 8: document.v1.AppendOperationsResponse
-	(*timestamppb.Timestamp)(nil),    // 9: google.protobuf.Timestamp
-	(*v1.Snapshot)(nil),              // 10: crdt.v1.Snapshot
-	(*v1.Operation)(nil),             // 11: crdt.v1.Operation
+	(*ReadOperationsRequest)(nil),    // 9: document.v1.ReadOperationsRequest
+	(*ReadOperationsResponse)(nil),   // 10: document.v1.ReadOperationsResponse
+	(*timestamppb.Timestamp)(nil),    // 11: google.protobuf.Timestamp
+	(*v1.Snapshot)(nil),              // 12: crdt.v1.Snapshot
+	(*v1.Operation)(nil),             // 13: crdt.v1.Operation
 }
 var file_document_v1_document_proto_depIdxs = []int32{
 	0,  // 0: document.v1.Document.status:type_name -> document.v1.Document.Status
-	9,  // 1: document.v1.Document.created_at:type_name -> google.protobuf.Timestamp
-	9,  // 2: document.v1.Document.updated_at:type_name -> google.protobuf.Timestamp
+	11, // 1: document.v1.Document.created_at:type_name -> google.protobuf.Timestamp
+	11, // 2: document.v1.Document.updated_at:type_name -> google.protobuf.Timestamp
 	1,  // 3: document.v1.LoadStateResponse.document:type_name -> document.v1.Document
-	10, // 4: document.v1.LoadStateResponse.snapshot:type_name -> crdt.v1.Snapshot
-	11, // 5: document.v1.LoadStateResponse.operations:type_name -> crdt.v1.Operation
-	11, // 6: document.v1.AppendOperationsRequest.operations:type_name -> crdt.v1.Operation
-	2,  // 7: document.v1.DocumentService.CreateDocument:input_type -> document.v1.CreateDocumentRequest
-	3,  // 8: document.v1.DocumentService.GetDocument:input_type -> document.v1.GetDocumentRequest
-	4,  // 9: document.v1.DocumentService.ArchiveDocument:input_type -> document.v1.ArchiveDocumentRequest
-	5,  // 10: document.v1.DocumentService.LoadState:input_type -> document.v1.LoadStateRequest
-	7,  // 11: document.v1.DocumentService.AppendOperations:input_type -> document.v1.AppendOperationsRequest
-	1,  // 12: document.v1.DocumentService.CreateDocument:output_type -> document.v1.Document
-	1,  // 13: document.v1.DocumentService.GetDocument:output_type -> document.v1.Document
-	1,  // 14: document.v1.DocumentService.ArchiveDocument:output_type -> document.v1.Document
-	6,  // 15: document.v1.DocumentService.LoadState:output_type -> document.v1.LoadStateResponse
-	8,  // 16: document.v1.DocumentService.AppendOperations:output_type -> document.v1.AppendOperationsResponse
-	12, // [12:17] is the sub-list for method output_type
-	7,  // [7:12] is the sub-list for method input_type
-	7,  // [7:7] is the sub-list for extension type_name
-	7,  // [7:7] is the sub-list for extension extendee
-	0,  // [0:7] is the sub-list for field type_name
+	12, // 4: document.v1.LoadStateResponse.snapshot:type_name -> crdt.v1.Snapshot
+	13, // 5: document.v1.LoadStateResponse.operations:type_name -> crdt.v1.Operation
+	13, // 6: document.v1.AppendOperationsRequest.operations:type_name -> crdt.v1.Operation
+	13, // 7: document.v1.ReadOperationsResponse.operations:type_name -> crdt.v1.Operation
+	2,  // 8: document.v1.DocumentService.CreateDocument:input_type -> document.v1.CreateDocumentRequest
+	3,  // 9: document.v1.DocumentService.GetDocument:input_type -> document.v1.GetDocumentRequest
+	4,  // 10: document.v1.DocumentService.ArchiveDocument:input_type -> document.v1.ArchiveDocumentRequest
+	5,  // 11: document.v1.DocumentService.LoadState:input_type -> document.v1.LoadStateRequest
+	7,  // 12: document.v1.DocumentService.AppendOperations:input_type -> document.v1.AppendOperationsRequest
+	9,  // 13: document.v1.DocumentService.ReadOperations:input_type -> document.v1.ReadOperationsRequest
+	1,  // 14: document.v1.DocumentService.CreateDocument:output_type -> document.v1.Document
+	1,  // 15: document.v1.DocumentService.GetDocument:output_type -> document.v1.Document
+	1,  // 16: document.v1.DocumentService.ArchiveDocument:output_type -> document.v1.Document
+	6,  // 17: document.v1.DocumentService.LoadState:output_type -> document.v1.LoadStateResponse
+	8,  // 18: document.v1.DocumentService.AppendOperations:output_type -> document.v1.AppendOperationsResponse
+	10, // 19: document.v1.DocumentService.ReadOperations:output_type -> document.v1.ReadOperationsResponse
+	14, // [14:20] is the sub-list for method output_type
+	8,  // [8:14] is the sub-list for method input_type
+	8,  // [8:8] is the sub-list for extension type_name
+	8,  // [8:8] is the sub-list for extension extendee
+	0,  // [0:8] is the sub-list for field type_name
 }
 
 func init() { file_document_v1_document_proto_init() }
@@ -625,7 +785,7 @@ func file_document_v1_document_proto_init() {
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_document_v1_document_proto_rawDesc), len(file_document_v1_document_proto_rawDesc)),
 			NumEnums:      1,
-			NumMessages:   8,
+			NumMessages:   10,
 			NumExtensions: 0,
 			NumServices:   1,
 		},

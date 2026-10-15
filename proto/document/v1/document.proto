@@ -15,6 +15,7 @@ service DocumentService {
   // after it. Applying the operations to the snapshot yields the current state.
   rpc LoadState(LoadStateRequest) returns (LoadStateResponse);
   rpc AppendOperations(AppendOperationsRequest) returns (AppendOperationsResponse);
+  rpc ReadOperations(ReadOperationsRequest) returns (ReadOperationsResponse);
 }
 
 message Document {
@@ -63,4 +64,24 @@ message AppendOperationsRequest {
 
 message AppendOperationsResponse {
   uint64 op_seq = 1;
+  // Parallel to the request's operations. A newly stored op gets its new seq. An op already stored
+  // gets its existing seq. A repeat inside the same request gets the seq of its first occurrence.
+  repeated uint64 seqs = 2;
+  // Lowest seq this call assigned, or 0 when every op was already stored. Newly stored ops hold
+  // exactly first_new_seq..op_seq. Existing seqs are always below first_new_seq.
+  uint64 first_new_seq = 3;
+}
+
+message ReadOperationsRequest {
+  string id = 1;
+  uint64 after_seq = 2;
+  uint32 limit = 3;
+}
+
+message ReadOperationsResponse {
+  // Seq of operations[0]; operations are contiguous seqs first_seq..first_seq+len-1.
+  // Zero when operations is empty.
+  uint64 first_seq = 1;
+  repeated crdt.v1.Operation operations = 2;
+  uint64 op_seq = 3;
 }
