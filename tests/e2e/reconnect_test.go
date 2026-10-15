@@ -60,13 +60,22 @@ func typeOrDeleteOwn(rng *rand.Rand, own map[crdt.ID]bool) func(r *crdt.Replica)
 }
 
 func TestOfflineEditsResumeExactlyOnce(t *testing.T) {
-	s := stack.New(t)
+	offlineEditsResume(t, stack.New(t), 0, 0, 0)
+}
+
+func TestOfflineEditsResumeOnAnotherHub(t *testing.T) {
+	offlineEditsResume(t, stack.New(t, stack.WithHubs(3)), 0, 1, 2)
+}
+
+// offlineEditsResume puts X on hub xHub and Y on hub yHub, edits on X while
+// it is disconnected and on Y meanwhile, then resumes X on hub rejoinHub.
+func offlineEditsResume(t *testing.T, s *stack.Stack, xHub, yHub, rejoinHub int) {
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
 	defer cancel()
 	docID := s.CreateDocument(ctx)
 
-	x := s.Dial(ctx, docID, 2001)
-	y := s.Dial(ctx, docID, 2002)
+	x := s.DialHub(ctx, docID, 2001, xHub)
+	y := s.DialHub(ctx, docID, 2002, yHub)
 	clients := []*collabclient.Client{x, y}
 	rngX, rngY := rand.New(rand.NewPCG(1, 42)), rand.New(rand.NewPCG(2, 42))
 
@@ -78,7 +87,7 @@ func TestOfflineEditsResumeExactlyOnce(t *testing.T) {
 		}
 		generated = append(generated, ids...)
 	}
-	stack.Settle(t, ctx, clients)
+	stack.Settle(t, ctx, s.Docs, docID, clients)
 
 	x.Disconnect()
 	var offline, online []crdt.ID
@@ -112,21 +121,13 @@ func TestOfflineEditsResumeExactlyOnce(t *testing.T) {
 		t.Fatalf("X has %d unacked ops after 50 offline edits", got)
 	}
 
-	if err := x.Reconnect(ctx, s.HubURL()); err != nil {
+	if err := x.Reconnect(ctx, s.HubURL(rejoinHub)); err != nil {
 		t.Fatal(err)
 	}
 	if got := x.LastJoin(); got != collabclient.Missed {
 		t.Fatalf("LastJoin() = %v, want Missed", got)
 	}
-	final := stack.Settle(t, ctx, clients)
-	for i, c := range clients {
-		if n := c.Unacked(); n != 0 {
-			t.Fatalf("client %d has %d unacked ops after Settle", i, n)
-		}
-	}
+	stack.Settle(t, ctx, s.Docs, docID, clients)
 	generated = append(append(generated, offline...), online...)
 	stack.AssertExactlyOnce(t, ctx, s.Docs, docID, generated)
-	if stored, _ := stack.LoadText(t, ctx, s.Docs, docID); stored != final {
-		t.Fatalf("stored text differs from clients:\n got %q\nwant %q", stored, final)
-	}
 }

@@ -52,7 +52,7 @@ func TestTwoClientsConvergeAndSurviveRestarts(t *testing.T) {
 	}
 	close(start)
 	wg.Wait()
-	sameSpot := stack.Settle(t, ctx, clients)
+	sameSpot := stack.Settle(t, ctx, s.Docs, docID, clients)
 	if len([]rune(sameSpot)) != 100 {
 		t.Fatalf("same-position typing lost characters: %q", sameSpot)
 	}
@@ -74,13 +74,10 @@ func TestTwoClientsConvergeAndSurviveRestarts(t *testing.T) {
 	}
 	close(start)
 	wg.Wait()
-	final := stack.Settle(t, ctx, clients)
+	final := stack.Settle(t, ctx, s.Docs, docID, clients)
 	t.Logf("converged on %d visible runes after 700 ops", len([]rune(final)))
 
-	stored, meta := stack.LoadText(t, ctx, s.Docs, docID)
-	if stored != final {
-		t.Fatalf("document-service state differs from clients:\n got %q\nwant %q", stored, final)
-	}
+	_, meta := stack.LoadText(t, ctx, s.Docs, docID)
 	if meta.GetOpSeq() != 700 {
 		t.Fatalf("op_seq = %d, want 700", meta.GetOpSeq())
 	}
@@ -92,10 +89,10 @@ func TestTwoClientsConvergeAndSurviveRestarts(t *testing.T) {
 
 	alice.Close()
 	bob.Close()
-	s.StopHub()
+	s.StopHub(0)
 	s.StopDocumentService()
 	s.StartDocumentService()
-	s.StartHub()
+	s.StartHub(0)
 
 	_, meta = stack.LoadText(t, ctx, s.Docs, docID)
 	if meta.GetOpSeq()-meta.GetSnapshotSeq() >= 100 || meta.GetSnapshotSeq() == 0 {

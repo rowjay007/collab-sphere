@@ -13,8 +13,9 @@ import (
 )
 
 // Settle waits until every client's ops are echoed and every client has
-// received every other client's ops, then asserts identical state.
-func Settle(t *testing.T, ctx context.Context, clients []*collabclient.Client) string {
+// received every other client's ops, then asserts that every client holds
+// the document-service state and has nothing unacked.
+func Settle(t *testing.T, ctx context.Context, docs documentv1.DocumentServiceClient, docID string, clients []*collabclient.Client) string {
 	t.Helper()
 	for _, c := range clients {
 		if err := c.WaitAcked(ctx); err != nil {
@@ -43,19 +44,23 @@ func Settle(t *testing.T, ctx context.Context, clients []*collabclient.Client) s
 			t.Fatalf("wait for peers' ops: %v", err)
 		}
 	}
-	want := clients[0].Snapshot()
-	text := clients[0].Text()
+	stored, _ := loadState(t, ctx, docs, docID)
+	want := stored.Snapshot()
+	text := stored.Text()
 	for i, c := range clients {
 		for _, err := range c.Errors() {
 			if err.GetCode() != collabv1.ErrorMessage_CODE_UNAVAILABLE {
 				t.Fatalf("client %d got hub error: %v", i, err)
 			}
 		}
+		if n := c.Unacked(); n != 0 {
+			t.Fatalf("client %d has %d unacked ops after settling", i, n)
+		}
 		if got := c.Text(); got != text {
-			t.Fatalf("client %d text diverged:\n got %q\nwant %q", i, got, text)
+			t.Fatalf("client %d text differs from LoadState:\n got %q\nwant %q", i, got, text)
 		}
 		if !proto.Equal(c.Snapshot(), want) {
-			t.Fatalf("client %d snapshot diverged from client 0", i)
+			t.Fatalf("client %d snapshot differs from LoadState", i)
 		}
 	}
 	return text

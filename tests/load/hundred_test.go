@@ -2,6 +2,7 @@ package load
 
 import (
 	"context"
+	"maps"
 	"math/rand/v2"
 	"slices"
 	"strings"
@@ -52,10 +53,20 @@ func (ty *typist) edit(rng *rand.Rand, c *collabclient.Client) error {
 }
 
 func TestHundredConcurrentEditors(t *testing.T) {
+	hundredEditors(t, 1)
+}
+
+func TestHundredEditorsThreeHubs(t *testing.T) {
+	hundredEditors(t, 3)
+}
+
+// hundredEditors seeds a 20,000-rune document, then has 100 typists, editor
+// i on hub i%hubs, make 40 edits each.
+func hundredEditors(t *testing.T, hubs int) {
 	if testing.Short() {
 		t.Skip("load test")
 	}
-	s := stack.New(t)
+	s := stack.New(t, stack.WithHubs(hubs))
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Minute)
 	defer cancel()
 	docID := s.CreateDocument(ctx)
@@ -79,13 +90,17 @@ func TestHundredConcurrentEditors(t *testing.T) {
 	if err := seeder.WaitAcked(ctx); err != nil {
 		t.Fatal(err)
 	}
+	generated := slices.Collect(maps.Keys(seeder.SendTimes()))
 	if err := seeder.Close(); err != nil {
 		t.Fatal(err)
 	}
 
 	clients := make([]*collabclient.Client, editors)
+	hubOf := make(map[crdt.ClientID]int, editors)
 	for i := range clients {
-		clients[i] = s.Dial(ctx, docID, crdt.ClientID(5000+i))
+		id := crdt.ClientID(5000 + i)
+		clients[i] = s.DialHub(ctx, docID, id, i%hubs)
+		hubOf[id] = i % hubs
 	}
 
 	var wg sync.WaitGroup
@@ -113,27 +128,29 @@ func TestHundredConcurrentEditors(t *testing.T) {
 	began := time.Now()
 	close(start)
 	wg.Wait()
-	final := stack.Settle(t, ctx, clients)
+	final := stack.Settle(t, ctx, s.Docs, docID, clients)
 	elapsed := time.Since(began)
 
-	var echo, fanout []time.Duration
+	var echo, fanout, crossHub []time.Duration
 	sent := make(map[crdt.ID]time.Time, editors*edits)
 	for _, c := range clients {
 		echo = append(echo, c.Latencies()...)
 		for id, at := range c.SendTimes() {
 			sent[id] = at
+			generated = append(generated, id)
 		}
 	}
+	stack.AssertExactlyOnce(t, ctx, s.Docs, docID, generated)
+
 	received := make([]map[crdt.ID]time.Time, len(clients))
 	for i, c := range clients {
 		received[i] = c.ReceiveTimes()
 	}
 	for id, sentAt := range sent {
-		var last time.Time
-		for i, c := range clients {
-			var clientID crdt.ClientID
-			c.Read(func(r *crdt.Replica) { clientID = r.Client() })
-			if clientID == id.Client {
+		var last, lastCross time.Time
+		for i := range clients {
+			receiver := crdt.ClientID(5000 + i)
+			if receiver == id.Client {
 				continue
 			}
 			at, ok := received[i][id]
@@ -143,26 +160,34 @@ func TestHundredConcurrentEditors(t *testing.T) {
 			if at.After(last) {
 				last = at
 			}
+			if hubOf[receiver] != hubOf[id.Client] && at.After(lastCross) {
+				lastCross = at
+			}
 		}
 		fanout = append(fanout, last.Sub(sentAt))
+		if !lastCross.IsZero() {
+			crossHub = append(crossHub, lastCross.Sub(sentAt))
+		}
 	}
 	slices.Sort(echo)
 	slices.Sort(fanout)
+	slices.Sort(crossHub)
 	pct := func(values []time.Duration, p float64) time.Duration {
 		return values[int(p*float64(len(values)-1))]
 	}
-	t.Logf("%d editors, %d ops in %s (%.0f ops/s), %d visible runes", editors, len(echo), elapsed.Round(time.Millisecond),
-		float64(len(echo))/elapsed.Seconds(), len([]rune(final)))
+	t.Logf("%d hubs, %d editors, %d ops in %s (%.0f ops/s), %d visible runes", hubs, editors, len(echo),
+		elapsed.Round(time.Millisecond), float64(len(echo))/elapsed.Seconds(), len([]rune(final)))
 	t.Logf("echo latency: p50=%s p95=%s p99=%s max=%s", pct(echo, 0.50), pct(echo, 0.95), pct(echo, 0.99), echo[len(echo)-1])
 	t.Logf("fan-out latency: p50=%s p95=%s p99=%s max=%s", pct(fanout, 0.50), pct(fanout, 0.95), pct(fanout, 0.99), fanout[len(fanout)-1])
+	if len(crossHub) > 0 {
+		t.Logf("cross-hub fan-out latency: p50=%s p95=%s p99=%s max=%s", pct(crossHub, 0.50), pct(crossHub, 0.95),
+			pct(crossHub, 0.99), crossHub[len(crossHub)-1])
+	}
 
 	if len(echo) != editors*edits {
 		t.Fatalf("got %d echoes, want %d", len(echo), editors*edits)
 	}
 	if len(fanout) != editors*edits {
 		t.Fatalf("got %d fan-out measurements, want %d", len(fanout), editors*edits)
-	}
-	if stored, _ := stack.LoadText(t, ctx, s.Docs, docID); stored != final {
-		t.Fatal("document-service state differs from the 100 clients")
 	}
 }

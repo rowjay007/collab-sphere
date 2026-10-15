@@ -156,6 +156,11 @@ func start(t *testing.T, name, bin string, env ...string) *process {
 	return p
 }
 
+func (p *process) kill() {
+	_ = p.cmd.Process.Kill()
+	<-p.done
+}
+
 func (p *process) stop() {
 	select {
 	case <-p.done:
@@ -172,21 +177,48 @@ func (p *process) stop() {
 	}
 }
 
-type Stack struct {
-	t       *testing.T
-	dbURL   string
-	grpc    string
-	http    string
-	docsvc  *process
-	hub     *process
-	Docs    documentv1.DocumentServiceClient
-	hubBase string
+type hubInstance struct {
+	id   string
+	http string
+	proc *process
 }
 
-func New(t *testing.T) *Stack {
+type Stack struct {
+	t        *testing.T
+	dbURL    string
+	redisURL string
+	grpc     string
+	docsvc   *process
+	hubs     []*hubInstance
+	Docs     documentv1.DocumentServiceClient
+}
+
+type Option func(*config)
+
+type config struct{ hubs int }
+
+// WithHubs runs n collab-hub instances. More than one shares ops over the
+// Redis at COLLAB_TEST_REDIS_URL, and the test skips when it is unset.
+func WithHubs(n int) Option {
+	return func(c *config) { c.hubs = n }
+}
+
+func New(t *testing.T, opts ...Option) *Stack {
 	t.Helper()
-	s := &Stack{t: t, dbURL: freshDatabase(t), grpc: freeAddr(t), http: freeAddr(t)}
-	s.hubBase = "ws://" + s.http
+	cfg := config{hubs: 1}
+	for _, opt := range opts {
+		opt(&cfg)
+	}
+	var redisURL string
+	if cfg.hubs > 1 {
+		if redisURL = os.Getenv("COLLAB_TEST_REDIS_URL"); redisURL == "" {
+			t.Skip("COLLAB_TEST_REDIS_URL not set")
+		}
+	}
+	s := &Stack{t: t, dbURL: freshDatabase(t), redisURL: redisURL, grpc: freeAddr(t)}
+	for i := range cfg.hubs {
+		s.hubs = append(s.hubs, &hubInstance{id: fmt.Sprintf("hub-%d", i), http: freeAddr(t)})
+	}
 	conn, err := grpc.NewClient(s.grpc, grpc.WithTransportCredentials(insecure.NewCredentials()))
 	if err != nil {
 		t.Fatal(err)
@@ -194,7 +226,9 @@ func New(t *testing.T) *Stack {
 	t.Cleanup(func() { conn.Close() })
 	s.Docs = documentv1.NewDocumentServiceClient(conn)
 	s.StartDocumentService()
-	s.StartHub()
+	for i := range s.hubs {
+		s.StartHub(i)
+	}
 	return s
 }
 
@@ -210,11 +244,18 @@ func (s *Stack) StartDocumentService() {
 	})
 }
 
-func (s *Stack) StartHub() {
-	_, hub := binaries(s.t)
-	s.hub = start(s.t, "collab-hub", hub, "HTTP_ADDR="+s.http, "DOCUMENT_SERVICE_ADDR="+s.grpc)
-	waitFor(s.t, "collab-hub", func(ctx context.Context) error {
-		req, _ := http.NewRequestWithContext(ctx, http.MethodGet, "http://"+s.http+"/healthz", nil)
+// StartHub starts hub i on its own port and HUB_ID, which stay the same
+// across restarts.
+func (s *Stack) StartHub(i int) {
+	_, bin := binaries(s.t)
+	h := s.hubs[i]
+	env := []string{"HTTP_ADDR=" + h.http, "DOCUMENT_SERVICE_ADDR=" + s.grpc, "HUB_ID=" + h.id}
+	if s.redisURL != "" {
+		env = append(env, "REDIS_URL="+s.redisURL)
+	}
+	h.proc = start(s.t, h.id, bin, env...)
+	waitFor(s.t, h.id, func(ctx context.Context) error {
+		req, _ := http.NewRequestWithContext(ctx, http.MethodGet, "http://"+h.http+"/healthz", nil)
 		resp, err := http.DefaultClient.Do(req)
 		if err != nil {
 			return err
@@ -231,9 +272,17 @@ func (s *Stack) StopDocumentService() {
 	s.docsvc.stop()
 }
 
-func (s *Stack) StopHub() {
-	s.hub.stop()
+// StopHub sends hub i SIGTERM and waits for it to drain and exit.
+func (s *Stack) StopHub(i int) {
+	s.hubs[i].proc.stop()
 }
+
+// KillHub sends hub i SIGKILL, so it drains nothing.
+func (s *Stack) KillHub(i int) {
+	s.hubs[i].proc.kill()
+}
+
+func (s *Stack) Hubs() int { return len(s.hubs) }
 
 func (s *Stack) CreateDocument(ctx context.Context) string {
 	s.t.Helper()
@@ -244,12 +293,42 @@ func (s *Stack) CreateDocument(ctx context.Context) string {
 	return doc.GetId()
 }
 
-// HubURL is the hub's WebSocket base URL.
-func (s *Stack) HubURL() string { return s.hubBase }
+// HubURL is hub i's WebSocket base URL.
+func (s *Stack) HubURL(i int) string { return "ws://" + s.hubs[i].http }
 
+func (s *Stack) HubURLs() []string {
+	urls := make([]string, len(s.hubs))
+	for i := range s.hubs {
+		urls[i] = s.HubURL(i)
+	}
+	return urls
+}
+
+// Dial joins hub 0 without auto-reconnect.
 func (s *Stack) Dial(ctx context.Context, docID string, client crdt.ClientID) *collabclient.Client {
 	s.t.Helper()
-	c, err := collabclient.Dial(ctx, s.hubBase, docID, client)
+	return s.DialHub(ctx, docID, client, 0)
+}
+
+// DialHub joins hub i without auto-reconnect.
+func (s *Stack) DialHub(ctx context.Context, docID string, client crdt.ClientID, i int) *collabclient.Client {
+	s.t.Helper()
+	return s.dial(ctx, docID, client, collabclient.Options{URLs: []string{s.HubURL(i)}})
+}
+
+// DialAuto joins hub i with auto-reconnect rotating through every hub after it.
+func (s *Stack) DialAuto(ctx context.Context, docID string, client crdt.ClientID, i int) *collabclient.Client {
+	s.t.Helper()
+	urls := s.HubURLs()
+	return s.dial(ctx, docID, client, collabclient.Options{
+		URLs:          append(urls[i:], urls[:i]...),
+		AutoReconnect: true,
+	})
+}
+
+func (s *Stack) dial(ctx context.Context, docID string, client crdt.ClientID, opts collabclient.Options) *collabclient.Client {
+	s.t.Helper()
+	c, err := collabclient.DialWith(ctx, docID, client, opts)
 	if err != nil {
 		s.t.Fatal(err)
 	}
