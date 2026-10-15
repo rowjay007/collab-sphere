@@ -20,7 +20,7 @@ func TestRejectedOperationDropsPeerAfterPersistingPrefix(t *testing.T) {
 	store := NewMemoryStore()
 	reg := localRegistry(store)
 	t.Cleanup(reg.Close)
-	peer := NewPeer(1)
+	peer := NewPeer(1, 0)
 	session, err := reg.Join(ctx, "doc", peer, false, 0)
 	if err != nil {
 		t.Fatal(err)
@@ -49,7 +49,7 @@ func TestOperationClockBeyondHubFrontierIsRejected(t *testing.T) {
 	store := NewMemoryStore()
 	reg := localRegistry(store)
 	t.Cleanup(reg.Close)
-	peer := NewPeer(1)
+	peer := NewPeer(1, 0)
 	session, err := reg.Join(ctx, "doc", peer, false, 0)
 	if err != nil {
 		t.Fatal(err)
@@ -79,13 +79,13 @@ func TestInvalidCursorIsIgnored(t *testing.T) {
 	reg := localRegistry(NewMemoryStore())
 	t.Cleanup(reg.Close)
 
-	peer := NewPeer(1)
+	peer := NewPeer(1, 0)
 	session, err := reg.Join(ctx, "doc", peer, false, 0)
 	if err != nil {
 		t.Fatal(err)
 	}
 	readServerMessage(t, ctx, peer)
-	observer := NewPeer(2)
+	observer := NewPeer(2, 0)
 	observerSession, err := reg.Join(ctx, "doc", observer, false, 0)
 	if err != nil {
 		t.Fatal(err)
@@ -179,7 +179,7 @@ func TestHubGroupsQueuedClientBatches(t *testing.T) {
 	peers := make([]*Peer, clients)
 	sessions := make([]*Session, clients)
 	for i := range peers {
-		peers[i] = NewPeer(crdt.ClientID(i + 1))
+		peers[i] = NewPeer(crdt.ClientID(i+1), 0)
 		session, err := reg.Join(ctx, "doc", peers[i], false, 0)
 		if err != nil {
 			t.Fatal(err)

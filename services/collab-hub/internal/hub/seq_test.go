@@ -153,7 +153,7 @@ func insert(client crdt.ClientID, clock uint64) crdt.Insert {
 
 func join(t *testing.T, ctx context.Context, reg *Registry, id crdt.ClientID) (*Session, *Peer, *stream) {
 	t.Helper()
-	peer := NewPeer(id)
+	peer := NewPeer(id, 0)
 	session, err := reg.Join(ctx, "doc", peer, false, 0)
 	if err != nil {
 		t.Fatal(err)

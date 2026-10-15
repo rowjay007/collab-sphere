@@ -22,6 +22,8 @@ type fakeService struct {
 	fail       int
 	missing    func(*presencev1.Touch) bool
 	superseded func(*presencev1.Touch) bool
+	staleJoin  func(*presencev1.State) bool
+	staleWrite func(*presencev1.State) bool
 	changed    chan struct{}
 }
 
@@ -31,7 +33,7 @@ func (f *fakeService) Join(_ context.Context, in *presencev1.JoinRequest, _ ...g
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.joins = append(f.joins, proto.Clone(in.GetSelf()).(*presencev1.State))
-	return &presencev1.ListResponse{Version: 1}, nil
+	return &presencev1.ListResponse{Version: 1, Superseded: f.staleJoin != nil && f.staleJoin(in.GetSelf())}, nil
 }
 
 func (f *fakeService) Apply(_ context.Context, in *presencev1.ApplyRequest, _ ...grpc.CallOption) (*presencev1.ApplyResponse, error) {
@@ -53,6 +55,9 @@ func (f *fakeService) Apply(_ context.Context, in *presencev1.ApplyRequest, _ ..
 		}
 		if t := ch.GetTouch(); t != nil && f.superseded != nil && f.superseded(t) {
 			resp.Superseded = append(resp.Superseded, t)
+		}
+		if u := ch.GetUpsert(); u != nil && f.staleWrite != nil && f.staleWrite(u) {
+			resp.SupersededUpserts = append(resp.SupersededUpserts, u)
 		}
 	}
 	return resp, nil
@@ -212,4 +217,88 @@ func TestWriterCloseFlushesLeaves(t *testing.T) {
 	}) {
 		t.Fatalf("Close sent %v", f.applies)
 	}
+}
+
+func TestWriterForgetsSupersededJoin(t *testing.T) {
+	f := newFakeService()
+	f.staleJoin = func(st *presencev1.State) bool { return st.GetSession() == 20 }
+	w := NewWriter(f, time.Hour, time.Hour)
+	stale := Session{Client: 2, Session: 20, Epoch: 1}
+	if _, _, err := w.Join(context.Background(), "doc", stale); err != nil {
+		t.Fatal(err)
+	}
+	w.Move("doc", stale, at(1), at(1))
+	w.Rename("doc", stale, "late")
+	if err := w.send(true); err != nil {
+		t.Fatal(err)
+	}
+	w.Leave("doc", stale)
+	w.Close()
+	if n := writesFor(f, 20); n != 0 {
+		t.Fatalf("%d writes for a session whose Join was superseded", n)
+	}
+}
+
+func TestWriterForgetsSupersededUpsert(t *testing.T) {
+	f := newFakeService()
+	f.staleWrite = func(st *presencev1.State) bool { return st.GetSession() == 20 }
+	w := NewWriter(f, time.Hour, time.Hour)
+	stale := Session{Client: 2, Session: 20, Epoch: 1}
+	if _, _, err := w.Join(context.Background(), "doc", stale); err != nil {
+		t.Fatal(err)
+	}
+	w.Move("doc", stale, at(1), at(1))
+	if err := w.send(false); err != nil {
+		t.Fatal(err)
+	}
+	w.Move("doc", stale, at(2), at(2))
+	if err := w.send(true); err != nil {
+		t.Fatal(err)
+	}
+	w.Leave("doc", stale)
+	w.Close()
+	if n := writesFor(f, 20); n != 1 {
+		t.Fatalf("%d writes for session 20, want only the upsert that was superseded", n)
+	}
+}
+
+func TestWriterChunksHeartbeats(t *testing.T) {
+	f := newFakeService()
+	w := NewWriter(f, time.Hour, time.Hour)
+	t.Cleanup(w.Close)
+	const sessions = 2*maxChanges + 100
+	for i := range sessions {
+		if _, _, err := w.Join(context.Background(), "doc", Session{Client: crdt.ClientID(i + 1), Session: uint64(i + 1)}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := w.send(true); err != nil {
+		t.Fatal(err)
+	}
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	touched := 0
+	for _, changes := range f.applies {
+		if len(changes) > maxChanges {
+			t.Fatalf("one Apply carried %d changes", len(changes))
+		}
+		touched += len(changes)
+	}
+	if touched != sessions || len(f.applies) != 3 {
+		t.Fatalf("%d touches in %d Applies, want %d in 3", touched, len(f.applies), sessions)
+	}
+}
+
+func writesFor(f *fakeService, session uint64) int {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	n := 0
+	for _, changes := range f.applies {
+		for _, ch := range changes {
+			if ch.GetUpsert().GetSession() == session || ch.GetTouch().GetSession() == session || ch.GetLeave().GetSession() == session {
+				n++
+			}
+		}
+	}
+	return n
 }

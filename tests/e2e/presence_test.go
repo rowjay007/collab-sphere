@@ -133,6 +133,76 @@ func TestPresenceAcrossHubs(t *testing.T) {
 	}
 }
 
+func TestReloadedClientOutranksItsStaleConnection(t *testing.T) {
+	s := stack.New(t, stack.WithHubs(3))
+	ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
+	defer cancel()
+	docID := s.CreateDocument(ctx)
+	const idX, idObs = crdt.ClientID(7), crdt.ClientID(8)
+
+	obs := s.DialHub(ctx, docID, idObs, 2)
+	stale := s.DialHub(ctx, docID, idX, 0)
+	stale.SetName("before reload")
+	waitPresent(t, ctx, obs, idX, "before reload")
+
+	reloaded := s.DialHub(ctx, docID, idX, 1)
+	reloaded.SetName("after reload")
+	waitPresent(t, ctx, obs, idX, "after reload")
+
+	if err := stale.Close(); err != nil {
+		t.Fatal(err)
+	}
+	time.Sleep(500 * time.Millisecond)
+	if v, ok := obs.Presence()[idX]; !ok || v.Name != "after reload" {
+		reason, _ := obs.LeftReason(idX)
+		t.Fatalf("after the stale connection closed, observer sees %+v (present %v, left %v)", v, ok, reason)
+	}
+}
+
+func TestCursorSurvivesReconnect(t *testing.T) {
+	s := stack.New(t, stack.WithHubs(3))
+	ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
+	defer cancel()
+	docID := s.CreateDocument(ctx)
+	const idX, idObs = crdt.ClientID(9), crdt.ClientID(10)
+
+	obs := s.DialHub(ctx, docID, idObs, 2)
+	x := s.DialAuto(ctx, docID, idX, 0)
+	if err := x.InsertAt(0, 'a'); err != nil {
+		t.Fatal(err)
+	}
+	if err := x.WaitAcked(ctx); err != nil {
+		t.Fatal(err)
+	}
+	var id crdt.ID
+	x.Read(func(r *crdt.Replica) {
+		var err error
+		if id, err = r.IDAt(0); err != nil {
+			t.Fatal(err)
+		}
+	})
+	if err := x.MoveCursor(id, id); err != nil {
+		t.Fatal(err)
+	}
+	var before uint64
+	if err := obs.WaitPresence(ctx, func(m map[crdt.ClientID]collabclient.PresenceView) bool {
+		before = m[idX].Version
+		return m[idX].Cursor.Set && m[idX].Cursor.Head == id
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	s.KillHub(0)
+	wait, cancelWait := context.WithTimeout(ctx, 10*time.Second)
+	defer cancelWait()
+	if err := obs.WaitPresence(wait, func(m map[crdt.ClientID]collabclient.PresenceView) bool {
+		v := m[idX]
+		return v.Version > before && v.Cursor.Set && v.Cursor.Head == id
+	}); err != nil {
+		t.Fatalf("observer never saw X's cursor restored after X reconnected: %+v, %v", obs.Presence()[idX], err)
+	}
+}
+
 func waitPresent(t *testing.T, ctx context.Context, c *collabclient.Client, client crdt.ClientID, name string) {
 	t.Helper()
 	if err := c.WaitPresence(ctx, func(m map[crdt.ClientID]collabclient.PresenceView) bool {

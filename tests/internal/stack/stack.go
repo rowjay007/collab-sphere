@@ -189,6 +189,8 @@ type Stack struct {
 	t           *testing.T
 	dbURL       string
 	redisURL    string
+	hubRedisURL string
+	redisProxy  *tcpProxy
 	grpc        string
 	presence    string
 	presenceTTL time.Duration
@@ -202,6 +204,13 @@ type Option func(*config)
 type config struct {
 	hubs        int
 	presenceTTL time.Duration
+	redisProxy  bool
+}
+
+// WithRedisProxy routes the hubs' Redis connections, but not
+// presence-service's, through a proxy that CutRedis and RestoreRedis control.
+func WithRedisProxy() Option {
+	return func(c *config) { c.redisProxy = true }
 }
 
 // WithHubs runs n collab-hub instances. More than one shares ops over the
@@ -231,7 +240,16 @@ func New(t *testing.T, opts ...Option) *Stack {
 			t.Skip("COLLAB_TEST_REDIS_URL not set")
 		}
 	}
-	s := &Stack{t: t, dbURL: freshDatabase(t), redisURL: redisURL, grpc: freeAddr(t), presenceTTL: cfg.presenceTTL}
+	s := &Stack{t: t, dbURL: freshDatabase(t), redisURL: redisURL, hubRedisURL: redisURL, grpc: freeAddr(t), presenceTTL: cfg.presenceTTL}
+	if cfg.redisProxy && redisURL != "" {
+		u, err := url.Parse(redisURL)
+		if err != nil {
+			t.Fatal(err)
+		}
+		s.redisProxy = newTCPProxy(t, u.Host)
+		u.Host = s.redisProxy.addr
+		s.hubRedisURL = u.String()
+	}
 	for i := range cfg.hubs {
 		s.hubs = append(s.hubs, &hubInstance{id: fmt.Sprintf("hub-%d", i), http: freeAddr(t)})
 	}
@@ -286,8 +304,8 @@ func (s *Stack) StartDocumentService() {
 func (s *Stack) StartHub(i int) {
 	h := s.hubs[i]
 	env := []string{"HTTP_ADDR=" + h.http, "DOCUMENT_SERVICE_ADDR=" + s.grpc, "HUB_ID=" + h.id}
-	if s.redisURL != "" {
-		env = append(env, "REDIS_URL="+s.redisURL)
+	if s.hubRedisURL != "" {
+		env = append(env, "REDIS_URL="+s.hubRedisURL)
 	}
 	if s.presence != "" {
 		env = append(env, "PRESENCE_SERVICE_ADDR="+s.presence)
@@ -318,6 +336,12 @@ func (s *Stack) StopDocumentService() {
 func (s *Stack) StopHub(i int) {
 	s.hubs[i].proc.stop()
 }
+
+// CutRedis closes every hub connection to Redis and refuses new ones until
+// RestoreRedis. It needs WithRedisProxy.
+func (s *Stack) CutRedis() { s.redisProxy.cut() }
+
+func (s *Stack) RestoreRedis() { s.redisProxy.restore() }
 
 // KillHub sends hub i SIGKILL, so it drains nothing.
 func (s *Stack) KillHub(i int) {

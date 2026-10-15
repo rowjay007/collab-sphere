@@ -234,7 +234,7 @@ func marshalState(st *presencev1.State) ([]byte, error) {
 
 func (s *Store) upsertArgs(st *presencev1.State, raw []byte) []any {
 	client := strconv.FormatUint(st.GetClient(), 10)
-	// Presence epochs are connection counters, so Lua's exact integer range is ample.
+	// Presence epochs are millisecond timestamps, inside Lua's exact integer range.
 	return []any{
 		raw, s.ttl.Milliseconds(), client, expiryMember(st.GetDocumentId(), st.GetClient()),
 		st.GetDocumentId(), uvarint(st.GetClient()), broadcast.Channel(st.GetDocumentId()),

@@ -80,7 +80,7 @@ const (
 type link struct {
 	gen    uint64
 	conn   *websocket.Conn
-	out    chan []byte
+	out    chan outFrame
 	ctx    context.Context
 	cancel context.CancelFunc
 	done   chan struct{}
@@ -102,6 +102,7 @@ type Client struct {
 	gen       uint64
 	link      *link
 	urlIdx    int
+	epoch     uint64
 	replica   *crdt.Replica
 	seq       uint64
 	lastJoin  JoinKind
@@ -112,6 +113,7 @@ type Client struct {
 	errs      []*collabv1.ErrorMessage
 
 	name          string
+	cursor        []byte
 	presence      map[crdt.ClientID]PresenceView
 	departed      map[crdt.ClientID]departure
 	joinAwareness *collabv1.AwarenessSync
@@ -211,8 +213,8 @@ func (c *Client) DeleteAt(index int) error {
 	})
 }
 
-// MoveCursor sends a CursorMove anchored at the given CRDT IDs. It fails
-// when the client is not attached.
+// MoveCursor sends a CursorMove anchored at the given CRDT IDs, and again
+// after every reconnect. It fails when the client is not attached.
 func (c *Client) MoveCursor(anchor, head crdt.ID) error {
 	frame := mustMarshal(&collabv1.ClientMessage{
 		Payload: &collabv1.ClientMessage_CursorMove{CursorMove: &collabv1.CursorMove{
@@ -222,6 +224,7 @@ func (c *Client) MoveCursor(anchor, head crdt.ID) error {
 	})
 	c.mu.Lock()
 	defer c.mu.Unlock()
+	c.cursor = frame
 	if !c.send(frame) {
 		return errOffline
 	}
@@ -357,29 +360,49 @@ func (c *Client) transmit(ops []crdt.Op) {
 	}
 	now := time.Now()
 	for batch := range slices.Chunk(ops, maxOpsPerBatch) {
-		pb := &collabv1.OperationBatch{Operations: make([]*crdtv1.Operation, len(batch))}
-		for i, op := range batch {
-			pb.Operations[i] = crdt.OpToProto(op)
+		for _, op := range batch {
 			if _, ok := c.sentTimes[op.OpID()]; !ok {
 				c.sentTimes[op.OpID()] = now
 			}
 		}
-		if !c.send(mustMarshal(&collabv1.ClientMessage{
-			Payload: &collabv1.ClientMessage_OperationBatch{OperationBatch: pb},
-		})) {
+		if !c.enqueue(outFrame{ops: slices.Clone(batch)}) {
 			return
 		}
 	}
 }
 
-// send queues frame on the current link without blocking, since callers
-// hold c.mu. A full queue loses the link; unacked ops wait for the next join.
+// outFrame is a ready frame or an op batch that writeLoop marshals, so a
+// large resend costs no encoding time under c.mu.
+type outFrame struct {
+	raw []byte
+	ops []crdt.Op
+}
+
+func (f outFrame) encode() []byte {
+	if f.ops == nil {
+		return f.raw
+	}
+	pb := &collabv1.OperationBatch{Operations: make([]*crdtv1.Operation, len(f.ops))}
+	for i, op := range f.ops {
+		pb.Operations[i] = crdt.OpToProto(op)
+	}
+	return mustMarshal(&collabv1.ClientMessage{
+		Payload: &collabv1.ClientMessage_OperationBatch{OperationBatch: pb},
+	})
+}
+
 func (c *Client) send(frame []byte) bool {
+	return c.enqueue(outFrame{raw: frame})
+}
+
+// enqueue queues f on the current link without blocking, since callers hold
+// c.mu. A full queue loses the link; unacked ops wait for the next join.
+func (c *Client) enqueue(f outFrame) bool {
 	if c.link == nil {
 		return false
 	}
 	select {
-	case c.link.out <- frame:
+	case c.link.out <- f:
 		return true
 	default:
 		c.lost(errQueueFull)
@@ -628,13 +651,20 @@ func (c *Client) handshake(ctx context.Context, urlIdx int, hubURL string, gen u
 	}
 }
 
+// joinURL stamps the dial with conn, the presence epoch, so a later
+// connection replaces an earlier one on any hub. It is wall-clock based so a
+// reloaded client outranks the connection it replaces.
 func (c *Client) joinURL(base string) (string, error) {
 	u, err := url.Parse(base)
 	if err != nil {
 		return "", err
 	}
 	u = u.JoinPath("ws", c.docID)
-	q := url.Values{"client": {strconv.FormatUint(uint64(c.id), 10)}}
+	c.epoch = max(c.epoch+1, uint64(time.Now().UnixMilli()))
+	q := url.Values{
+		"client": {strconv.FormatUint(uint64(c.id), 10)},
+		"conn":   {strconv.FormatUint(c.epoch, 10)},
+	}
 	if c.replica != nil {
 		q.Set("seq", strconv.FormatUint(c.seq, 10))
 	}
@@ -697,7 +727,7 @@ func (c *Client) rebuild(sync *collabv1.DocumentSync) error {
 
 func (c *Client) attach(conn *websocket.Conn, urlIdx int) {
 	ctx, cancel := context.WithCancel(c.life)
-	l := &link{gen: c.gen, conn: conn, out: make(chan []byte, sendQueue), ctx: ctx, cancel: cancel, done: make(chan struct{})}
+	l := &link{gen: c.gen, conn: conn, out: make(chan outFrame, sendQueue), ctx: ctx, cancel: cancel, done: make(chan struct{})}
 	c.link, c.state, c.err = l, attached, nil
 	c.joinAwareness = nil
 	if urlIdx >= 0 {
@@ -710,6 +740,9 @@ func (c *Client) attach(conn *websocket.Conn, urlIdx int) {
 		return
 	}
 	c.transmit(c.unacked)
+	if c.cursor != nil {
+		c.send(c.cursor)
+	}
 }
 
 func (c *Client) readLoop(l *link) {
@@ -853,7 +886,7 @@ func writeLoop(l *link) {
 		select {
 		case frame := <-l.out:
 			ctx, cancel := context.WithTimeout(l.ctx, writeTimeout)
-			err := l.conn.Write(ctx, websocket.MessageBinary, frame)
+			err := l.conn.Write(ctx, websocket.MessageBinary, frame.encode())
 			cancel()
 			if err != nil {
 				l.cancel()

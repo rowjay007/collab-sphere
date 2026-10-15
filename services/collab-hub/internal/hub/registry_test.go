@@ -41,7 +41,7 @@ func (s failedLoadStore) Load(context.Context, string) (*crdt.Doc, uint64, error
 func TestArchivedDocumentJoinReportsArchived(t *testing.T) {
 	reg := localRegistry(archivedStore{Store: NewMemoryStore()})
 	t.Cleanup(reg.Close)
-	peer := NewPeer(1)
+	peer := NewPeer(1, 0)
 	_, err := reg.Join(t.Context(), "doc", peer, false, 0)
 	if !errors.Is(err, ErrArchived) {
 		t.Fatalf("Join error = %v", err)
@@ -58,7 +58,7 @@ func TestArchivedDocumentJoinReportsArchived(t *testing.T) {
 func TestDocumentLoadFailureIsUnavailable(t *testing.T) {
 	reg := localRegistry(failedLoadStore{Store: NewMemoryStore()})
 	t.Cleanup(reg.Close)
-	peer := NewPeer(1)
+	peer := NewPeer(1, 0)
 	if _, err := reg.Join(t.Context(), "doc", peer, false, 0); err == nil {
 		t.Fatal("Join succeeded after load failure")
 	}
@@ -78,7 +78,7 @@ func (s deadlineLoadStore) Load(ctx context.Context, docID string) (*crdt.Doc, u
 func TestHubLoadHasDeadline(t *testing.T) {
 	reg := localRegistry(deadlineLoadStore{Store: NewMemoryStore()})
 	t.Cleanup(reg.Close)
-	session, err := reg.Join(t.Context(), "doc", NewPeer(1), false, 0)
+	session, err := reg.Join(t.Context(), "doc", NewPeer(1, 0), false, 0)
 	if err != nil {
 		t.Fatalf("Join: %v", err)
 	}
@@ -107,7 +107,7 @@ func TestCancelledJoinRemovesAdmittedPeer(t *testing.T) {
 	cancelledCtx, cancel := context.WithCancel(t.Context())
 	cancelled := make(chan error, 1)
 	go func() {
-		_, err := reg.Join(cancelledCtx, "doc", NewPeer(1), false, 0)
+		_, err := reg.Join(cancelledCtx, "doc", NewPeer(1, 0), false, 0)
 		cancelled <- err
 	}()
 	<-store.started
@@ -116,7 +116,7 @@ func TestCancelledJoinRemovesAdmittedPeer(t *testing.T) {
 	keeper := make(chan *Session, 1)
 	keeperErr := make(chan error, 1)
 	go func() {
-		session, err := reg.Join(t.Context(), "doc", NewPeer(2), false, 0)
+		session, err := reg.Join(t.Context(), "doc", NewPeer(2, 0), false, 0)
 		if err != nil {
 			keeperErr <- err
 			return
@@ -149,7 +149,7 @@ func TestCancelledJoinRemovesAdmittedPeer(t *testing.T) {
 	}
 	t.Cleanup(func() { keeperSession.Leave(context.Background()) })
 
-	fresh, err := reg.Join(t.Context(), "doc", NewPeer(1), false, 0)
+	fresh, err := reg.Join(t.Context(), "doc", NewPeer(1, 0), false, 0)
 	if err != nil {
 		t.Fatalf("fresh Join after cancelled Join: %v", err)
 	}
@@ -184,10 +184,10 @@ func TestClosedRegistryRefusesJoinsAndTellsPeers(t *testing.T) {
 			t.Fatalf("%s error code = %s", name, code)
 		}
 	}
-	if _, err := reg.Join(ctx, "doc", NewPeer(3), false, 0); !errors.Is(err, ErrStopped) {
+	if _, err := reg.Join(ctx, "doc", NewPeer(3, 0), false, 0); !errors.Is(err, ErrStopped) {
 		t.Fatalf("Join after Close = %v, want ErrStopped", err)
 	}
-	if _, err := reg.Join(ctx, "other", NewPeer(3), false, 0); !errors.Is(err, ErrStopped) {
+	if _, err := reg.Join(ctx, "other", NewPeer(3, 0), false, 0); !errors.Is(err, ErrStopped) {
 		t.Fatalf("Join of a new document after Close = %v, want ErrStopped", err)
 	}
 }
@@ -199,7 +199,7 @@ func TestStaleLeaveAfterFailStopDoesNotStopNewHub(t *testing.T) {
 	reg := localRegistry(store)
 	t.Cleanup(reg.Close)
 
-	alice := NewPeer(1)
+	alice := NewPeer(1, 0)
 	aliceSession, err := reg.Join(ctx, "doc", alice, false, 0)
 	if err != nil {
 		t.Fatal(err)
@@ -213,7 +213,7 @@ func TestStaleLeaveAfterFailStopDoesNotStopNewHub(t *testing.T) {
 	}
 	store.FailAppend(nil)
 
-	bob := NewPeer(2)
+	bob := NewPeer(2, 0)
 	bobSession, err := reg.Join(ctx, "doc", bob, false, 0)
 	if err != nil {
 		t.Fatal(err)

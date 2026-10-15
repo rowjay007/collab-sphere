@@ -87,9 +87,9 @@ On one laptop running Postgres in Docker, both services and 100 full replicas, f
 
 Several hubs can serve one document. Each appends to document-service, which assigns every op a seq, and delivers ops to its sockets in seq order (ADR 0007). Hubs publish their appends on Redis Pub/Sub as a hint and repair anything lost from the log (ADR 0008). Clients resume after a disconnect on any hub with their unacked ops.
 
-Cursors and display names go through presence-service, the only writer of presence state in Redis (ADR 0009). A joining client first gets the document and then an `AwarenessSync` with everyone already present. A client whose hub dies is reported with `REASON_EXPIRED` within `PRESENCE_TTL` plus one sweep. Run several hubs with `make up`, `make run-docsvc`, `make run-presence`, and `make run-hub` per hub with distinct `HTTP_ADDR`, `HUB_ID`, `REDIS_URL` and `PRESENCE_SERVICE_ADDR=localhost:9091`.
+Cursors and display names go through presence-service, the only writer of presence state in Redis (ADR 0009). A joining client first gets the document and then an `AwarenessSync` with everyone already present. A client whose hub dies is reported with `REASON_EXPIRED` within `PRESENCE_TTL` plus one sweep. Presence heals without reconnecting: a hub that drops presence events, loses Redis, or cannot reach presence-service for a Join sends its clients a fresh `AwarenessSync` once it can, and a stale connection can never evict the client's newer one on another hub. Run several hubs with `make up`, `make run-docsvc`, `make run-presence`, and `make run-hub` per hub with distinct `HTTP_ADDR`, `HUB_ID`, `REDIS_URL` and `PRESENCE_SERVICE_ADDR=localhost:9091`.
 
-`tests/e2e` covers three hubs: concurrent editing, a killed hub, and presence. The presence test logs cursor latency from one hub to another and fails at 200ms.
+`tests/e2e` covers three hubs: concurrent editing, a killed hub, a 2s Redis outage under 30 editors, and presence. The presence test logs cursor latency from one hub to another and fails at 200ms.
 
 ## Phase 1 limits
 

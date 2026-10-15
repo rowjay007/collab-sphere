@@ -31,6 +31,8 @@ const (
 	remoteInbox       = 1024
 	presenceInbox     = 1024
 	presenceTimeout   = 5 * time.Second
+	joinMinBackoff    = 100 * time.Millisecond
+	joinMaxBackoff    = 2 * time.Second
 	// A frame of this many ops stays far below the client's read limit, and
 	// defaultMaxReplay/missedFrameOps frames fit in a new peer's empty buffer.
 	missedFrameOps = 4096
@@ -269,12 +271,13 @@ func (h *Hub) RemoteOps(b fanout.Batch) {
 	}
 }
 
-// Presence hands a presence event to the loop. A full inbox drops it; the
-// version rules let the next event or AwarenessSync repair the client.
+// Presence hands a presence event to the loop. A full inbox drops it and
+// asks for a Resync, whose AwarenessSync repairs every peer.
 func (h *Hub) Presence(ev *presencev1.Event) {
 	select {
 	case h.presence <- ev:
 	default:
+		h.Resync()
 	}
 }
 
@@ -394,8 +397,9 @@ func (h *Hub) handleJoin(ev joinEvent) bool {
 }
 
 // joinPresence runs the presence Join off the loop and sends the result as
-// the peer's AwarenessSync, or an empty one if Join fails. It waits for a
-// superseded peer's Join so the newer session is written last.
+// the peer's AwarenessSync. A failed Join sends an empty one and retries
+// with backoff while the peer is attached, then sends the fresh one. It
+// waits for a superseded peer's Join so the newer session is written last.
 func (h *Hub) joinPresence(p *Peer, superseded <-chan struct{}) {
 	joined := make(chan struct{})
 	p.joined = joined
@@ -405,18 +409,28 @@ func (h *Hub) joinPresence(p *Peer, superseded <-chan struct{}) {
 		if superseded != nil {
 			<-superseded
 		}
-		select {
-		case <-p.Done():
-			return
-		default:
+		for backoff := joinMinBackoff; ; backoff = min(2*backoff, joinMaxBackoff) {
+			select {
+			case <-p.Done():
+				return
+			default:
+			}
+			ctx, cancel := context.WithTimeout(context.Background(), presenceTimeout)
+			states, version, err := h.pres.Join(ctx, h.docID, sess)
+			cancel()
+			if err == nil {
+				p.TrySend(encodeAwarenessSync(states, version, p.id))
+				return
+			}
+			if backoff == joinMinBackoff {
+				p.TrySend(encodeAwarenessSync(nil, 0, p.id))
+			}
+			select {
+			case <-p.Done():
+				return
+			case <-time.After(backoff):
+			}
 		}
-		ctx, cancel := context.WithTimeout(context.Background(), presenceTimeout)
-		states, version, err := h.pres.Join(ctx, h.docID, sess)
-		cancel()
-		if err != nil {
-			states, version = nil, 0
-		}
-		p.TrySend(encodeAwarenessSync(states, version, p.id))
 	})
 }
 

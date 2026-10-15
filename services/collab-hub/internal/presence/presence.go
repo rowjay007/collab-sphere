@@ -11,10 +11,13 @@ import (
 
 // Session is one connection's presence identity. Session is random per
 // connection and nonzero, so a reconnect on any hub replaces the old state
-// and a Leave from the old connection no longer matches.
+// and a Leave from the old connection no longer matches. Epoch is the
+// client's connection count: a Join replaces another session only with a
+// higher epoch, and epoch zero keeps last-writer-wins.
 type Session struct {
 	Client  crdt.ClientID
 	Session uint64
+	Epoch   uint64
 	Name    string
 }
 
@@ -26,15 +29,28 @@ type key struct {
 	client crdt.ClientID
 }
 
-// entry is the last known state of one session. Move and Rename can reach
-// the hub before the session's Join has run; they are held until it does.
+// phase is where a session stands with presence-service.
+type phase uint8
+
+const (
+	// pending holds Move and Rename that reach the hub before the session's
+	// Join has succeeded.
+	pending phase = iota
+	joined
+	// forgotten is a session presence-service gave to a newer connection.
+	// Nothing more is written for it, not even its Leave.
+	forgotten
+)
+
+// entry is the last known state of one session.
 type entry struct {
 	session   uint64
+	epoch     uint64
 	name      string
 	anchor    crdt.ID
 	head      crdt.ID
 	hasCursor bool
-	joined    bool
+	phase     phase
 	version   uint64
 }
 
@@ -42,10 +58,15 @@ type entry struct {
 func hold(live map[key]*entry, k key, s Session) *entry {
 	e := live[k]
 	if e == nil || e.session != s.Session {
-		e = &entry{session: s.Session, name: s.Name}
+		e = &entry{session: s.Session, epoch: s.Epoch, name: s.Name}
 		live[k] = e
 	}
 	return e
+}
+
+// yields reports whether s may replace e: presence-service's Join rule.
+func (e *entry) yields(s Session) bool {
+	return e.session == s.Session || s.Epoch > e.epoch || s.Epoch == 0 && e.epoch == 0
 }
 
 func (e *entry) state(k key) *presencev1.State {
@@ -53,6 +74,7 @@ func (e *entry) state(k key) *presencev1.State {
 		DocumentId:  k.doc,
 		Client:      uint64(k.client),
 		Session:     e.session,
+		Epoch:       e.epoch,
 		DisplayName: e.name,
 		Version:     e.version,
 		HasCursor:   e.hasCursor,

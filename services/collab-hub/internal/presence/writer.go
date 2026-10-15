@@ -18,15 +18,17 @@ const (
 	maxBackoff   = 2 * time.Second
 	applyTimeout = 2 * time.Second
 	closeTimeout = time.Second
+	maxChanges   = 512
 )
 
 // Writer sends a hub's presence changes to presence-service. Move, Rename
 // and Leave only record the change; every flush interval the latest state of
-// each changed session goes out in one Apply, so a burst of cursor moves
-// costs one write. Every heartbeat it touches every live session and
-// re-upserts any that presence-service reports missing and forgets sessions
-// replaced on another hub. Failed writes are kept and retried with backoff;
-// callers never wait on presence-service.
+// each changed session goes out at once, so a burst of cursor moves costs
+// one write. Every heartbeat it touches every joined session and
+// re-upserts any that presence-service reports missing. A session that
+// presence-service reports superseded, on Join, upsert or touch, is
+// forgotten: it gets no more writes and no Leave. Failed writes are kept and
+// retried with backoff; callers never wait on presence-service.
 type Writer struct {
 	client    presencev1.PresenceServiceClient
 	flush     time.Duration
@@ -58,8 +60,8 @@ func NewWriter(client presencev1.PresenceServiceClient, flush, heartbeat time.Du
 }
 
 // Join upserts s with no cursor and returns everyone else. Changes recorded
-// for s before Join are flushed after it. If presence-service is down, s
-// stays live and is upserted once it is back.
+// for s before Join are flushed after it. Until a Join succeeds, s is
+// neither upserted nor touched; the caller retries it.
 func (w *Writer) Join(ctx context.Context, docID string, s Session) ([]*presencev1.State, uint64, error) {
 	k := key{doc: docID, client: s.Client}
 	w.mu.Lock()
@@ -68,18 +70,24 @@ func (w *Writer) Join(ctx context.Context, docID string, s Session) ([]*presence
 	w.mu.Unlock()
 
 	resp, err := w.client.Join(ctx, &presencev1.JoinRequest{Self: self})
+	if err != nil {
+		return nil, 0, err
+	}
 
 	w.mu.Lock()
-	if w.live[k] == e {
-		e.joined = true
-		if err != nil || e.hasCursor || e.name != self.GetDisplayName() {
+	switch {
+	case w.live[k] != e || e.phase == forgotten:
+	case resp.GetSuperseded():
+		slog.Debug("presence join superseded", "doc", docID, "client", s.Client, "epoch", s.Epoch)
+		e.phase = forgotten
+		delete(w.dirty, k)
+	default:
+		e.phase = joined
+		if e.hasCursor || e.name != self.GetDisplayName() {
 			w.dirty[k] = struct{}{}
 		}
 	}
 	w.mu.Unlock()
-	if err != nil {
-		return nil, 0, err
-	}
 	return resp.GetStates(), resp.GetVersion(), nil
 }
 
@@ -99,8 +107,11 @@ func (w *Writer) update(docID string, s Session, fn func(*entry)) {
 	defer w.mu.Unlock()
 	k := key{doc: docID, client: s.Client}
 	e := hold(w.live, k, s)
+	if e.phase == forgotten {
+		return
+	}
 	fn(e)
-	if e.joined {
+	if e.phase == joined {
 		w.dirty[k] = struct{}{}
 	}
 }
@@ -114,8 +125,19 @@ func (w *Writer) Leave(docID string, s Session) {
 	if e := w.live[k]; e != nil && e.session == s.Session {
 		delete(w.live, k)
 		delete(w.dirty, k)
+		if e.phase == forgotten {
+			return
+		}
 	}
 	w.leaves = append(w.leaves, &presencev1.Leave{DocumentId: docID, Client: uint64(s.Client), Session: s.Session})
+}
+
+func (w *Writer) forget(docID string, client uint64, session uint64) {
+	k := key{doc: docID, client: crdt.ClientID(client)}
+	if e := w.live[k]; e != nil && e.session == session {
+		e.phase = forgotten
+		delete(w.dirty, k)
+	}
 }
 
 func (w *Writer) List(ctx context.Context, docID string) ([]*presencev1.State, uint64, error) {
@@ -180,16 +202,18 @@ func (w *Writer) run() {
 }
 
 // send applies the latest state of every changed session, then the Leaves,
-// then a touch of every live session when beat is set. Upserts go before
-// Leaves so a replaced session's Leave lands after its replacement and does
-// nothing. On failure everything sent is queued again.
+// then a touch of every joined session when beat is set, in Applies of at
+// most maxChanges in that order. Upserts go before Leaves so a replaced
+// session's Leave lands after its replacement and does nothing. When an
+// Apply fails, the upserts and Leaves it and the later Applies held are
+// queued again.
 func (w *Writer) send(beat bool) error {
 	w.mu.Lock()
 	var changes []*presencev1.Change
 	var upserted []key
 	for k := range w.dirty {
 		e := w.live[k]
-		if e == nil || !e.joined {
+		if e == nil || e.phase != joined {
 			continue
 		}
 		changes = append(changes, &presencev1.Change{Kind: &presencev1.Change_Upsert{Upsert: e.state(k)}})
@@ -203,7 +227,7 @@ func (w *Writer) send(beat bool) error {
 	}
 	if beat {
 		for k, e := range w.live {
-			if !e.joined {
+			if e.phase != joined {
 				continue
 			}
 			changes = append(changes, &presencev1.Change{Kind: &presencev1.Change_Touch{Touch: &presencev1.Touch{
@@ -212,16 +236,20 @@ func (w *Writer) send(beat bool) error {
 		}
 	}
 	w.mu.Unlock()
-	if len(changes) == 0 {
-		return nil
-	}
 
+	for sent := 0; sent < len(changes); sent += maxChanges {
+		if err := w.apply(changes[sent:min(sent+maxChanges, len(changes))]); err != nil {
+			w.requeue(upserted[min(sent, len(upserted)):], leaves[min(max(sent-len(upserted), 0), len(leaves)):])
+			return err
+		}
+	}
+	return nil
+}
+
+func (w *Writer) apply(changes []*presencev1.Change) error {
 	ctx, cancel := context.WithTimeout(context.Background(), applyTimeout)
 	resp, err := w.client.Apply(ctx, &presencev1.ApplyRequest{Changes: changes})
 	cancel()
-
-	w.mu.Lock()
-	defer w.mu.Unlock()
 	if status.Code(err) == codes.InvalidArgument {
 		// Retrying a batch presence-service rejects would block every
 		// document's presence behind it.
@@ -229,28 +257,35 @@ func (w *Writer) send(beat bool) error {
 		return nil
 	}
 	if err != nil {
-		for _, k := range upserted {
-			if _, ok := w.live[k]; ok {
-				w.dirty[k] = struct{}{}
-			}
-		}
-		w.leaves = append(leaves, w.leaves...)
 		return err
 	}
+
+	w.mu.Lock()
+	defer w.mu.Unlock()
 	for _, t := range resp.GetMissing() {
 		k := key{doc: t.GetDocumentId(), client: crdt.ClientID(t.GetClient())}
-		if e := w.live[k]; e != nil && e.session == t.GetSession() {
+		if e := w.live[k]; e != nil && e.session == t.GetSession() && e.phase == joined {
 			w.dirty[k] = struct{}{}
 		}
 	}
 	for _, t := range resp.GetSuperseded() {
-		k := key{doc: t.GetDocumentId(), client: crdt.ClientID(t.GetClient())}
-		if e := w.live[k]; e != nil && e.session == t.GetSession() {
-			delete(w.live, k)
-			delete(w.dirty, k)
-		}
+		w.forget(t.GetDocumentId(), t.GetClient(), t.GetSession())
+	}
+	for _, st := range resp.GetSupersededUpserts() {
+		w.forget(st.GetDocumentId(), st.GetClient(), st.GetSession())
 	}
 	return nil
+}
+
+func (w *Writer) requeue(upserted []key, leaves []*presencev1.Leave) {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	for _, k := range upserted {
+		if _, ok := w.live[k]; ok {
+			w.dirty[k] = struct{}{}
+		}
+	}
+	w.leaves = append(leaves, w.leaves...)
 }
 
 func (w *Writer) warn(err error) {

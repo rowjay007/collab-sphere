@@ -26,8 +26,10 @@ const (
 	keepaliveInterval = 30 * time.Second
 )
 
-// Handler serves GET /ws/{docID}?client=<nonzero uint64>[&seq=<uint64>].
+// Handler serves GET /ws/{docID}?client=<nonzero uint64>[&seq=<uint64>][&conn=<uint64>].
 // seq is the last seq a resuming client holds; without it the join is fresh.
+// conn is the client's connection count, its presence epoch; absent or
+// invalid means zero.
 func Handler(reg *hub.Registry) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		documentID, err := uuid.Parse(r.PathValue("docID"))
@@ -59,7 +61,8 @@ func Handler(reg *hub.Registry) http.Handler {
 		conn.SetReadLimit(readLimit)
 		defer conn.CloseNow()
 
-		peer := hub.NewPeer(clientID)
+		epoch, _ := strconv.ParseUint(query.Get("conn"), 10, 64)
+		peer := hub.NewPeer(clientID, epoch)
 		ctx, cancel := context.WithCancel(r.Context())
 		defer cancel()
 

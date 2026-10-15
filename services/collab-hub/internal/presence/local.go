@@ -27,20 +27,29 @@ func NewLocal(deliver func(docID string, ev *presencev1.Event)) *Local {
 	return &Local{deliver: deliver, live: make(map[key]*entry), versions: make(map[string]uint64)}
 }
 
+// Join leaves a joined session in place when s may not replace it, as
+// presence-service does, and still returns everyone else.
 func (l *Local) Join(_ context.Context, docID string, s Session) ([]*presencev1.State, uint64, error) {
 	l.mu.Lock()
 	defer l.mu.Unlock()
 	k := key{doc: docID, client: s.Client}
-	e := hold(l.live, k, s)
-	e.joined = true
-	l.publish(k, e)
+	if l.admits(k, s) {
+		e := hold(l.live, k, s)
+		e.phase = joined
+		l.publish(k, e)
+	}
 	var others []*presencev1.State
 	for ok, oe := range l.live {
-		if ok.doc == docID && ok.client != s.Client && oe.joined {
+		if ok.doc == docID && ok.client != s.Client && oe.phase == joined {
 			others = append(others, oe.state(ok))
 		}
 	}
 	return others, l.versions[docID], nil
+}
+
+func (l *Local) admits(k key, s Session) bool {
+	e := l.live[k]
+	return e == nil || e.phase != joined || e.yields(s)
 }
 
 func (l *Local) Move(docID string, s Session, anchor, head crdt.ID) {
@@ -58,9 +67,12 @@ func (l *Local) update(docID string, s Session, fn func(*entry)) {
 	l.mu.Lock()
 	defer l.mu.Unlock()
 	k := key{doc: docID, client: s.Client}
+	if !l.admits(k, s) {
+		return
+	}
 	e := hold(l.live, k, s)
 	fn(e)
-	if e.joined {
+	if e.phase == joined {
 		l.publish(k, e)
 	}
 }
@@ -74,7 +86,7 @@ func (l *Local) Leave(docID string, s Session) {
 		return
 	}
 	delete(l.live, k)
-	if !e.joined {
+	if e.phase != joined {
 		return
 	}
 	l.versions[docID]++
@@ -94,7 +106,7 @@ func (l *Local) List(_ context.Context, docID string) ([]*presencev1.State, uint
 	defer l.mu.Unlock()
 	var states []*presencev1.State
 	for k, e := range l.live {
-		if k.doc == docID && e.joined {
+		if k.doc == docID && e.phase == joined {
 			states = append(states, e.state(k))
 		}
 	}

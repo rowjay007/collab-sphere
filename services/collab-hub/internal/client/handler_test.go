@@ -23,7 +23,7 @@ import (
 )
 
 func TestDroppedPeerClosesWebSocket(t *testing.T) {
-	peer := hub.NewPeer(1)
+	peer := hub.NewPeer(1, 0)
 	accepted := make(chan struct{})
 	startWrite := make(chan struct{})
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

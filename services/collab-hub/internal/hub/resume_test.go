@@ -31,7 +31,7 @@ func seedLog(t *testing.T, store *MemoryStore, ops []crdt.Op) {
 
 func resumeJoin(t *testing.T, ctx context.Context, reg *Registry, id crdt.ClientID, seq uint64) (*Session, *Peer) {
 	t.Helper()
-	peer := NewPeer(id)
+	peer := NewPeer(id, 0)
 	session, err := reg.Join(ctx, "doc", peer, true, seq)
 	if err != nil {
 		t.Fatal(err)
@@ -133,7 +133,7 @@ func TestResumeAboveLogIsInvalid(t *testing.T) {
 	reg := localRegistry(store)
 	t.Cleanup(reg.Close)
 
-	peer := NewPeer(1)
+	peer := NewPeer(1, 0)
 	if _, err := reg.Join(ctx, "doc", peer, true, 7); !errors.Is(err, ErrInvalidResume) {
 		t.Fatalf("Join error = %v", err)
 	}
@@ -191,7 +191,7 @@ func TestResumeCatchUpReadFailureIsUnavailable(t *testing.T) {
 	join(t, ctx, reg, 1)
 	seedLog(t, store.MemoryStore, chain(50, 2))
 
-	peer := NewPeer(2)
+	peer := NewPeer(2, 0)
 	if _, err := reg.Join(ctx, "doc", peer, true, 2); !errors.Is(err, ErrUnavailable) {
 		t.Fatalf("Join error = %v", err)
 	}

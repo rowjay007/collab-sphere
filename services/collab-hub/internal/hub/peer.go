@@ -7,12 +7,15 @@ import (
 	"github.com/rowjay007/collab-sphere/pkg/crdt"
 )
 
-const sendBuf = 256
+// sendBuf is about 1.5s of a 30-editor room's frames. A smaller queue drops
+// readers on an ordinary GC pause or network stall.
+const sendBuf = 4096
 
 // Peer is one connected client. Only the write pump reads Frames.
 type Peer struct {
 	id       crdt.ClientID
 	session  uint64
+	epoch    uint64
 	out      chan []byte
 	done     chan struct{}
 	once     sync.Once
@@ -26,8 +29,8 @@ type Peer struct {
 }
 
 // NewPeer constructs a peer with a bounded send buffer and a fresh presence
-// session.
-func NewPeer(id crdt.ClientID) *Peer {
+// session. epoch is the client's connection count, or zero if it sent none.
+func NewPeer(id crdt.ClientID, epoch uint64) *Peer {
 	session := rand.Uint64()
 	for session == 0 {
 		session = rand.Uint64()
@@ -35,13 +38,14 @@ func NewPeer(id crdt.ClientID) *Peer {
 	return &Peer{
 		id:      id,
 		session: session,
+		epoch:   epoch,
 		out:     make(chan []byte, sendBuf),
 		done:    make(chan struct{}),
 	}
 }
 
 func (p *Peer) presence() PresenceSession {
-	return PresenceSession{Client: p.id, Session: p.session, Name: p.name}
+	return PresenceSession{Client: p.id, Session: p.session, Epoch: p.epoch, Name: p.name}
 }
 
 // ID returns the connection's client ID.
