@@ -2,7 +2,7 @@ PROTO_FILES := $(shell find proto -name '*.proto')
 TEST_DATABASE_URL ?= postgres://collab:collab@localhost:55432/collab?sslmode=disable
 TEST_REDIS_URL ?= redis://localhost:56379/0
 
-.PHONY: proto test test-integration up down run-docsvc run-hub
+.PHONY: proto test test-integration up down run-docsvc run-hub run-presence
 
 proto:
 	protoc -I proto \
@@ -27,3 +27,6 @@ run-docsvc:
 
 run-hub:
 	go run ./services/collab-hub/cmd/collab-hub
+
+run-presence:
+	REDIS_URL='$(TEST_REDIS_URL)' go run ./services/presence-service/cmd/presence-service

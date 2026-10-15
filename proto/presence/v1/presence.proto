@@ -1,0 +1,85 @@
+syntax = "proto3";
+
+package presence.v1;
+
+import "crdt/v1/snapshot.proto";
+
+option go_package = "github.com/rowjay007/collab-sphere/gen/presence/v1;presencev1";
+
+service PresenceService {
+  rpc Join(JoinRequest) returns (ListResponse);
+  rpc Apply(ApplyRequest) returns (ApplyResponse);
+  rpc List(ListRequest) returns (ListResponse);
+}
+
+message State {
+  string document_id = 1;
+  uint64 client = 2;
+  uint64 session = 3;
+  crdt.v1.OpID anchor = 4;
+  crdt.v1.OpID head = 5;
+  string display_name = 6;
+  uint64 version = 7;
+  bool has_cursor = 8;
+}
+
+message Change {
+  oneof kind {
+    State upsert = 1;
+    Touch touch = 2;
+    Leave leave = 3;
+  }
+}
+
+message Touch {
+  string document_id = 1;
+  uint64 client = 2;
+  uint64 session = 3;
+}
+
+message Leave {
+  string document_id = 1;
+  uint64 client = 2;
+  uint64 session = 3;
+}
+
+message ApplyRequest {
+  repeated Change changes = 1;
+}
+
+message ApplyResponse {
+  repeated Touch missing = 1;
+}
+
+message JoinRequest {
+  State self = 1;
+}
+
+message ListRequest {
+  string document_id = 1;
+}
+
+message ListResponse {
+  repeated State states = 1;
+  uint64 version = 2;
+}
+
+message Event {
+  string document_id = 1;
+  uint64 client = 2;
+  uint64 version = 3;
+  oneof kind {
+    State state = 4;
+    Left left = 5;
+  }
+}
+
+message Left {
+  uint64 session = 1;
+  enum Reason {
+    REASON_UNSPECIFIED = 0;
+    REASON_LEAVE = 1;
+    REASON_EXPIRED = 2;
+  }
+  Reason reason = 2;
+}
