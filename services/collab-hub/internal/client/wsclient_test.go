@@ -11,6 +11,7 @@ import (
 	"testing"
 
 	"github.com/coder/websocket"
+	"github.com/google/uuid"
 	"google.golang.org/protobuf/proto"
 
 	collabv1 "github.com/rowjay007/collab-sphere/gen/collab/v1"
@@ -18,6 +19,7 @@ import (
 	"github.com/rowjay007/collab-sphere/pkg/crdt"
 	"github.com/rowjay007/collab-sphere/services/collab-hub/internal/fanout"
 	"github.com/rowjay007/collab-sphere/services/collab-hub/internal/hub"
+	"github.com/rowjay007/collab-sphere/services/collab-hub/internal/presence"
 )
 
 type testClient struct {
@@ -29,16 +31,23 @@ type testClient struct {
 	seen        map[crdt.ID]struct{}
 	errs        []*collabv1.ErrorMessage
 	presence    []*collabv1.PresenceBroadcast
+	awareness   []*collabv1.AwarenessSync
 	pongs       []uint64
 	syncMsg     *collabv1.DocumentSync
 	changed     chan struct{}
 	readErr     error
 }
 
+// localRegistry is single-instance mode: an in-process bus and presence.
+func localRegistry(store hub.Store) *hub.Registry {
+	bus := fanout.NewMemory()
+	return hub.NewRegistry(store, bus, presence.NewLocal(bus.Loopback))
+}
+
 func startHub(t *testing.T) (*httptest.Server, *hub.MemoryStore) {
 	t.Helper()
 	store := hub.NewMemoryStore()
-	reg := hub.NewRegistry(store, fanout.NewMemory())
+	reg := localRegistry(store)
 	t.Cleanup(reg.Close)
 	mux := http.NewServeMux()
 	mux.Handle("GET /ws/{docID}", Handler(reg))
@@ -48,6 +57,10 @@ func startHub(t *testing.T) (*httptest.Server, *hub.MemoryStore) {
 }
 
 func wsURL(srv *httptest.Server, docID string, id crdt.ClientID) string {
+	return rawWSURL(srv, canonicalTestDocumentID(docID), id)
+}
+
+func rawWSURL(srv *httptest.Server, docID string, id crdt.ClientID) string {
 	u, err := url.Parse(srv.URL)
 	if err != nil {
 		panic(err)
@@ -56,6 +69,13 @@ func wsURL(srv *httptest.Server, docID string, id crdt.ClientID) string {
 	u.Path = "/ws/" + docID
 	u.RawQuery = url.Values{"client": {strconv.FormatUint(uint64(id), 10)}}.Encode()
 	return u.String()
+}
+
+func canonicalTestDocumentID(docID string) string {
+	if _, err := uuid.Parse(docID); err == nil {
+		return docID
+	}
+	return uuid.NewSHA1(uuid.NameSpaceOID, []byte(docID)).String()
 }
 
 func dial(t *testing.T, srv *httptest.Server, docID string, id crdt.ClientID) *testClient {
@@ -147,6 +167,8 @@ func (c *testClient) handle(msg *collabv1.ServerMessage) {
 		}
 	case *collabv1.ServerMessage_PresenceBroadcast:
 		c.presence = append(c.presence, p.PresenceBroadcast)
+	case *collabv1.ServerMessage_AwarenessSync:
+		c.awareness = append(c.awareness, p.AwarenessSync)
 	case *collabv1.ServerMessage_Error:
 		c.errs = append(c.errs, p.Error)
 	case *collabv1.ServerMessage_Pong:
@@ -236,6 +258,12 @@ func (c *testClient) sendCursor(anchor, head crdt.ID) error {
 	})
 }
 
+func (c *testClient) sendName(name string) error {
+	return c.sendClient(&collabv1.ClientMessage{
+		Payload: &collabv1.ClientMessage_AwarenessUpdate{AwarenessUpdate: &collabv1.AwarenessUpdate{DisplayName: name}},
+	})
+}
+
 func (c *testClient) sendPing(nonce uint64) error {
 	return c.sendClient(&collabv1.ClientMessage{
 		Payload: &collabv1.ClientMessage_Ping{Ping: &collabv1.Ping{Nonce: nonce}},
@@ -314,6 +342,18 @@ func (c *testClient) waitPresence(ctx context.Context, pred func(*collabv1.Prese
 		}
 		return false
 	})
+}
+
+// firstAwareness waits for the connection's first AwarenessSync.
+func (c *testClient) firstAwareness(ctx context.Context) (*collabv1.AwarenessSync, error) {
+	var first *collabv1.AwarenessSync
+	err := c.waitUntil(ctx, func(tc *testClient) bool {
+		if len(tc.awareness) > 0 {
+			first = tc.awareness[0]
+		}
+		return first != nil
+	})
+	return first, err
 }
 
 func (c *testClient) text() string {

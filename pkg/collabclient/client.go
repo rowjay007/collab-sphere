@@ -8,6 +8,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"maps"
 	"math/rand/v2"
 	"net/url"
 	"slices"
@@ -104,6 +105,35 @@ type Client struct {
 	received  map[crdt.ID]time.Time
 	latencies []time.Duration
 	errs      []*collabv1.ErrorMessage
+
+	name          string
+	presence      map[crdt.ClientID]PresenceView
+	departed      map[crdt.ClientID]departure
+	joinAwareness *collabv1.AwarenessSync
+}
+
+// Cursor is a selection from Anchor to Head, both CRDT IDs. An ID this
+// client does not hold yet stays as given and resolves when the character
+// arrives. Set is false when the user has not placed a cursor.
+type Cursor struct {
+	Anchor crdt.ID
+	Head   crdt.ID
+	Set    bool
+}
+
+// PresenceView is another client's presence as of Version, the document's
+// presence version when it last changed.
+type PresenceView struct {
+	Cursor  Cursor
+	Name    string
+	Version uint64
+}
+
+// departure is the tombstone of a client that left: presence older than
+// version is stale.
+type departure struct {
+	version uint64
+	reason  collabv1.PresenceLeft_Reason
 }
 
 // Dial connects to baseURL (ws:// or wss://) without auto-reconnect and
@@ -128,6 +158,8 @@ func DialWith(ctx context.Context, docID string, client crdt.ClientID, opts Opti
 		state:     connecting,
 		sentTimes: make(map[crdt.ID]time.Time),
 		received:  make(map[crdt.ID]time.Time),
+		presence:  make(map[crdt.ClientID]PresenceView),
+		departed:  make(map[crdt.ClientID]departure),
 	}
 	var err error
 	for i, u := range opts.URLs {
@@ -189,6 +221,128 @@ func (c *Client) MoveCursor(anchor, head crdt.ID) error {
 		return errOffline
 	}
 	return nil
+}
+
+// SetName sets the display name others see. It is sent now if attached and
+// again after every reconnect.
+func (c *Client) SetName(name string) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.name = name
+	if c.link != nil {
+		c.link.send(c.nameFrame())
+	}
+}
+
+func (c *Client) nameFrame() []byte {
+	return mustMarshal(&collabv1.ClientMessage{
+		Payload: &collabv1.ClientMessage_AwarenessUpdate{AwarenessUpdate: &collabv1.AwarenessUpdate{DisplayName: c.name}},
+	})
+}
+
+// Presence returns every other client this client knows to be present.
+func (c *Client) Presence() map[crdt.ClientID]PresenceView {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return maps.Clone(c.presence)
+}
+
+// WaitPresence blocks until cond holds for the presence view, the client is
+// offline with no reconnect pending, the client failed, or ctx ends. cond
+// must not keep the map.
+func (c *Client) WaitPresence(ctx context.Context, cond func(map[crdt.ClientID]PresenceView) bool) error {
+	for {
+		c.mu.Lock()
+		ok, st, err, changed := cond(c.presence), c.state, c.err, c.changed
+		c.mu.Unlock()
+		if ok {
+			return nil
+		}
+		if st == offline || st == failed {
+			return err
+		}
+		select {
+		case <-changed:
+		case <-ctx.Done():
+			return ctx.Err()
+		}
+	}
+}
+
+// LeftReason reports why client was last seen leaving, if it has left and
+// not come back.
+func (c *Client) LeftReason(client crdt.ClientID) (collabv1.PresenceLeft_Reason, bool) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	d, ok := c.departed[client]
+	return d.reason, ok
+}
+
+// JoinAwareness returns the first AwarenessSync of the current connection,
+// or nil until it arrives.
+func (c *Client) JoinAwareness() *collabv1.AwarenessSync {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.joinAwareness
+}
+
+// known is the newest version this client holds for another client, as an
+// entry or a tombstone.
+func (c *Client) known(client crdt.ClientID) uint64 {
+	return max(c.presence[client].Version, c.departed[client].version)
+}
+
+func (c *Client) applyPresence(p *collabv1.PresenceBroadcast) {
+	client := crdt.ClientID(p.GetClient())
+	if client == c.id || p.GetVersion() <= c.known(client) {
+		return
+	}
+	if left := p.GetLeft(); left != nil {
+		delete(c.presence, client)
+		c.departed[client] = departure{version: p.GetVersion(), reason: left.GetReason()}
+		return
+	}
+	delete(c.departed, client)
+	c.presence[client] = PresenceView{Cursor: cursorFrom(p.GetCursor()), Name: p.GetDisplayName(), Version: p.GetVersion()}
+}
+
+// applyAwareness takes every state in the sync that is newer than what this
+// client holds, and drops every entry the sync omits that is not newer than
+// the sync itself.
+func (c *Client) applyAwareness(s *collabv1.AwarenessSync) {
+	if c.joinAwareness == nil {
+		c.joinAwareness = s
+	}
+	listed := make(map[crdt.ClientID]bool, len(s.GetStates()))
+	for _, st := range s.GetStates() {
+		client := crdt.ClientID(st.GetClient())
+		if client == c.id {
+			continue
+		}
+		listed[client] = true
+		if st.GetVersion() <= c.known(client) {
+			continue
+		}
+		delete(c.departed, client)
+		c.presence[client] = PresenceView{Cursor: cursorFrom(st.GetCursor()), Name: st.GetDisplayName(), Version: st.GetVersion()}
+	}
+	for client, v := range c.presence {
+		if !listed[client] && v.Version <= s.GetVersion() {
+			delete(c.presence, client)
+			c.departed[client] = departure{version: s.GetVersion()}
+		}
+	}
+}
+
+func cursorFrom(m *collabv1.CursorMove) Cursor {
+	if m == nil {
+		return Cursor{}
+	}
+	return Cursor{
+		Anchor: crdt.ID{Client: crdt.ClientID(m.GetAnchor().GetClient()), Clock: m.GetAnchor().GetClock()},
+		Head:   crdt.ID{Client: crdt.ClientID(m.GetHead().GetClient()), Clock: m.GetHead().GetClock()},
+		Set:    true,
+	}
 }
 
 // transmit sends ops on the current link in batches the hub accepts. Ops
@@ -536,11 +690,15 @@ func (c *Client) attach(conn *websocket.Conn, urlIdx int) {
 	ctx, cancel := context.WithCancel(c.life)
 	l := &link{gen: c.gen, conn: conn, out: make(chan []byte, 1024), ctx: ctx, cancel: cancel, done: make(chan struct{})}
 	c.link, c.state, c.err = l, attached, nil
+	c.joinAwareness = nil
 	if urlIdx >= 0 {
 		c.urlIdx = urlIdx
 	}
 	go c.readLoop(l)
 	go c.writeLoop(l)
+	if c.name != "" {
+		l.send(c.nameFrame())
+	}
 	c.transmit(c.unacked)
 }
 
@@ -617,6 +775,10 @@ func (c *Client) handle(msg *collabv1.ServerMessage) error {
 		return c.applySequenced(b.GetFirstSeq(), b.GetOperations())
 	case *collabv1.ServerMessage_MissedOps:
 		return c.applyMissed(p.MissedOps)
+	case *collabv1.ServerMessage_PresenceBroadcast:
+		c.applyPresence(p.PresenceBroadcast)
+	case *collabv1.ServerMessage_AwarenessSync:
+		c.applyAwareness(p.AwarenessSync)
 	case *collabv1.ServerMessage_Error:
 		c.errs = append(c.errs, p.Error)
 		return errorFrame(p.Error)

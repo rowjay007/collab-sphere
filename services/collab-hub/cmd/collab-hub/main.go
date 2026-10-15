@@ -15,11 +15,15 @@ import (
 	"google.golang.org/grpc/credentials/insecure"
 
 	documentv1 "github.com/rowjay007/collab-sphere/gen/document/v1"
+	presencev1 "github.com/rowjay007/collab-sphere/gen/presence/v1"
 	"github.com/rowjay007/collab-sphere/services/collab-hub/internal/client"
 	"github.com/rowjay007/collab-sphere/services/collab-hub/internal/docstore"
 	"github.com/rowjay007/collab-sphere/services/collab-hub/internal/fanout"
 	"github.com/rowjay007/collab-sphere/services/collab-hub/internal/hub"
+	"github.com/rowjay007/collab-sphere/services/collab-hub/internal/presence"
 )
+
+const presenceFlush = 16 * time.Millisecond
 
 func main() {
 	slog.SetDefault(slog.New(slog.NewJSONHandler(os.Stdout, nil)))
@@ -56,7 +60,27 @@ func main() {
 		bus = fanout.NewMemory()
 	}
 
-	reg := hub.NewRegistry(docstore.New(documentv1.NewDocumentServiceClient(conn)), bus)
+	var pres hub.Presence
+	var writer *presence.Writer
+	if presenceAddr := os.Getenv("PRESENCE_SERVICE_ADDR"); presenceAddr != "" {
+		heartbeat, err := time.ParseDuration(envOr("PRESENCE_HEARTBEAT", "10s"))
+		if err != nil || heartbeat <= 0 {
+			slog.Error("parse PRESENCE_HEARTBEAT", "err", err)
+			os.Exit(1)
+		}
+		pconn, err := grpc.NewClient(presenceAddr, grpc.WithTransportCredentials(insecure.NewCredentials()))
+		if err != nil {
+			slog.Error("dial presence-service", "addr", presenceAddr, "err", err)
+			os.Exit(1)
+		}
+		defer pconn.Close()
+		writer = presence.NewWriter(presencev1.NewPresenceServiceClient(pconn), presenceFlush, heartbeat)
+		pres = writer
+	} else {
+		pres = presence.NewLocal(bus.Loopback)
+	}
+
+	reg := hub.NewRegistry(docstore.New(documentv1.NewDocumentServiceClient(conn)), bus, pres)
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusOK)
@@ -77,6 +101,9 @@ func main() {
 	<-sigs
 
 	reg.Close()
+	if writer != nil {
+		writer.Close()
+	}
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 	err = srv.Shutdown(ctx)

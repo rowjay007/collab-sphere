@@ -52,6 +52,7 @@ func (s *Server) Apply(ctx context.Context, req *presencev1.ApplyRequest) (*pres
 	}
 
 	var missing []*presencev1.Touch
+	var superseded []*presencev1.Touch
 	for _, ch := range req.GetChanges() {
 		switch k := ch.GetKind().(type) {
 		case *presencev1.Change_Upsert:
@@ -63,8 +64,11 @@ func (s *Server) Apply(ctx context.Context, req *presencev1.ApplyRequest) (*pres
 			if err != nil {
 				return nil, status.Error(codes.Internal, "internal error")
 			}
-			if !ok {
+			switch ok {
+			case store.TouchMissing:
 				missing = append(missing, k.Touch)
+			case store.TouchSuperseded:
+				superseded = append(superseded, k.Touch)
 			}
 		case *presencev1.Change_Leave:
 			if err := s.store.Remove(ctx, k.Leave); err != nil {
@@ -72,7 +76,7 @@ func (s *Server) Apply(ctx context.Context, req *presencev1.ApplyRequest) (*pres
 			}
 		}
 	}
-	return &presencev1.ApplyResponse{Missing: missing}, nil
+	return &presencev1.ApplyResponse{Missing: missing, Superseded: superseded}, nil
 }
 
 func validateChange(ch *presencev1.Change) error {

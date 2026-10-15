@@ -155,7 +155,7 @@ if redis.call('EXISTS', KEYS[1]) == 0 then
 end
 local raw = redis.call('GET', KEYS[1])
 if field_varint_bytes(raw, 3) ~= ARGV[1] then
-  return 0
+  return 2
 end
 redis.call('PEXPIRE', KEYS[1], tonumber(ARGV[4]))
 redis.call('ZADD', KEYS[2], now_ms() + tonumber(ARGV[2]), ARGV[3])

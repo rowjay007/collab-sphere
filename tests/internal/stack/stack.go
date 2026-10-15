@@ -25,6 +25,7 @@ import (
 	"google.golang.org/grpc/status"
 
 	documentv1 "github.com/rowjay007/collab-sphere/gen/document/v1"
+	presencev1 "github.com/rowjay007/collab-sphere/gen/presence/v1"
 	"github.com/rowjay007/collab-sphere/pkg/collabclient"
 	"github.com/rowjay007/collab-sphere/pkg/crdt"
 )
@@ -43,7 +44,7 @@ func repoRoot() string {
 	return filepath.Clean(filepath.Join(filepath.Dir(file), "..", "..", ".."))
 }
 
-func binaries(t *testing.T) (docsvc, hub string) {
+func binary(t *testing.T, name string) string {
 	t.Helper()
 	buildOnce.Do(func() {
 		binDir, buildErr = os.MkdirTemp("", "collab-e2e-bin")
@@ -54,6 +55,7 @@ func binaries(t *testing.T) (docsvc, hub string) {
 		for name, pkg := range map[string]string{
 			"document-service": "./services/document-service/cmd/document-service",
 			"collab-hub":       "./services/collab-hub/cmd/collab-hub",
+			"presence-service": "./services/presence-service/cmd/presence-service",
 		} {
 			args := append(append([]string{"build"}, buildFlags...), "-o", filepath.Join(binDir, name), pkg)
 			cmd := exec.Command("go", args...)
@@ -67,7 +69,7 @@ func binaries(t *testing.T) (docsvc, hub string) {
 	if buildErr != nil {
 		t.Fatal(buildErr)
 	}
-	return filepath.Join(binDir, "document-service"), filepath.Join(binDir, "collab-hub")
+	return filepath.Join(binDir, name)
 }
 
 func freshDatabase(t *testing.T) string {
@@ -184,18 +186,23 @@ type hubInstance struct {
 }
 
 type Stack struct {
-	t        *testing.T
-	dbURL    string
-	redisURL string
-	grpc     string
-	docsvc   *process
-	hubs     []*hubInstance
-	Docs     documentv1.DocumentServiceClient
+	t           *testing.T
+	dbURL       string
+	redisURL    string
+	grpc        string
+	presence    string
+	presenceTTL time.Duration
+	docsvc      *process
+	hubs        []*hubInstance
+	Docs        documentv1.DocumentServiceClient
 }
 
 type Option func(*config)
 
-type config struct{ hubs int }
+type config struct {
+	hubs        int
+	presenceTTL time.Duration
+}
 
 // WithHubs runs n collab-hub instances. More than one shares ops over the
 // Redis at COLLAB_TEST_REDIS_URL, and the test skips when it is unset.
@@ -203,6 +210,15 @@ func WithHubs(n int) Option {
 	return func(c *config) { c.hubs = n }
 }
 
+// WithPresenceTTL sets presence-service's TTL to d, its sweep to d/10 and
+// the hubs' heartbeat to d/4.
+func WithPresenceTTL(d time.Duration) Option {
+	return func(c *config) { c.presenceTTL = d }
+}
+
+// New starts document-service and the hubs. With Redis, which more than one
+// hub needs, it also starts presence-service and points every hub at it;
+// a single hub without Redis keeps presence in process.
 func New(t *testing.T, opts ...Option) *Stack {
 	t.Helper()
 	cfg := config{hubs: 1}
@@ -215,7 +231,7 @@ func New(t *testing.T, opts ...Option) *Stack {
 			t.Skip("COLLAB_TEST_REDIS_URL not set")
 		}
 	}
-	s := &Stack{t: t, dbURL: freshDatabase(t), redisURL: redisURL, grpc: freeAddr(t)}
+	s := &Stack{t: t, dbURL: freshDatabase(t), redisURL: redisURL, grpc: freeAddr(t), presenceTTL: cfg.presenceTTL}
 	for i := range cfg.hubs {
 		s.hubs = append(s.hubs, &hubInstance{id: fmt.Sprintf("hub-%d", i), http: freeAddr(t)})
 	}
@@ -226,15 +242,36 @@ func New(t *testing.T, opts ...Option) *Stack {
 	t.Cleanup(func() { conn.Close() })
 	s.Docs = documentv1.NewDocumentServiceClient(conn)
 	s.StartDocumentService()
+	if redisURL != "" {
+		s.startPresenceService()
+	}
 	for i := range s.hubs {
 		s.StartHub(i)
 	}
 	return s
 }
 
+func (s *Stack) startPresenceService() {
+	s.presence = freeAddr(s.t)
+	env := []string{"REDIS_URL=" + s.redisURL, "GRPC_ADDR=" + s.presence}
+	if s.presenceTTL > 0 {
+		env = append(env, "PRESENCE_TTL="+s.presenceTTL.String(), "PRESENCE_SWEEP="+(s.presenceTTL/10).String())
+	}
+	start(s.t, "presence-service", binary(s.t, "presence-service"), env...)
+	conn, err := grpc.NewClient(s.presence, grpc.WithTransportCredentials(insecure.NewCredentials()))
+	if err != nil {
+		s.t.Fatal(err)
+	}
+	defer conn.Close()
+	client := presencev1.NewPresenceServiceClient(conn)
+	waitFor(s.t, "presence-service", func(ctx context.Context) error {
+		_, err := client.List(ctx, &presencev1.ListRequest{DocumentId: uuid.NewString()})
+		return err
+	})
+}
+
 func (s *Stack) StartDocumentService() {
-	docsvc, _ := binaries(s.t)
-	s.docsvc = start(s.t, "document-service", docsvc, "DATABASE_URL="+s.dbURL, "GRPC_ADDR="+s.grpc)
+	s.docsvc = start(s.t, "document-service", binary(s.t, "document-service"), "DATABASE_URL="+s.dbURL, "GRPC_ADDR="+s.grpc)
 	waitFor(s.t, "document-service", func(ctx context.Context) error {
 		_, err := s.Docs.GetDocument(ctx, &documentv1.GetDocumentRequest{Id: uuid.NewString()})
 		if status.Code(err) == codes.NotFound {
@@ -247,13 +284,18 @@ func (s *Stack) StartDocumentService() {
 // StartHub starts hub i on its own port and HUB_ID, which stay the same
 // across restarts.
 func (s *Stack) StartHub(i int) {
-	_, bin := binaries(s.t)
 	h := s.hubs[i]
 	env := []string{"HTTP_ADDR=" + h.http, "DOCUMENT_SERVICE_ADDR=" + s.grpc, "HUB_ID=" + h.id}
 	if s.redisURL != "" {
 		env = append(env, "REDIS_URL="+s.redisURL)
 	}
-	h.proc = start(s.t, h.id, bin, env...)
+	if s.presence != "" {
+		env = append(env, "PRESENCE_SERVICE_ADDR="+s.presence)
+	}
+	if s.presenceTTL > 0 {
+		env = append(env, "PRESENCE_HEARTBEAT="+(s.presenceTTL/4).String())
+	}
+	h.proc = start(s.t, h.id, binary(s.t, "collab-hub"), env...)
 	waitFor(s.t, h.id, func(ctx context.Context) error {
 		req, _ := http.NewRequestWithContext(ctx, http.MethodGet, "http://"+h.http+"/healthz", nil)
 		resp, err := http.DefaultClient.Do(req)

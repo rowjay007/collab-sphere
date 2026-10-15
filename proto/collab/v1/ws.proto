@@ -7,11 +7,10 @@ import "crdt/v1/snapshot.proto";
 option go_package = "github.com/rowjay007/collab-sphere/gen/collab/v1;collabv1";
 
 message ClientMessage {
-  reserved 3;
-  reserved "awareness_update";
   oneof payload {
     OperationBatch operation_batch = 1;
     CursorMove cursor_move = 2;
+    AwarenessUpdate awareness_update = 3;
     Ping ping = 4;
   }
 }
@@ -24,7 +23,13 @@ message ServerMessage {
     MissedOps missed_ops = 4;
     ErrorMessage error = 5;
     Pong pong = 6;
+    AwarenessSync awareness_sync = 7;
   }
+}
+
+// display_name is at most 64 bytes.
+message AwarenessUpdate {
+  string display_name = 1;
 }
 
 message OperationBatch {
@@ -54,14 +59,41 @@ message OperationBroadcast {
   uint64 first_seq = 2;
 }
 
-message PresenceLeft {}
+message PresenceLeft {
+  enum Reason {
+    REASON_UNSPECIFIED = 0;
+    REASON_LEAVE = 1;
+    REASON_EXPIRED = 2;
+  }
+  Reason reason = 1;
+}
 
+// version is per document and grows with every presence change. Apply a
+// broadcast only if its version is above the one known for that client. A
+// state with neither cursor nor left is a user with no cursor placed.
 message PresenceBroadcast {
   uint64 client = 1;
   oneof state {
     CursorMove cursor = 2;
     PresenceLeft left = 3;
   }
+  uint64 version = 4;
+  string display_name = 5;
+}
+
+// cursor is absent when the user has not placed one.
+message PresenceState {
+  uint64 client = 1;
+  CursorMove cursor = 2;
+  string display_name = 3;
+  uint64 version = 4;
+}
+
+// Everyone else's presence at version. Entries the receiver knows that are
+// missing here and not newer than version have left.
+message AwarenessSync {
+  repeated PresenceState states = 1;
+  uint64 version = 2;
 }
 
 // The snapshot holds exactly seqs 1..seq.

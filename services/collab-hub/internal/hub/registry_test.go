@@ -9,7 +9,6 @@ import (
 
 	collabv1 "github.com/rowjay007/collab-sphere/gen/collab/v1"
 	"github.com/rowjay007/collab-sphere/pkg/crdt"
-	"github.com/rowjay007/collab-sphere/services/collab-hub/internal/fanout"
 )
 
 type blockingLoadStore struct {
@@ -40,7 +39,7 @@ func (s failedLoadStore) Load(context.Context, string) (*crdt.Doc, uint64, error
 }
 
 func TestArchivedDocumentJoinReportsArchived(t *testing.T) {
-	reg := NewRegistry(archivedStore{Store: NewMemoryStore()}, fanout.NewMemory())
+	reg := localRegistry(archivedStore{Store: NewMemoryStore()})
 	t.Cleanup(reg.Close)
 	peer := NewPeer(1)
 	_, err := reg.Join(t.Context(), "doc", peer, false, 0)
@@ -57,7 +56,7 @@ func TestArchivedDocumentJoinReportsArchived(t *testing.T) {
 }
 
 func TestDocumentLoadFailureIsUnavailable(t *testing.T) {
-	reg := NewRegistry(failedLoadStore{Store: NewMemoryStore()}, fanout.NewMemory())
+	reg := localRegistry(failedLoadStore{Store: NewMemoryStore()})
 	t.Cleanup(reg.Close)
 	peer := NewPeer(1)
 	if _, err := reg.Join(t.Context(), "doc", peer, false, 0); err == nil {
@@ -77,7 +76,7 @@ func (s deadlineLoadStore) Load(ctx context.Context, docID string) (*crdt.Doc, u
 }
 
 func TestHubLoadHasDeadline(t *testing.T) {
-	reg := NewRegistry(deadlineLoadStore{Store: NewMemoryStore()}, fanout.NewMemory())
+	reg := localRegistry(deadlineLoadStore{Store: NewMemoryStore()})
 	t.Cleanup(reg.Close)
 	session, err := reg.Join(t.Context(), "doc", NewPeer(1), false, 0)
 	if err != nil {
@@ -102,7 +101,7 @@ func TestCancelledJoinRemovesAdmittedPeer(t *testing.T) {
 		started: make(chan struct{}),
 		release: make(chan struct{}),
 	}
-	reg := NewRegistry(store, fanout.NewMemory())
+	reg := localRegistry(store)
 	t.Cleanup(reg.Close)
 
 	cancelledCtx, cancel := context.WithCancel(t.Context())
@@ -176,7 +175,7 @@ func TestStaleLeaveAfterFailStopDoesNotStopNewHub(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 	store := NewMemoryStore()
-	reg := NewRegistry(store, fanout.NewMemory())
+	reg := localRegistry(store)
 	t.Cleanup(reg.Close)
 
 	alice := NewPeer(1)

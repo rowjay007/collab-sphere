@@ -436,6 +436,7 @@ func (x *ApplyRequest) GetChanges() []*Change {
 type ApplyResponse struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	Missing       []*Touch               `protobuf:"bytes,1,rep,name=missing,proto3" json:"missing,omitempty"`
+	Superseded    []*Touch               `protobuf:"bytes,2,rep,name=superseded,proto3" json:"superseded,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -473,6 +474,13 @@ func (*ApplyResponse) Descriptor() ([]byte, []int) {
 func (x *ApplyResponse) GetMissing() []*Touch {
 	if x != nil {
 		return x.Missing
+	}
+	return nil
+}
+
+func (x *ApplyResponse) GetSuperseded() []*Touch {
+	if x != nil {
+		return x.Superseded
 	}
 	return nil
 }
@@ -807,9 +815,12 @@ const file_presence_v1_presence_proto_rawDesc = "" +
 	"\x06client\x18\x02 \x01(\x04R\x06client\x12\x18\n" +
 	"\asession\x18\x03 \x01(\x04R\asession\"=\n" +
 	"\fApplyRequest\x12-\n" +
-	"\achanges\x18\x01 \x03(\v2\x13.presence.v1.ChangeR\achanges\"=\n" +
+	"\achanges\x18\x01 \x03(\v2\x13.presence.v1.ChangeR\achanges\"q\n" +
 	"\rApplyResponse\x12,\n" +
-	"\amissing\x18\x01 \x03(\v2\x12.presence.v1.TouchR\amissing\"5\n" +
+	"\amissing\x18\x01 \x03(\v2\x12.presence.v1.TouchR\amissing\x122\n" +
+	"\n" +
+	"superseded\x18\x02 \x03(\v2\x12.presence.v1.TouchR\n" +
+	"superseded\"5\n" +
 	"\vJoinRequest\x12&\n" +
 	"\x04self\x18\x01 \x01(\v2\x12.presence.v1.StateR\x04self\".\n" +
 	"\vListRequest\x12\x1f\n" +
@@ -875,22 +886,23 @@ var file_presence_v1_presence_proto_depIdxs = []int32{
 	4,  // 4: presence.v1.Change.leave:type_name -> presence.v1.Leave
 	2,  // 5: presence.v1.ApplyRequest.changes:type_name -> presence.v1.Change
 	3,  // 6: presence.v1.ApplyResponse.missing:type_name -> presence.v1.Touch
-	1,  // 7: presence.v1.JoinRequest.self:type_name -> presence.v1.State
-	1,  // 8: presence.v1.ListResponse.states:type_name -> presence.v1.State
-	1,  // 9: presence.v1.Event.state:type_name -> presence.v1.State
-	11, // 10: presence.v1.Event.left:type_name -> presence.v1.Left
-	0,  // 11: presence.v1.Left.reason:type_name -> presence.v1.Left.Reason
-	7,  // 12: presence.v1.PresenceService.Join:input_type -> presence.v1.JoinRequest
-	5,  // 13: presence.v1.PresenceService.Apply:input_type -> presence.v1.ApplyRequest
-	8,  // 14: presence.v1.PresenceService.List:input_type -> presence.v1.ListRequest
-	9,  // 15: presence.v1.PresenceService.Join:output_type -> presence.v1.ListResponse
-	6,  // 16: presence.v1.PresenceService.Apply:output_type -> presence.v1.ApplyResponse
-	9,  // 17: presence.v1.PresenceService.List:output_type -> presence.v1.ListResponse
-	15, // [15:18] is the sub-list for method output_type
-	12, // [12:15] is the sub-list for method input_type
-	12, // [12:12] is the sub-list for extension type_name
-	12, // [12:12] is the sub-list for extension extendee
-	0,  // [0:12] is the sub-list for field type_name
+	3,  // 7: presence.v1.ApplyResponse.superseded:type_name -> presence.v1.Touch
+	1,  // 8: presence.v1.JoinRequest.self:type_name -> presence.v1.State
+	1,  // 9: presence.v1.ListResponse.states:type_name -> presence.v1.State
+	1,  // 10: presence.v1.Event.state:type_name -> presence.v1.State
+	11, // 11: presence.v1.Event.left:type_name -> presence.v1.Left
+	0,  // 12: presence.v1.Left.reason:type_name -> presence.v1.Left.Reason
+	7,  // 13: presence.v1.PresenceService.Join:input_type -> presence.v1.JoinRequest
+	5,  // 14: presence.v1.PresenceService.Apply:input_type -> presence.v1.ApplyRequest
+	8,  // 15: presence.v1.PresenceService.List:input_type -> presence.v1.ListRequest
+	9,  // 16: presence.v1.PresenceService.Join:output_type -> presence.v1.ListResponse
+	6,  // 17: presence.v1.PresenceService.Apply:output_type -> presence.v1.ApplyResponse
+	9,  // 18: presence.v1.PresenceService.List:output_type -> presence.v1.ListResponse
+	16, // [16:19] is the sub-list for method output_type
+	13, // [13:16] is the sub-list for method input_type
+	13, // [13:13] is the sub-list for extension type_name
+	13, // [13:13] is the sub-list for extension extendee
+	0,  // [0:13] is the sub-list for field type_name
 }
 
 func init() { file_presence_v1_presence_proto_init() }

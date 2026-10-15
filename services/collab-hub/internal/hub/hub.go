@@ -4,6 +4,8 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"maps"
+	"slices"
 	"sync"
 	"time"
 
@@ -27,6 +29,8 @@ const (
 	defaultIdleSync   = time.Second
 	defaultReadyWait  = 2 * time.Second
 	remoteInbox       = 1024
+	presenceInbox     = 1024
+	presenceTimeout   = 5 * time.Second
 	// A frame of this many ops stays far below the client's read limit, and
 	// defaultMaxReplay/missedFrameOps frames fit in a new peer's empty buffer.
 	missedFrameOps = 4096
@@ -70,12 +74,23 @@ type opsEvent struct {
 func (opsEvent) isEvent() {}
 
 type cursorEvent struct {
-	id     crdt.ClientID
+	peer   *Peer
 	anchor crdt.ID
 	head   crdt.ID
 }
 
 func (cursorEvent) isEvent() {}
+
+type renameEvent struct {
+	peer *Peer
+	name string
+}
+
+func (renameEvent) isEvent() {}
+
+type presenceEvent struct{ ev *presencev1.Event }
+
+func (presenceEvent) isEvent() {}
 
 type timerEvent struct{ gen uint64 }
 
@@ -97,11 +112,6 @@ type stopEvent struct{}
 
 func (stopEvent) isEvent() {}
 
-type cursor struct {
-	anchor crdt.ID
-	head   crdt.ID
-}
-
 // gapTimer is the gap-healing state: at most one armed timer, tagged with a
 // generation so a stale one is ignored, and the consecutive failed fills
 // that set its backoff.
@@ -116,12 +126,15 @@ type gapTimer struct {
 type Hub struct {
 	docID    string
 	store    Store
+	pres     Presence
 	registry *Registry
 	gapGrace time.Duration
 	events   chan event
 	remote   chan fanout.Batch
+	presence chan *presencev1.Event
 	resync   chan struct{}
 	stopped  chan struct{}
+	done     chan struct{}
 	once     sync.Once
 	refs     int
 
@@ -131,7 +144,6 @@ type Hub struct {
 	gap     gapTimer
 	loadErr error
 	peers   map[crdt.ClientID]*Peer
-	cursors map[crdt.ClientID]cursor
 	dead    bool
 }
 
@@ -139,18 +151,21 @@ func newHub(docID string, registry *Registry) *Hub {
 	return &Hub{
 		docID:    docID,
 		store:    registry.store,
+		pres:     registry.pres,
 		registry: registry,
 		gapGrace: registry.gapGrace,
 		events:   make(chan event, 256),
 		remote:   make(chan fanout.Batch, remoteInbox),
+		presence: make(chan *presencev1.Event, presenceInbox),
 		resync:   make(chan struct{}, 1),
 		stopped:  make(chan struct{}),
+		done:     make(chan struct{}),
 		peers:    make(map[crdt.ClientID]*Peer),
-		cursors:  make(map[crdt.ClientID]cursor),
 	}
 }
 
 func (h *Hub) loop() {
+	defer close(h.done)
 	h.subscribe()
 	ctx, cancel := context.WithTimeout(context.Background(), loadTimeout)
 	doc, delivered, err := h.store.Load(ctx, h.docID)
@@ -174,6 +189,8 @@ func (h *Hub) loop() {
 			case ev = <-h.events:
 			case b := <-h.remote:
 				ev = remoteOpsEvent{b: b}
+			case p := <-h.presence:
+				ev = presenceEvent{ev: p}
 			case <-h.resync:
 				ev = resyncEvent{}
 			case <-idle.C:
@@ -193,11 +210,16 @@ func (h *Hub) loop() {
 			pending, stop = h.handleOpsGroup(ev)
 		case cursorEvent:
 			h.handleCursor(ev)
+		case renameEvent:
+			h.handleRename(ev)
+		case presenceEvent:
+			h.handlePresence(ev.ev)
 		case timerEvent:
 			stop = h.handleTimer(ev)
 		case remoteOpsEvent:
 			stop = h.handleRemote(ev.b)
 		case resyncEvent:
+			h.resyncPresence()
 			stop = h.poll()
 		case idleEvent:
 			if len(h.peers) > 0 {
@@ -250,10 +272,17 @@ func (h *Hub) RemoteOps(b fanout.Batch) {
 	}
 }
 
-// Presence ignores presence events until the hub integrates presence-service.
-func (h *Hub) Presence(*presencev1.Event) {}
+// Presence hands a presence event to the loop. A full inbox drops it; the
+// version rules let the next event or AwarenessSync repair the client.
+func (h *Hub) Presence(ev *presencev1.Event) {
+	select {
+	case h.presence <- ev:
+	default:
+	}
+}
 
-// Resync asks the loop to read the log. Repeated requests coalesce.
+// Resync asks the loop to read the log and refresh every peer's presence.
+// Repeated requests coalesce.
 func (h *Hub) Resync() {
 	select {
 	case h.resync <- struct{}{}:
@@ -278,9 +307,9 @@ func (h *Hub) shutdown() {
 	h.dead = true
 	for _, p := range h.peers {
 		p.CloseWithReason("hub stopped")
+		h.leavePresence(p)
 	}
 	h.peers = nil
-	h.cursors = nil
 	for {
 		select {
 		case ev := <-h.events:
@@ -344,9 +373,13 @@ func (h *Hub) handleJoin(ev joinEvent) bool {
 		return false
 	}
 
+	// A superseded peer gets no presence Leave: the new session's Join
+	// replaces its state, so nobody sees the client leave.
+	var superseded <-chan struct{}
 	if old, ok := h.peers[ev.peer.id]; ok {
 		delete(h.peers, old.id)
 		old.CloseWithReason("superseded")
+		superseded = old.joined
 	}
 	h.peers[ev.peer.id] = ev.peer
 	for _, frame := range frames {
@@ -355,23 +388,75 @@ func (h *Hub) handleJoin(ev joinEvent) bool {
 			return false
 		}
 	}
-	for id, cur := range h.cursors {
-		if id == ev.peer.id {
-			continue
-		}
-		frame := mustMarshal(&collabv1.ServerMessage{
-			Payload: &collabv1.ServerMessage_PresenceBroadcast{PresenceBroadcast: &collabv1.PresenceBroadcast{
-				Client: uint64(id),
-				State:  &collabv1.PresenceBroadcast_Cursor{Cursor: cursorProto(cur)},
-			}},
-		})
-		if !h.sendOrDrop(ev.peer, frame) {
-			ev.reply <- errors.New("send buffer full")
-			return false
-		}
-	}
+	h.joinPresence(ev.peer, superseded)
 	ev.reply <- nil
 	return false
+}
+
+// joinPresence runs the presence Join off the loop and sends the result as
+// the peer's AwarenessSync, or an empty one if Join fails. It waits for a
+// superseded peer's Join so the newer session is written last.
+func (h *Hub) joinPresence(p *Peer, superseded <-chan struct{}) {
+	joined := make(chan struct{})
+	p.joined = joined
+	sess := p.presence()
+	go func() {
+		defer close(joined)
+		if superseded != nil {
+			<-superseded
+		}
+		select {
+		case <-p.Done():
+			return
+		default:
+		}
+		ctx, cancel := context.WithTimeout(context.Background(), presenceTimeout)
+		states, version, err := h.pres.Join(ctx, h.docID, sess)
+		cancel()
+		if err != nil {
+			states, version = nil, 0
+		}
+		p.TrySend(encodeAwarenessSync(states, version, p.id))
+	}()
+}
+
+// leavePresence removes the peer's session once its Join has returned, so a
+// Leave never lands before the Join it undoes.
+func (h *Hub) leavePresence(p *Peer) {
+	joined := p.joined
+	if joined == nil {
+		return
+	}
+	sess := p.presence()
+	select {
+	case <-joined:
+		h.pres.Leave(h.docID, sess)
+	default:
+		go func() {
+			<-joined
+			h.pres.Leave(h.docID, sess)
+		}()
+	}
+}
+
+// resyncPresence sends every peer a fresh AwarenessSync after the bus may
+// have lost presence events.
+func (h *Hub) resyncPresence() {
+	if h.dead || len(h.peers) == 0 {
+		return
+	}
+	peers := slices.Collect(maps.Values(h.peers))
+	go func() {
+		ctx, cancel := context.WithTimeout(context.Background(), presenceTimeout)
+		states, version, err := h.pres.List(ctx, h.docID)
+		cancel()
+		if err != nil {
+			return
+		}
+		for _, p := range peers {
+			p.TrySend(encodeAwarenessSync(states, version, p.id))
+		}
+	}()
 }
 
 // joinFrames answers a resume within maxReplay with MissedOps for
@@ -424,7 +509,7 @@ func (h *Hub) joinFrames(resume bool, seq uint64) ([][]byte, error) {
 }
 
 func (h *Hub) handleLeave(ev leaveEvent) {
-	h.dropPeer(ev.peer, true)
+	h.dropPeer(ev.peer)
 	close(ev.reply)
 }
 
@@ -490,7 +575,7 @@ func (h *Hub) applyOps(ev opsEvent) []crdt.Op {
 func (h *Hub) rejectOperation(p *Peer, code collabv1.ErrorMessage_Code, message string) {
 	p.TrySend(EncodeError(code, message))
 	p.CloseWithReason("rejected operation")
-	h.dropPeer(p, true)
+	h.dropPeer(p)
 }
 
 // persist appends the group, publishes what the log newly stored, and offers
@@ -693,26 +778,35 @@ func (h *Hub) caughtUp(target uint64) bool {
 	return !open && h.seq.Delivered() >= target
 }
 
+// handleCursor drops a cursor whose anchor or head the hub does not hold
+// yet: it races the sender's in-flight ops and the next move replaces it.
 func (h *Hub) handleCursor(ev cursorEvent) {
-	if h.dead {
-		return
-	}
-	_, ok := h.peers[ev.id]
-	if !ok {
+	if h.dead || h.peers[ev.peer.id] != ev.peer {
 		return
 	}
 	if !h.doc.Has(ev.anchor) || !h.doc.Has(ev.head) {
 		return
 	}
-	cur := cursor{anchor: ev.anchor, head: ev.head}
-	h.cursors[ev.id] = cur
-	frame := mustMarshal(&collabv1.ServerMessage{
-		Payload: &collabv1.ServerMessage_PresenceBroadcast{PresenceBroadcast: &collabv1.PresenceBroadcast{
-			Client: uint64(ev.id),
-			State:  &collabv1.PresenceBroadcast_Cursor{Cursor: cursorProto(cur)},
-		}},
-	})
-	h.broadcast(frame, ev.id, false)
+	h.pres.Move(h.docID, ev.peer.presence(), ev.anchor, ev.head)
+}
+
+func (h *Hub) handleRename(ev renameEvent) {
+	if h.dead || h.peers[ev.peer.id] != ev.peer {
+		return
+	}
+	ev.peer.name = ev.name
+	h.pres.Rename(h.docID, ev.peer.presence(), ev.name)
+}
+
+// handlePresence relays a presence event to every local peer except the
+// client it is about.
+func (h *Hub) handlePresence(ev *presencev1.Event) {
+	if h.dead {
+		return
+	}
+	if frame, ok := encodePresenceBroadcast(ev); ok {
+		h.broadcast(frame, crdt.ClientID(ev.GetClient()), false)
+	}
 }
 
 func (h *Hub) failStop(code collabv1.ErrorMessage_Code, message string) {
@@ -720,39 +814,21 @@ func (h *Hub) failStop(code collabv1.ErrorMessage_Code, message string) {
 	for _, p := range h.peers {
 		p.TrySend(frame)
 		p.CloseWithReason("persistence failure")
+		h.leavePresence(p)
 	}
 	h.peers = nil
-	h.cursors = nil
 	h.dead = true
 	h.unsubscribe()
 	h.registry.evict(h)
 }
 
-func (h *Hub) drop(id crdt.ClientID, announce bool) {
-	p, ok := h.peers[id]
-	if !ok {
+func (h *Hub) dropPeer(p *Peer) {
+	if h.peers[p.id] != p {
 		return
 	}
-	h.dropPeer(p, announce)
-}
-
-func (h *Hub) dropPeer(p *Peer, announce bool) {
-	id := p.id
-	if h.peers[id] != p {
-		return
-	}
-	delete(h.peers, id)
-	delete(h.cursors, id)
+	delete(h.peers, p.id)
 	p.CloseWithReason("session ended")
-	if announce && !h.dead {
-		frame := mustMarshal(&collabv1.ServerMessage{
-			Payload: &collabv1.ServerMessage_PresenceBroadcast{PresenceBroadcast: &collabv1.PresenceBroadcast{
-				Client: uint64(id),
-				State:  &collabv1.PresenceBroadcast_Left{Left: &collabv1.PresenceLeft{}},
-			}},
-		})
-		h.broadcast(frame, id, false)
-	}
+	h.leavePresence(p)
 }
 
 func (h *Hub) sendOrDrop(p *Peer, frame []byte) bool {
@@ -760,7 +836,7 @@ func (h *Hub) sendOrDrop(p *Peer, frame []byte) bool {
 		return true
 	}
 	p.CloseWithReason("slow consumer")
-	h.drop(p.id, true)
+	h.dropPeer(p)
 	return false
 }
 
@@ -776,14 +852,7 @@ func (h *Hub) broadcast(frame []byte, except crdt.ClientID, includeExcept bool) 
 		}
 	}
 	for _, p := range dead {
-		h.dropPeer(p, true)
-	}
-}
-
-func cursorProto(c cursor) *collabv1.CursorMove {
-	return &collabv1.CursorMove{
-		Anchor: &crdtv1.OpID{Client: uint64(c.anchor.Client), Clock: c.anchor.Clock},
-		Head:   &crdtv1.OpID{Client: uint64(c.head.Client), Clock: c.head.Clock},
+		h.dropPeer(p)
 	}
 }
 

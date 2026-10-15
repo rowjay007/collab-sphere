@@ -4,8 +4,11 @@ import (
 	"bytes"
 	"context"
 	"crypto/rand"
+	"net"
 	"os"
 	"strings"
+	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -169,6 +172,115 @@ func killSubscriber(t *testing.T, admin *redis.Client, name string) {
 		}
 	}
 	t.Fatalf("no pubsub client named %s", name)
+}
+
+// stallProxy forwards TCP to addr. freeze makes every open connection
+// swallow traffic without closing, as a dead network path does; connections
+// opened afterwards forward normally.
+type stallProxy struct {
+	ln     net.Listener
+	mu     sync.Mutex
+	frozen []*atomic.Bool
+}
+
+func newStallProxy(t *testing.T, addr string) *stallProxy {
+	t.Helper()
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	p := &stallProxy{ln: ln}
+	t.Cleanup(func() { _ = ln.Close() })
+	go func() {
+		for {
+			client, err := ln.Accept()
+			if err != nil {
+				return
+			}
+			server, err := net.Dial("tcp", addr)
+			if err != nil {
+				_ = client.Close()
+				continue
+			}
+			frozen := &atomic.Bool{}
+			p.mu.Lock()
+			p.frozen = append(p.frozen, frozen)
+			p.mu.Unlock()
+			go pipe(client, server, frozen)
+			go pipe(server, client, frozen)
+		}
+	}()
+	return p
+}
+
+func pipe(from, to net.Conn, frozen *atomic.Bool) {
+	defer from.Close()
+	defer to.Close()
+	buf := make([]byte, 32<<10)
+	for {
+		n, err := from.Read(buf)
+		if err != nil {
+			return
+		}
+		if frozen.Load() {
+			continue
+		}
+		if _, err := to.Write(buf[:n]); err != nil {
+			return
+		}
+	}
+}
+
+func (p *stallProxy) freeze() {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	for _, f := range p.frozen {
+		f.Store(true)
+	}
+}
+
+func TestRedisReconnectsWhenPongIsMissing(t *testing.T) {
+	doc := "fanout-" + rand.Text()
+	direct := testRedis(t, "a-"+doc)
+	a := runRedis(t, direct, "a")
+	proxy := newStallProxy(t, direct.Options().Addr)
+	opts := *direct.Options()
+	opts.Addr = proxy.ln.Addr().String()
+	opts.ClientName = "b-" + doc
+	viaProxy := redis.NewClient(&opts)
+	t.Cleanup(func() { _ = viaProxy.Close() })
+
+	b := NewRedis(viaProxy, "b")
+	b.pingEvery, b.pongWait = 50*time.Millisecond, 200*time.Millisecond
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		_ = b.Run(ctx)
+	}()
+	t.Cleanup(func() {
+		cancel()
+		<-done
+	})
+	atB := newRecorder()
+	waitReady(t, b.Join(doc, atB))
+	time.Sleep(3 * b.pingEvery)
+	select {
+	case <-atB.resyncs:
+		t.Fatal("resync while the connection was healthy")
+	default:
+	}
+
+	proxy.freeze()
+	select {
+	case <-atB.resyncs:
+	case <-time.After(5 * time.Second):
+		t.Fatal("no resync after the subscriber connection stalled")
+	}
+	a.Publish(doc, batchAt(1))
+	if got := atB.nextBatch(t).FirstSeq; got != 1 {
+		t.Fatalf("delivered seq %d, want 1", got)
+	}
 }
 
 func TestRedisResyncsAfterResubscribe(t *testing.T) {

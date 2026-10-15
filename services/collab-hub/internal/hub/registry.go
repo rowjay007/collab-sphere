@@ -14,6 +14,7 @@ import (
 type Registry struct {
 	store     Store
 	bus       fanout.Bus
+	pres      Presence
 	gapGrace  time.Duration
 	idleSync  time.Duration
 	readyWait time.Duration
@@ -23,11 +24,12 @@ type Registry struct {
 }
 
 // NewRegistry starts with no hubs. The first join for a document creates one,
-// which learns about other instances' appends through bus.
-func NewRegistry(store Store, bus fanout.Bus) *Registry {
+// which learns about other instances' appends and presence through bus.
+func NewRegistry(store Store, bus fanout.Bus, pres Presence) *Registry {
 	return &Registry{
 		store:     store,
 		bus:       bus,
+		pres:      pres,
 		gapGrace:  defaultGapGrace,
 		idleSync:  defaultIdleSync,
 		readyWait: defaultReadyWait,
@@ -86,7 +88,12 @@ func (s *Session) SubmitOps(ctx context.Context, ops []crdt.Op) {
 
 // MoveCursor delivers a cursor update to the session's hub.
 func (s *Session) MoveCursor(ctx context.Context, anchor, head crdt.ID) {
-	_ = s.hub.send(ctx, cursorEvent{id: s.peer.id, anchor: anchor, head: head})
+	_ = s.hub.send(ctx, cursorEvent{peer: s.peer, anchor: anchor, head: head})
+}
+
+// Rename sets the display name the session's presence carries.
+func (s *Session) Rename(ctx context.Context, name string) {
+	_ = s.hub.send(ctx, renameEvent{peer: s.peer, name: name})
 }
 
 // Leave detaches the client and stops the hub when it is empty.
@@ -98,7 +105,9 @@ func (s *Session) Leave(ctx context.Context) {
 	s.reg.release(s.hub)
 }
 
-// Close stops every hub. In-flight joins fail with ErrStopped.
+// Close stops every hub and returns once each has closed its peers and
+// handed their presence Leaves to Presence. In-flight joins fail with
+// ErrStopped.
 func (r *Registry) Close() {
 	r.mu.Lock()
 	hubs := make([]*Hub, 0, len(r.hubs))
@@ -109,6 +118,9 @@ func (r *Registry) Close() {
 	r.mu.Unlock()
 	for _, h := range hubs {
 		_ = h.send(context.Background(), stopEvent{})
+	}
+	for _, h := range hubs {
+		<-h.done
 	}
 }
 

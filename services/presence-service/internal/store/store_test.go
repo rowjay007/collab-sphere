@@ -54,7 +54,7 @@ func TestUpsertOverwritesAndPublishes(t *testing.T) {
 	}
 }
 
-func TestTouchMatchingAndMissing(t *testing.T) {
+func TestTouchOutcomes(t *testing.T) {
 	st, rdb := openStore(t, 300*time.Millisecond)
 	ctx := t.Context()
 	doc := uuid.NewString()
@@ -66,24 +66,24 @@ func TestTouchMatchingAndMissing(t *testing.T) {
 	}
 	collectN(t, ch, 1, time.Second)
 
-	ok, err := st.Touch(ctx, &presencev1.Touch{DocumentId: doc, Client: 3, Session: 1 << 60})
-	if err != nil || !ok {
-		t.Fatalf("touch match ok=%v err=%v", ok, err)
+	result, err := st.Touch(ctx, &presencev1.Touch{DocumentId: doc, Client: 3, Session: 1 << 60})
+	if err != nil || result != store.TouchApplied {
+		t.Fatalf("touch match result=%v err=%v", result, err)
 	}
-	ok, err = st.Touch(ctx, &presencev1.Touch{DocumentId: doc, Client: 3, Session: 2})
-	if err != nil || ok {
-		t.Fatalf("touch wrong session ok=%v err=%v", ok, err)
+	result, err = st.Touch(ctx, &presencev1.Touch{DocumentId: doc, Client: 3, Session: 2})
+	if err != nil || result != store.TouchSuperseded {
+		t.Fatalf("touch wrong session result=%v err=%v", result, err)
 	}
-	ok, err = st.Touch(ctx, &presencev1.Touch{DocumentId: doc, Client: 9, Session: 1})
-	if err != nil || ok {
-		t.Fatalf("touch missing key ok=%v err=%v", ok, err)
+	result, err = st.Touch(ctx, &presencev1.Touch{DocumentId: doc, Client: 9, Session: 1})
+	if err != nil || result != store.TouchMissing {
+		t.Fatalf("touch missing key result=%v err=%v", result, err)
 	}
 	assertNoMore(t, ch, 50*time.Millisecond)
 
 	time.Sleep(200 * time.Millisecond)
-	ok, err = st.Touch(ctx, &presencev1.Touch{DocumentId: doc, Client: 3, Session: 1 << 60})
-	if err != nil || !ok {
-		t.Fatalf("extend: ok=%v err=%v", ok, err)
+	result, err = st.Touch(ctx, &presencev1.Touch{DocumentId: doc, Client: 3, Session: 1 << 60})
+	if err != nil || result != store.TouchApplied {
+		t.Fatalf("extend: result=%v err=%v", result, err)
 	}
 	time.Sleep(200 * time.Millisecond)
 	got, ver, err := st.List(ctx, doc)

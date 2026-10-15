@@ -193,7 +193,7 @@ func TestSeqContiguityAcrossConcurrentClients(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 	store := NewMemoryStore()
-	reg := NewRegistry(store, fanout.NewMemory())
+	reg := localRegistry(store)
 	t.Cleanup(reg.Close)
 
 	sessions := make([]*Session, clients)
@@ -225,7 +225,7 @@ func TestGapFromAnotherWriterIsHealed(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 	store := NewMemoryStore()
-	reg := NewRegistry(store, fanout.NewMemory())
+	reg := localRegistry(store)
 	t.Cleanup(reg.Close)
 	alice, _, aliceStream := join(t, ctx, reg, 1)
 	_, _, bobStream := join(t, ctx, reg, 2)
@@ -258,7 +258,7 @@ func TestDuplicateSignalDeliversSenderInOrder(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 	store := NewMemoryStore()
-	reg := NewRegistry(store, fanout.NewMemory())
+	reg := localRegistry(store)
 	t.Cleanup(reg.Close)
 	alice, _, aliceStream := join(t, ctx, reg, 1)
 
@@ -283,7 +283,7 @@ func TestDocumentSyncFillsGapFirst(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 	store := NewMemoryStore()
-	reg := NewRegistry(store, fanout.NewMemory())
+	reg := localRegistry(store)
 	reg.gapGrace = time.Hour
 	t.Cleanup(reg.Close)
 	alice, _, aliceStream := join(t, ctx, reg, 1)
@@ -327,7 +327,7 @@ func TestNewestConnectionWins(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 	store := NewMemoryStore()
-	reg := NewRegistry(store, fanout.NewMemory())
+	reg := localRegistry(store)
 	t.Cleanup(reg.Close)
 	oldSession, oldPeer, _ := join(t, ctx, reg, 1)
 	_, _, bobStream := join(t, ctx, reg, 2)
@@ -368,7 +368,7 @@ func TestAppendFailureIsRetryable(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 	store := NewMemoryStore()
-	reg := NewRegistry(store, fanout.NewMemory())
+	reg := localRegistry(store)
 	t.Cleanup(reg.Close)
 	alice, _, aliceStream := join(t, ctx, reg, 1)
 
@@ -396,7 +396,7 @@ func TestGapFillFailuresBackOffThenFailStop(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 	store := &failingReadStore{MemoryStore: NewMemoryStore()}
-	reg := NewRegistry(store, fanout.NewMemory())
+	reg := localRegistry(store)
 	t.Cleanup(reg.Close)
 	alice, _, aliceStream := join(t, ctx, reg, 1)
 

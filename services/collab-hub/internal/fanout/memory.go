@@ -3,6 +3,8 @@ package fanout
 import (
 	"sync"
 	"time"
+
+	presencev1 "github.com/rowjay007/collab-sphere/gen/presence/v1"
 )
 
 // Fault decides what happens to one delivery of a published batch: drop it,
@@ -61,6 +63,13 @@ func (m *Memory) Publish(docID string, b Batch) {
 		default:
 			sink.RemoteOps(b)
 		}
+	}
+}
+
+func (m *Memory) Loopback(docID string, ev *presencev1.Event) {
+	sinks, _ := m.sinks(docID)
+	for _, sink := range sinks {
+		sink.Presence(ev)
 	}
 }
 

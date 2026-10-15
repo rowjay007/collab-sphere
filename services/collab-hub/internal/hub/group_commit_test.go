@@ -10,6 +10,7 @@ import (
 	collabv1 "github.com/rowjay007/collab-sphere/gen/collab/v1"
 	"github.com/rowjay007/collab-sphere/pkg/crdt"
 	"github.com/rowjay007/collab-sphere/services/collab-hub/internal/fanout"
+	"github.com/rowjay007/collab-sphere/services/collab-hub/internal/presence"
 	"google.golang.org/protobuf/proto"
 )
 
@@ -17,7 +18,7 @@ func TestRejectedOperationDropsPeerAfterPersistingPrefix(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 	defer cancel()
 	store := NewMemoryStore()
-	reg := NewRegistry(store, fanout.NewMemory())
+	reg := localRegistry(store)
 	t.Cleanup(reg.Close)
 	peer := NewPeer(1)
 	session, err := reg.Join(ctx, "doc", peer, false, 0)
@@ -46,7 +47,7 @@ func TestOperationClockBeyondHubFrontierIsRejected(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 	defer cancel()
 	store := NewMemoryStore()
-	reg := NewRegistry(store, fanout.NewMemory())
+	reg := localRegistry(store)
 	t.Cleanup(reg.Close)
 	peer := NewPeer(1)
 	session, err := reg.Join(ctx, "doc", peer, false, 0)
@@ -75,7 +76,7 @@ func TestOperationClockBeyondHubFrontierIsRejected(t *testing.T) {
 func TestInvalidCursorIsIgnored(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 	defer cancel()
-	reg := NewRegistry(NewMemoryStore(), fanout.NewMemory())
+	reg := localRegistry(NewMemoryStore())
 	t.Cleanup(reg.Close)
 
 	peer := NewPeer(1)
@@ -84,8 +85,6 @@ func TestInvalidCursorIsIgnored(t *testing.T) {
 		t.Fatal(err)
 	}
 	readServerMessage(t, ctx, peer)
-	session.MoveCursor(ctx, crdt.ID{Client: 99, Clock: 1}, crdt.ID{Client: 99, Clock: 1})
-
 	observer := NewPeer(2)
 	observerSession, err := reg.Join(ctx, "doc", observer, false, 0)
 	if err != nil {
@@ -95,22 +94,20 @@ func TestInvalidCursorIsIgnored(t *testing.T) {
 	if msg := readServerMessage(t, ctx, observer); msg.GetDocumentSync() == nil {
 		t.Fatalf("observer first frame = %T, want DocumentSync", msg.GetPayload())
 	}
-	select {
-	case frame := <-observer.Frames():
-		msg := &collabv1.ServerMessage{}
-		if err := proto.Unmarshal(frame, msg); err != nil {
-			t.Fatal(err)
+
+	session.MoveCursor(ctx, crdt.ID{Client: 99, Clock: 1}, crdt.ID{Client: 99, Clock: 1})
+	session.MoveCursor(ctx, crdt.Root, crdt.Root)
+	for {
+		p := readFrame(t, ctx, observer).GetPresenceBroadcast()
+		if p.GetClient() != 1 || p.GetCursor() == nil {
+			continue
 		}
-		t.Fatalf("observer got frame %T for invalid cursor", msg.GetPayload())
-	default:
+		if got := p.GetCursor().GetAnchor(); got.GetClient() != 0 || got.GetClock() != 0 {
+			t.Fatalf("observer got the invalid cursor %v", got)
+		}
+		break
 	}
 	select {
-	case frame := <-peer.Frames():
-		msg := &collabv1.ServerMessage{}
-		if err := proto.Unmarshal(frame, msg); err != nil {
-			t.Fatal(err)
-		}
-		t.Fatalf("sender got frame %T for invalid cursor", msg.GetPayload())
 	case <-peer.Done():
 		t.Fatal("sender was dropped for invalid cursor")
 	default:
@@ -176,7 +173,7 @@ func TestHubGroupsQueuedClientBatches(t *testing.T) {
 		firstStarted: make(chan struct{}),
 		releaseFirst: make(chan struct{}),
 	}
-	reg := NewRegistry(store, fanout.NewMemory())
+	reg := localRegistry(store)
 	t.Cleanup(reg.Close)
 
 	peers := make([]*Peer, clients)
@@ -232,7 +229,6 @@ func TestHubGroupsQueuedClientBatches(t *testing.T) {
 				} else {
 					t.Fatalf("client %d broadcast has %d ops", i+1, len(msg.GetOperationBroadcast().GetOperations()))
 				}
-			case msg.GetPresenceBroadcast() != nil:
 			default:
 				t.Fatalf("client %d unexpected message %T", i+1, msg.GetPayload())
 			}
@@ -256,7 +252,24 @@ func TestHubGroupsQueuedClientBatches(t *testing.T) {
 	}
 }
 
+// localRegistry is single-instance mode: an in-process bus and presence.
+func localRegistry(store Store) *Registry {
+	bus := fanout.NewMemory()
+	return NewRegistry(store, bus, presence.NewLocal(bus.Loopback))
+}
+
+// readServerMessage returns the peer's next frame that is not presence.
 func readServerMessage(t *testing.T, ctx context.Context, peer *Peer) *collabv1.ServerMessage {
+	t.Helper()
+	for {
+		msg := readFrame(t, ctx, peer)
+		if msg.GetAwarenessSync() == nil && msg.GetPresenceBroadcast() == nil {
+			return msg
+		}
+	}
+}
+
+func readFrame(t *testing.T, ctx context.Context, peer *Peer) *collabv1.ServerMessage {
 	t.Helper()
 	select {
 	case frame := <-peer.Frames():

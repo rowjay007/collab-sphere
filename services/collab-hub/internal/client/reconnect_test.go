@@ -16,13 +16,12 @@ import (
 	collabv1 "github.com/rowjay007/collab-sphere/gen/collab/v1"
 	"github.com/rowjay007/collab-sphere/pkg/collabclient"
 	"github.com/rowjay007/collab-sphere/pkg/crdt"
-	"github.com/rowjay007/collab-sphere/services/collab-hub/internal/fanout"
 	"github.com/rowjay007/collab-sphere/services/collab-hub/internal/hub"
 )
 
 func serve(t *testing.T, store hub.Store) (string, *hub.Registry) {
 	t.Helper()
-	reg := hub.NewRegistry(store, fanout.NewMemory())
+	reg := localRegistry(store)
 	t.Cleanup(reg.Close)
 	mux := http.NewServeMux()
 	mux.Handle("GET /ws/{docID}", Handler(reg))
@@ -33,7 +32,7 @@ func serve(t *testing.T, store hub.Store) (string, *hub.Registry) {
 
 func serveCounting(t *testing.T, store hub.Store) (string, *atomic.Int64) {
 	t.Helper()
-	reg := hub.NewRegistry(store, fanout.NewMemory())
+	reg := localRegistry(store)
 	t.Cleanup(reg.Close)
 	var attempts atomic.Int64
 	handler := Handler(reg)
@@ -49,7 +48,7 @@ func serveCounting(t *testing.T, store hub.Store) (string, *atomic.Int64) {
 
 func dialWith(t *testing.T, ctx context.Context, id crdt.ClientID, opts collabclient.Options) *collabclient.Client {
 	t.Helper()
-	c, err := collabclient.DialWith(ctx, "doc", id, opts)
+	c, err := collabclient.DialWith(ctx, canonicalTestDocumentID("doc"), id, opts)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -83,10 +82,10 @@ func converge(t *testing.T, ctx context.Context, store *hub.MemoryStore, clients
 			t.Fatalf("client %d: wait acked: %v (unacked %d)", i, err, c.Unacked())
 		}
 		err := c.WaitUntil(ctx, func(r *crdt.Replica) bool {
-			return proto.Equal(r.Snapshot(), store.Doc("doc").Snapshot())
+			return proto.Equal(r.Snapshot(), store.Doc(canonicalTestDocumentID("doc")).Snapshot())
 		})
 		if err != nil {
-			t.Fatalf("client %d: %q never matched the log %q: %v", i, c.Text(), store.Doc("doc").Text(), err)
+			t.Fatalf("client %d: %q never matched the log %q: %v", i, c.Text(), store.Doc(canonicalTestDocumentID("doc")).Text(), err)
 		}
 	}
 }
@@ -94,7 +93,7 @@ func converge(t *testing.T, ctx context.Context, store *hub.MemoryStore, clients
 // loggedOnce asserts that the log holds every op in ids exactly once.
 func loggedOnce(t *testing.T, store *hub.MemoryStore, ids []crdt.ID) {
 	t.Helper()
-	b, _, err := store.ReadOperations(context.Background(), "doc", 0, 1<<30)
+	b, _, err := store.ReadOperations(context.Background(), canonicalTestDocumentID("doc"), 0, 1<<30)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -157,7 +156,7 @@ func TestClientDocumentSyncReappliesUnacked(t *testing.T) {
 	x.Disconnect()
 	offline := []crdt.Op{edit(t, x, appendAt(1, 'b')), edit(t, x, appendAt(2, 'c'))}
 	offline = append(offline, edit(t, x, func(r *crdt.Replica) (crdt.Op, error) { return r.Delete(offline[0].OpID()) }))
-	if _, err := store.AppendFromOtherWriter("doc", offline[0]); err != nil {
+	if _, err := store.AppendFromOtherWriter(canonicalTestDocumentID("doc"), offline[0]); err != nil {
 		t.Fatal(err)
 	}
 	filler := make([]crdt.Op, 20_001)
@@ -166,7 +165,7 @@ func TestClientDocumentSyncReappliesUnacked(t *testing.T) {
 		op := crdt.Insert{ID: crdt.ID{Client: 50, Clock: uint64(i + 1)}, Parent: parent, Value: 'f'}
 		filler[i], parent = op, op.ID
 	}
-	if _, err := store.AppendFromOtherWriter("doc", filler...); err != nil {
+	if _, err := store.AppendFromOtherWriter(canonicalTestDocumentID("doc"), filler...); err != nil {
 		t.Fatal(err)
 	}
 
@@ -332,7 +331,7 @@ func TestClientArchivedJoinIsTerminal(t *testing.T) {
 	defer cancel()
 	url, attempts := serveCounting(t, archivedLoadStore{Store: hub.NewMemoryStore()})
 
-	_, err := collabclient.DialWith(ctx, "doc", 1, collabclient.Options{
+	_, err := collabclient.DialWith(ctx, canonicalTestDocumentID("doc"), 1, collabclient.Options{
 		URLs:          []string{url, url},
 		AutoReconnect: true,
 	})

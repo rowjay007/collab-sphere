@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/coder/websocket"
+	"github.com/google/uuid"
 	"google.golang.org/protobuf/proto"
 
 	collabv1 "github.com/rowjay007/collab-sphere/gen/collab/v1"
@@ -18,6 +19,7 @@ import (
 const (
 	readLimit         = 1 << 20
 	maxOpsPerBatch    = 1024
+	maxNameBytes      = 64
 	writeTimeout      = 10 * time.Second
 	drainTimeout      = 100 * time.Millisecond
 	keepaliveInterval = 30 * time.Second
@@ -27,11 +29,12 @@ const (
 // seq is the last seq a resuming client holds; without it the join is fresh.
 func Handler(reg *hub.Registry) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		docID := r.PathValue("docID")
-		if docID == "" {
-			http.Error(w, "missing document id", http.StatusBadRequest)
+		documentID, err := uuid.Parse(r.PathValue("docID"))
+		if err != nil {
+			http.Error(w, "invalid document id", http.StatusBadRequest)
 			return
 		}
+		docID := documentID.String()
 		query := r.URL.Query()
 		clientID, err := parseClient(query.Get("client"))
 		if err != nil {
@@ -172,6 +175,14 @@ func handleClientMessage(ctx context.Context, session *hub.Session, peer *hub.Pe
 		return true
 	case *collabv1.ClientMessage_CursorMove:
 		session.MoveCursor(ctx, idFromProto(p.CursorMove.GetAnchor()), idFromProto(p.CursorMove.GetHead()))
+		return true
+	case *collabv1.ClientMessage_AwarenessUpdate:
+		name := p.AwarenessUpdate.GetDisplayName()
+		if len(name) > maxNameBytes {
+			peer.TrySend(hub.EncodeError(collabv1.ErrorMessage_CODE_MALFORMED_MESSAGE, "display name too long"))
+			return false
+		}
+		session.Rename(ctx, name)
 		return true
 	case *collabv1.ClientMessage_Ping:
 		if !peer.TrySend(hub.EncodePong(p.Ping.GetNonce())) {

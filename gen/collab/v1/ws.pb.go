@@ -22,6 +22,55 @@ const (
 	_ = protoimpl.EnforceVersion(protoimpl.MaxVersion - 20)
 )
 
+type PresenceLeft_Reason int32
+
+const (
+	PresenceLeft_REASON_UNSPECIFIED PresenceLeft_Reason = 0
+	PresenceLeft_REASON_LEAVE       PresenceLeft_Reason = 1
+	PresenceLeft_REASON_EXPIRED     PresenceLeft_Reason = 2
+)
+
+// Enum value maps for PresenceLeft_Reason.
+var (
+	PresenceLeft_Reason_name = map[int32]string{
+		0: "REASON_UNSPECIFIED",
+		1: "REASON_LEAVE",
+		2: "REASON_EXPIRED",
+	}
+	PresenceLeft_Reason_value = map[string]int32{
+		"REASON_UNSPECIFIED": 0,
+		"REASON_LEAVE":       1,
+		"REASON_EXPIRED":     2,
+	}
+)
+
+func (x PresenceLeft_Reason) Enum() *PresenceLeft_Reason {
+	p := new(PresenceLeft_Reason)
+	*p = x
+	return p
+}
+
+func (x PresenceLeft_Reason) String() string {
+	return protoimpl.X.EnumStringOf(x.Descriptor(), protoreflect.EnumNumber(x))
+}
+
+func (PresenceLeft_Reason) Descriptor() protoreflect.EnumDescriptor {
+	return file_collab_v1_ws_proto_enumTypes[0].Descriptor()
+}
+
+func (PresenceLeft_Reason) Type() protoreflect.EnumType {
+	return &file_collab_v1_ws_proto_enumTypes[0]
+}
+
+func (x PresenceLeft_Reason) Number() protoreflect.EnumNumber {
+	return protoreflect.EnumNumber(x)
+}
+
+// Deprecated: Use PresenceLeft_Reason.Descriptor instead.
+func (PresenceLeft_Reason) EnumDescriptor() ([]byte, []int) {
+	return file_collab_v1_ws_proto_rawDescGZIP(), []int{8, 0}
+}
+
 type ErrorMessage_Code int32
 
 const (
@@ -71,11 +120,11 @@ func (x ErrorMessage_Code) String() string {
 }
 
 func (ErrorMessage_Code) Descriptor() protoreflect.EnumDescriptor {
-	return file_collab_v1_ws_proto_enumTypes[0].Descriptor()
+	return file_collab_v1_ws_proto_enumTypes[1].Descriptor()
 }
 
 func (ErrorMessage_Code) Type() protoreflect.EnumType {
-	return &file_collab_v1_ws_proto_enumTypes[0]
+	return &file_collab_v1_ws_proto_enumTypes[1]
 }
 
 func (x ErrorMessage_Code) Number() protoreflect.EnumNumber {
@@ -84,7 +133,7 @@ func (x ErrorMessage_Code) Number() protoreflect.EnumNumber {
 
 // Deprecated: Use ErrorMessage_Code.Descriptor instead.
 func (ErrorMessage_Code) EnumDescriptor() ([]byte, []int) {
-	return file_collab_v1_ws_proto_rawDescGZIP(), []int{11, 0}
+	return file_collab_v1_ws_proto_rawDescGZIP(), []int{14, 0}
 }
 
 type ClientMessage struct {
@@ -93,6 +142,7 @@ type ClientMessage struct {
 	//
 	//	*ClientMessage_OperationBatch
 	//	*ClientMessage_CursorMove
+	//	*ClientMessage_AwarenessUpdate
 	//	*ClientMessage_Ping
 	Payload       isClientMessage_Payload `protobuf_oneof:"payload"`
 	unknownFields protoimpl.UnknownFields
@@ -154,6 +204,15 @@ func (x *ClientMessage) GetCursorMove() *CursorMove {
 	return nil
 }
 
+func (x *ClientMessage) GetAwarenessUpdate() *AwarenessUpdate {
+	if x != nil {
+		if x, ok := x.Payload.(*ClientMessage_AwarenessUpdate); ok {
+			return x.AwarenessUpdate
+		}
+	}
+	return nil
+}
+
 func (x *ClientMessage) GetPing() *Ping {
 	if x != nil {
 		if x, ok := x.Payload.(*ClientMessage_Ping); ok {
@@ -175,6 +234,10 @@ type ClientMessage_CursorMove struct {
 	CursorMove *CursorMove `protobuf:"bytes,2,opt,name=cursor_move,json=cursorMove,proto3,oneof"`
 }
 
+type ClientMessage_AwarenessUpdate struct {
+	AwarenessUpdate *AwarenessUpdate `protobuf:"bytes,3,opt,name=awareness_update,json=awarenessUpdate,proto3,oneof"`
+}
+
 type ClientMessage_Ping struct {
 	Ping *Ping `protobuf:"bytes,4,opt,name=ping,proto3,oneof"`
 }
@@ -182,6 +245,8 @@ type ClientMessage_Ping struct {
 func (*ClientMessage_OperationBatch) isClientMessage_Payload() {}
 
 func (*ClientMessage_CursorMove) isClientMessage_Payload() {}
+
+func (*ClientMessage_AwarenessUpdate) isClientMessage_Payload() {}
 
 func (*ClientMessage_Ping) isClientMessage_Payload() {}
 
@@ -195,6 +260,7 @@ type ServerMessage struct {
 	//	*ServerMessage_MissedOps
 	//	*ServerMessage_Error
 	//	*ServerMessage_Pong
+	//	*ServerMessage_AwarenessSync
 	Payload       isServerMessage_Payload `protobuf_oneof:"payload"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
@@ -291,6 +357,15 @@ func (x *ServerMessage) GetPong() *Pong {
 	return nil
 }
 
+func (x *ServerMessage) GetAwarenessSync() *AwarenessSync {
+	if x != nil {
+		if x, ok := x.Payload.(*ServerMessage_AwarenessSync); ok {
+			return x.AwarenessSync
+		}
+	}
+	return nil
+}
+
 type isServerMessage_Payload interface {
 	isServerMessage_Payload()
 }
@@ -319,6 +394,10 @@ type ServerMessage_Pong struct {
 	Pong *Pong `protobuf:"bytes,6,opt,name=pong,proto3,oneof"`
 }
 
+type ServerMessage_AwarenessSync struct {
+	AwarenessSync *AwarenessSync `protobuf:"bytes,7,opt,name=awareness_sync,json=awarenessSync,proto3,oneof"`
+}
+
 func (*ServerMessage_OperationBroadcast) isServerMessage_Payload() {}
 
 func (*ServerMessage_PresenceBroadcast) isServerMessage_Payload() {}
@@ -331,6 +410,53 @@ func (*ServerMessage_Error) isServerMessage_Payload() {}
 
 func (*ServerMessage_Pong) isServerMessage_Payload() {}
 
+func (*ServerMessage_AwarenessSync) isServerMessage_Payload() {}
+
+// display_name is at most 64 bytes.
+type AwarenessUpdate struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	DisplayName   string                 `protobuf:"bytes,1,opt,name=display_name,json=displayName,proto3" json:"display_name,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *AwarenessUpdate) Reset() {
+	*x = AwarenessUpdate{}
+	mi := &file_collab_v1_ws_proto_msgTypes[2]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *AwarenessUpdate) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*AwarenessUpdate) ProtoMessage() {}
+
+func (x *AwarenessUpdate) ProtoReflect() protoreflect.Message {
+	mi := &file_collab_v1_ws_proto_msgTypes[2]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use AwarenessUpdate.ProtoReflect.Descriptor instead.
+func (*AwarenessUpdate) Descriptor() ([]byte, []int) {
+	return file_collab_v1_ws_proto_rawDescGZIP(), []int{2}
+}
+
+func (x *AwarenessUpdate) GetDisplayName() string {
+	if x != nil {
+		return x.DisplayName
+	}
+	return ""
+}
+
 type OperationBatch struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	Operations    []*v1.Operation        `protobuf:"bytes,1,rep,name=operations,proto3" json:"operations,omitempty"`
@@ -340,7 +466,7 @@ type OperationBatch struct {
 
 func (x *OperationBatch) Reset() {
 	*x = OperationBatch{}
-	mi := &file_collab_v1_ws_proto_msgTypes[2]
+	mi := &file_collab_v1_ws_proto_msgTypes[3]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -352,7 +478,7 @@ func (x *OperationBatch) String() string {
 func (*OperationBatch) ProtoMessage() {}
 
 func (x *OperationBatch) ProtoReflect() protoreflect.Message {
-	mi := &file_collab_v1_ws_proto_msgTypes[2]
+	mi := &file_collab_v1_ws_proto_msgTypes[3]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -365,7 +491,7 @@ func (x *OperationBatch) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use OperationBatch.ProtoReflect.Descriptor instead.
 func (*OperationBatch) Descriptor() ([]byte, []int) {
-	return file_collab_v1_ws_proto_rawDescGZIP(), []int{2}
+	return file_collab_v1_ws_proto_rawDescGZIP(), []int{3}
 }
 
 func (x *OperationBatch) GetOperations() []*v1.Operation {
@@ -388,7 +514,7 @@ type CursorMove struct {
 
 func (x *CursorMove) Reset() {
 	*x = CursorMove{}
-	mi := &file_collab_v1_ws_proto_msgTypes[3]
+	mi := &file_collab_v1_ws_proto_msgTypes[4]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -400,7 +526,7 @@ func (x *CursorMove) String() string {
 func (*CursorMove) ProtoMessage() {}
 
 func (x *CursorMove) ProtoReflect() protoreflect.Message {
-	mi := &file_collab_v1_ws_proto_msgTypes[3]
+	mi := &file_collab_v1_ws_proto_msgTypes[4]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -413,7 +539,7 @@ func (x *CursorMove) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use CursorMove.ProtoReflect.Descriptor instead.
 func (*CursorMove) Descriptor() ([]byte, []int) {
-	return file_collab_v1_ws_proto_rawDescGZIP(), []int{3}
+	return file_collab_v1_ws_proto_rawDescGZIP(), []int{4}
 }
 
 func (x *CursorMove) GetAnchor() *v1.OpID {
@@ -439,7 +565,7 @@ type Ping struct {
 
 func (x *Ping) Reset() {
 	*x = Ping{}
-	mi := &file_collab_v1_ws_proto_msgTypes[4]
+	mi := &file_collab_v1_ws_proto_msgTypes[5]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -451,7 +577,7 @@ func (x *Ping) String() string {
 func (*Ping) ProtoMessage() {}
 
 func (x *Ping) ProtoReflect() protoreflect.Message {
-	mi := &file_collab_v1_ws_proto_msgTypes[4]
+	mi := &file_collab_v1_ws_proto_msgTypes[5]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -464,7 +590,7 @@ func (x *Ping) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use Ping.ProtoReflect.Descriptor instead.
 func (*Ping) Descriptor() ([]byte, []int) {
-	return file_collab_v1_ws_proto_rawDescGZIP(), []int{4}
+	return file_collab_v1_ws_proto_rawDescGZIP(), []int{5}
 }
 
 func (x *Ping) GetNonce() uint64 {
@@ -483,7 +609,7 @@ type Pong struct {
 
 func (x *Pong) Reset() {
 	*x = Pong{}
-	mi := &file_collab_v1_ws_proto_msgTypes[5]
+	mi := &file_collab_v1_ws_proto_msgTypes[6]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -495,7 +621,7 @@ func (x *Pong) String() string {
 func (*Pong) ProtoMessage() {}
 
 func (x *Pong) ProtoReflect() protoreflect.Message {
-	mi := &file_collab_v1_ws_proto_msgTypes[5]
+	mi := &file_collab_v1_ws_proto_msgTypes[6]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -508,7 +634,7 @@ func (x *Pong) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use Pong.ProtoReflect.Descriptor instead.
 func (*Pong) Descriptor() ([]byte, []int) {
-	return file_collab_v1_ws_proto_rawDescGZIP(), []int{5}
+	return file_collab_v1_ws_proto_rawDescGZIP(), []int{6}
 }
 
 func (x *Pong) GetNonce() uint64 {
@@ -530,7 +656,7 @@ type OperationBroadcast struct {
 
 func (x *OperationBroadcast) Reset() {
 	*x = OperationBroadcast{}
-	mi := &file_collab_v1_ws_proto_msgTypes[6]
+	mi := &file_collab_v1_ws_proto_msgTypes[7]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -542,7 +668,7 @@ func (x *OperationBroadcast) String() string {
 func (*OperationBroadcast) ProtoMessage() {}
 
 func (x *OperationBroadcast) ProtoReflect() protoreflect.Message {
-	mi := &file_collab_v1_ws_proto_msgTypes[6]
+	mi := &file_collab_v1_ws_proto_msgTypes[7]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -555,7 +681,7 @@ func (x *OperationBroadcast) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use OperationBroadcast.ProtoReflect.Descriptor instead.
 func (*OperationBroadcast) Descriptor() ([]byte, []int) {
-	return file_collab_v1_ws_proto_rawDescGZIP(), []int{6}
+	return file_collab_v1_ws_proto_rawDescGZIP(), []int{7}
 }
 
 func (x *OperationBroadcast) GetOperations() []*v1.Operation {
@@ -574,13 +700,14 @@ func (x *OperationBroadcast) GetFirstSeq() uint64 {
 
 type PresenceLeft struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
+	Reason        PresenceLeft_Reason    `protobuf:"varint,1,opt,name=reason,proto3,enum=collab.v1.PresenceLeft_Reason" json:"reason,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
 
 func (x *PresenceLeft) Reset() {
 	*x = PresenceLeft{}
-	mi := &file_collab_v1_ws_proto_msgTypes[7]
+	mi := &file_collab_v1_ws_proto_msgTypes[8]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -592,7 +719,7 @@ func (x *PresenceLeft) String() string {
 func (*PresenceLeft) ProtoMessage() {}
 
 func (x *PresenceLeft) ProtoReflect() protoreflect.Message {
-	mi := &file_collab_v1_ws_proto_msgTypes[7]
+	mi := &file_collab_v1_ws_proto_msgTypes[8]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -605,9 +732,19 @@ func (x *PresenceLeft) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use PresenceLeft.ProtoReflect.Descriptor instead.
 func (*PresenceLeft) Descriptor() ([]byte, []int) {
-	return file_collab_v1_ws_proto_rawDescGZIP(), []int{7}
+	return file_collab_v1_ws_proto_rawDescGZIP(), []int{8}
 }
 
+func (x *PresenceLeft) GetReason() PresenceLeft_Reason {
+	if x != nil {
+		return x.Reason
+	}
+	return PresenceLeft_REASON_UNSPECIFIED
+}
+
+// version is per document and grows with every presence change. Apply a
+// broadcast only if its version is above the one known for that client. A
+// state with neither cursor nor left is a user with no cursor placed.
 type PresenceBroadcast struct {
 	state  protoimpl.MessageState `protogen:"open.v1"`
 	Client uint64                 `protobuf:"varint,1,opt,name=client,proto3" json:"client,omitempty"`
@@ -616,13 +753,15 @@ type PresenceBroadcast struct {
 	//	*PresenceBroadcast_Cursor
 	//	*PresenceBroadcast_Left
 	State         isPresenceBroadcast_State `protobuf_oneof:"state"`
+	Version       uint64                    `protobuf:"varint,4,opt,name=version,proto3" json:"version,omitempty"`
+	DisplayName   string                    `protobuf:"bytes,5,opt,name=display_name,json=displayName,proto3" json:"display_name,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
 
 func (x *PresenceBroadcast) Reset() {
 	*x = PresenceBroadcast{}
-	mi := &file_collab_v1_ws_proto_msgTypes[8]
+	mi := &file_collab_v1_ws_proto_msgTypes[9]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -634,7 +773,7 @@ func (x *PresenceBroadcast) String() string {
 func (*PresenceBroadcast) ProtoMessage() {}
 
 func (x *PresenceBroadcast) ProtoReflect() protoreflect.Message {
-	mi := &file_collab_v1_ws_proto_msgTypes[8]
+	mi := &file_collab_v1_ws_proto_msgTypes[9]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -647,7 +786,7 @@ func (x *PresenceBroadcast) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use PresenceBroadcast.ProtoReflect.Descriptor instead.
 func (*PresenceBroadcast) Descriptor() ([]byte, []int) {
-	return file_collab_v1_ws_proto_rawDescGZIP(), []int{8}
+	return file_collab_v1_ws_proto_rawDescGZIP(), []int{9}
 }
 
 func (x *PresenceBroadcast) GetClient() uint64 {
@@ -682,6 +821,20 @@ func (x *PresenceBroadcast) GetLeft() *PresenceLeft {
 	return nil
 }
 
+func (x *PresenceBroadcast) GetVersion() uint64 {
+	if x != nil {
+		return x.Version
+	}
+	return 0
+}
+
+func (x *PresenceBroadcast) GetDisplayName() string {
+	if x != nil {
+		return x.DisplayName
+	}
+	return ""
+}
+
 type isPresenceBroadcast_State interface {
 	isPresenceBroadcast_State()
 }
@@ -698,6 +851,129 @@ func (*PresenceBroadcast_Cursor) isPresenceBroadcast_State() {}
 
 func (*PresenceBroadcast_Left) isPresenceBroadcast_State() {}
 
+// cursor is absent when the user has not placed one.
+type PresenceState struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Client        uint64                 `protobuf:"varint,1,opt,name=client,proto3" json:"client,omitempty"`
+	Cursor        *CursorMove            `protobuf:"bytes,2,opt,name=cursor,proto3" json:"cursor,omitempty"`
+	DisplayName   string                 `protobuf:"bytes,3,opt,name=display_name,json=displayName,proto3" json:"display_name,omitempty"`
+	Version       uint64                 `protobuf:"varint,4,opt,name=version,proto3" json:"version,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *PresenceState) Reset() {
+	*x = PresenceState{}
+	mi := &file_collab_v1_ws_proto_msgTypes[10]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *PresenceState) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*PresenceState) ProtoMessage() {}
+
+func (x *PresenceState) ProtoReflect() protoreflect.Message {
+	mi := &file_collab_v1_ws_proto_msgTypes[10]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use PresenceState.ProtoReflect.Descriptor instead.
+func (*PresenceState) Descriptor() ([]byte, []int) {
+	return file_collab_v1_ws_proto_rawDescGZIP(), []int{10}
+}
+
+func (x *PresenceState) GetClient() uint64 {
+	if x != nil {
+		return x.Client
+	}
+	return 0
+}
+
+func (x *PresenceState) GetCursor() *CursorMove {
+	if x != nil {
+		return x.Cursor
+	}
+	return nil
+}
+
+func (x *PresenceState) GetDisplayName() string {
+	if x != nil {
+		return x.DisplayName
+	}
+	return ""
+}
+
+func (x *PresenceState) GetVersion() uint64 {
+	if x != nil {
+		return x.Version
+	}
+	return 0
+}
+
+// Everyone else's presence at version. Entries the receiver knows that are
+// missing here and not newer than version have left.
+type AwarenessSync struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	States        []*PresenceState       `protobuf:"bytes,1,rep,name=states,proto3" json:"states,omitempty"`
+	Version       uint64                 `protobuf:"varint,2,opt,name=version,proto3" json:"version,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *AwarenessSync) Reset() {
+	*x = AwarenessSync{}
+	mi := &file_collab_v1_ws_proto_msgTypes[11]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *AwarenessSync) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*AwarenessSync) ProtoMessage() {}
+
+func (x *AwarenessSync) ProtoReflect() protoreflect.Message {
+	mi := &file_collab_v1_ws_proto_msgTypes[11]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use AwarenessSync.ProtoReflect.Descriptor instead.
+func (*AwarenessSync) Descriptor() ([]byte, []int) {
+	return file_collab_v1_ws_proto_rawDescGZIP(), []int{11}
+}
+
+func (x *AwarenessSync) GetStates() []*PresenceState {
+	if x != nil {
+		return x.States
+	}
+	return nil
+}
+
+func (x *AwarenessSync) GetVersion() uint64 {
+	if x != nil {
+		return x.Version
+	}
+	return 0
+}
+
 // The snapshot holds exactly seqs 1..seq.
 type DocumentSync struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
@@ -710,7 +986,7 @@ type DocumentSync struct {
 
 func (x *DocumentSync) Reset() {
 	*x = DocumentSync{}
-	mi := &file_collab_v1_ws_proto_msgTypes[9]
+	mi := &file_collab_v1_ws_proto_msgTypes[12]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -722,7 +998,7 @@ func (x *DocumentSync) String() string {
 func (*DocumentSync) ProtoMessage() {}
 
 func (x *DocumentSync) ProtoReflect() protoreflect.Message {
-	mi := &file_collab_v1_ws_proto_msgTypes[9]
+	mi := &file_collab_v1_ws_proto_msgTypes[12]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -735,7 +1011,7 @@ func (x *DocumentSync) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use DocumentSync.ProtoReflect.Descriptor instead.
 func (*DocumentSync) Descriptor() ([]byte, []int) {
-	return file_collab_v1_ws_proto_rawDescGZIP(), []int{9}
+	return file_collab_v1_ws_proto_rawDescGZIP(), []int{12}
 }
 
 func (x *DocumentSync) GetDocumentId() string {
@@ -775,7 +1051,7 @@ type MissedOps struct {
 
 func (x *MissedOps) Reset() {
 	*x = MissedOps{}
-	mi := &file_collab_v1_ws_proto_msgTypes[10]
+	mi := &file_collab_v1_ws_proto_msgTypes[13]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -787,7 +1063,7 @@ func (x *MissedOps) String() string {
 func (*MissedOps) ProtoMessage() {}
 
 func (x *MissedOps) ProtoReflect() protoreflect.Message {
-	mi := &file_collab_v1_ws_proto_msgTypes[10]
+	mi := &file_collab_v1_ws_proto_msgTypes[13]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -800,7 +1076,7 @@ func (x *MissedOps) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use MissedOps.ProtoReflect.Descriptor instead.
 func (*MissedOps) Descriptor() ([]byte, []int) {
-	return file_collab_v1_ws_proto_rawDescGZIP(), []int{10}
+	return file_collab_v1_ws_proto_rawDescGZIP(), []int{13}
 }
 
 func (x *MissedOps) GetDocumentId() string {
@@ -841,7 +1117,7 @@ type ErrorMessage struct {
 
 func (x *ErrorMessage) Reset() {
 	*x = ErrorMessage{}
-	mi := &file_collab_v1_ws_proto_msgTypes[11]
+	mi := &file_collab_v1_ws_proto_msgTypes[14]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -853,7 +1129,7 @@ func (x *ErrorMessage) String() string {
 func (*ErrorMessage) ProtoMessage() {}
 
 func (x *ErrorMessage) ProtoReflect() protoreflect.Message {
-	mi := &file_collab_v1_ws_proto_msgTypes[11]
+	mi := &file_collab_v1_ws_proto_msgTypes[14]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -866,7 +1142,7 @@ func (x *ErrorMessage) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ErrorMessage.ProtoReflect.Descriptor instead.
 func (*ErrorMessage) Descriptor() ([]byte, []int) {
-	return file_collab_v1_ws_proto_rawDescGZIP(), []int{11}
+	return file_collab_v1_ws_proto_rawDescGZIP(), []int{14}
 }
 
 func (x *ErrorMessage) GetCode() ErrorMessage_Code {
@@ -887,13 +1163,14 @@ var File_collab_v1_ws_proto protoreflect.FileDescriptor
 
 const file_collab_v1_ws_proto_rawDesc = "" +
 	"\n" +
-	"\x12collab/v1/ws.proto\x12\tcollab.v1\x1a\x16crdt/v1/snapshot.proto\"\xd9\x01\n" +
+	"\x12collab/v1/ws.proto\x12\tcollab.v1\x1a\x16crdt/v1/snapshot.proto\"\x8a\x02\n" +
 	"\rClientMessage\x12D\n" +
 	"\x0foperation_batch\x18\x01 \x01(\v2\x19.collab.v1.OperationBatchH\x00R\x0eoperationBatch\x128\n" +
 	"\vcursor_move\x18\x02 \x01(\v2\x15.collab.v1.CursorMoveH\x00R\n" +
-	"cursorMove\x12%\n" +
+	"cursorMove\x12G\n" +
+	"\x10awareness_update\x18\x03 \x01(\v2\x1a.collab.v1.AwarenessUpdateH\x00R\x0fawarenessUpdate\x12%\n" +
 	"\x04ping\x18\x04 \x01(\v2\x0f.collab.v1.PingH\x00R\x04pingB\t\n" +
-	"\apayloadJ\x04\b\x03\x10\x04R\x10awareness_update\"\x8a\x03\n" +
+	"\apayload\"\xcd\x03\n" +
 	"\rServerMessage\x12P\n" +
 	"\x13operation_broadcast\x18\x01 \x01(\v2\x1d.collab.v1.OperationBroadcastH\x00R\x12operationBroadcast\x12M\n" +
 	"\x12presence_broadcast\x18\x02 \x01(\v2\x1c.collab.v1.PresenceBroadcastH\x00R\x11presenceBroadcast\x12>\n" +
@@ -901,8 +1178,11 @@ const file_collab_v1_ws_proto_rawDesc = "" +
 	"\n" +
 	"missed_ops\x18\x04 \x01(\v2\x14.collab.v1.MissedOpsH\x00R\tmissedOps\x12/\n" +
 	"\x05error\x18\x05 \x01(\v2\x17.collab.v1.ErrorMessageH\x00R\x05error\x12%\n" +
-	"\x04pong\x18\x06 \x01(\v2\x0f.collab.v1.PongH\x00R\x04pongB\t\n" +
-	"\apayload\"D\n" +
+	"\x04pong\x18\x06 \x01(\v2\x0f.collab.v1.PongH\x00R\x04pong\x12A\n" +
+	"\x0eawareness_sync\x18\a \x01(\v2\x18.collab.v1.AwarenessSyncH\x00R\rawarenessSyncB\t\n" +
+	"\apayload\"4\n" +
+	"\x0fAwarenessUpdate\x12!\n" +
+	"\fdisplay_name\x18\x01 \x01(\tR\vdisplayName\"D\n" +
 	"\x0eOperationBatch\x122\n" +
 	"\n" +
 	"operations\x18\x01 \x03(\v2\x12.crdt.v1.OperationR\n" +
@@ -919,13 +1199,28 @@ const file_collab_v1_ws_proto_rawDesc = "" +
 	"\n" +
 	"operations\x18\x01 \x03(\v2\x12.crdt.v1.OperationR\n" +
 	"operations\x12\x1b\n" +
-	"\tfirst_seq\x18\x02 \x01(\x04R\bfirstSeq\"\x0e\n" +
-	"\fPresenceLeft\"\x94\x01\n" +
+	"\tfirst_seq\x18\x02 \x01(\x04R\bfirstSeq\"\x8e\x01\n" +
+	"\fPresenceLeft\x126\n" +
+	"\x06reason\x18\x01 \x01(\x0e2\x1e.collab.v1.PresenceLeft.ReasonR\x06reason\"F\n" +
+	"\x06Reason\x12\x16\n" +
+	"\x12REASON_UNSPECIFIED\x10\x00\x12\x10\n" +
+	"\fREASON_LEAVE\x10\x01\x12\x12\n" +
+	"\x0eREASON_EXPIRED\x10\x02\"\xd1\x01\n" +
 	"\x11PresenceBroadcast\x12\x16\n" +
 	"\x06client\x18\x01 \x01(\x04R\x06client\x12/\n" +
 	"\x06cursor\x18\x02 \x01(\v2\x15.collab.v1.CursorMoveH\x00R\x06cursor\x12-\n" +
-	"\x04left\x18\x03 \x01(\v2\x17.collab.v1.PresenceLeftH\x00R\x04leftB\a\n" +
-	"\x05state\"p\n" +
+	"\x04left\x18\x03 \x01(\v2\x17.collab.v1.PresenceLeftH\x00R\x04left\x12\x18\n" +
+	"\aversion\x18\x04 \x01(\x04R\aversion\x12!\n" +
+	"\fdisplay_name\x18\x05 \x01(\tR\vdisplayNameB\a\n" +
+	"\x05state\"\x93\x01\n" +
+	"\rPresenceState\x12\x16\n" +
+	"\x06client\x18\x01 \x01(\x04R\x06client\x12-\n" +
+	"\x06cursor\x18\x02 \x01(\v2\x15.collab.v1.CursorMoveR\x06cursor\x12!\n" +
+	"\fdisplay_name\x18\x03 \x01(\tR\vdisplayName\x12\x18\n" +
+	"\aversion\x18\x04 \x01(\x04R\aversion\"[\n" +
+	"\rAwarenessSync\x120\n" +
+	"\x06states\x18\x01 \x03(\v2\x18.collab.v1.PresenceStateR\x06states\x12\x18\n" +
+	"\aversion\x18\x02 \x01(\x04R\aversion\"p\n" +
 	"\fDocumentSync\x12\x1f\n" +
 	"\vdocument_id\x18\x01 \x01(\tR\n" +
 	"documentId\x12-\n" +
@@ -964,50 +1259,59 @@ func file_collab_v1_ws_proto_rawDescGZIP() []byte {
 	return file_collab_v1_ws_proto_rawDescData
 }
 
-var file_collab_v1_ws_proto_enumTypes = make([]protoimpl.EnumInfo, 1)
-var file_collab_v1_ws_proto_msgTypes = make([]protoimpl.MessageInfo, 12)
+var file_collab_v1_ws_proto_enumTypes = make([]protoimpl.EnumInfo, 2)
+var file_collab_v1_ws_proto_msgTypes = make([]protoimpl.MessageInfo, 15)
 var file_collab_v1_ws_proto_goTypes = []any{
-	(ErrorMessage_Code)(0),     // 0: collab.v1.ErrorMessage.Code
-	(*ClientMessage)(nil),      // 1: collab.v1.ClientMessage
-	(*ServerMessage)(nil),      // 2: collab.v1.ServerMessage
-	(*OperationBatch)(nil),     // 3: collab.v1.OperationBatch
-	(*CursorMove)(nil),         // 4: collab.v1.CursorMove
-	(*Ping)(nil),               // 5: collab.v1.Ping
-	(*Pong)(nil),               // 6: collab.v1.Pong
-	(*OperationBroadcast)(nil), // 7: collab.v1.OperationBroadcast
-	(*PresenceLeft)(nil),       // 8: collab.v1.PresenceLeft
-	(*PresenceBroadcast)(nil),  // 9: collab.v1.PresenceBroadcast
-	(*DocumentSync)(nil),       // 10: collab.v1.DocumentSync
-	(*MissedOps)(nil),          // 11: collab.v1.MissedOps
-	(*ErrorMessage)(nil),       // 12: collab.v1.ErrorMessage
-	(*v1.Operation)(nil),       // 13: crdt.v1.Operation
-	(*v1.OpID)(nil),            // 14: crdt.v1.OpID
-	(*v1.Snapshot)(nil),        // 15: crdt.v1.Snapshot
+	(PresenceLeft_Reason)(0),   // 0: collab.v1.PresenceLeft.Reason
+	(ErrorMessage_Code)(0),     // 1: collab.v1.ErrorMessage.Code
+	(*ClientMessage)(nil),      // 2: collab.v1.ClientMessage
+	(*ServerMessage)(nil),      // 3: collab.v1.ServerMessage
+	(*AwarenessUpdate)(nil),    // 4: collab.v1.AwarenessUpdate
+	(*OperationBatch)(nil),     // 5: collab.v1.OperationBatch
+	(*CursorMove)(nil),         // 6: collab.v1.CursorMove
+	(*Ping)(nil),               // 7: collab.v1.Ping
+	(*Pong)(nil),               // 8: collab.v1.Pong
+	(*OperationBroadcast)(nil), // 9: collab.v1.OperationBroadcast
+	(*PresenceLeft)(nil),       // 10: collab.v1.PresenceLeft
+	(*PresenceBroadcast)(nil),  // 11: collab.v1.PresenceBroadcast
+	(*PresenceState)(nil),      // 12: collab.v1.PresenceState
+	(*AwarenessSync)(nil),      // 13: collab.v1.AwarenessSync
+	(*DocumentSync)(nil),       // 14: collab.v1.DocumentSync
+	(*MissedOps)(nil),          // 15: collab.v1.MissedOps
+	(*ErrorMessage)(nil),       // 16: collab.v1.ErrorMessage
+	(*v1.Operation)(nil),       // 17: crdt.v1.Operation
+	(*v1.OpID)(nil),            // 18: crdt.v1.OpID
+	(*v1.Snapshot)(nil),        // 19: crdt.v1.Snapshot
 }
 var file_collab_v1_ws_proto_depIdxs = []int32{
-	3,  // 0: collab.v1.ClientMessage.operation_batch:type_name -> collab.v1.OperationBatch
-	4,  // 1: collab.v1.ClientMessage.cursor_move:type_name -> collab.v1.CursorMove
-	5,  // 2: collab.v1.ClientMessage.ping:type_name -> collab.v1.Ping
-	7,  // 3: collab.v1.ServerMessage.operation_broadcast:type_name -> collab.v1.OperationBroadcast
-	9,  // 4: collab.v1.ServerMessage.presence_broadcast:type_name -> collab.v1.PresenceBroadcast
-	10, // 5: collab.v1.ServerMessage.document_sync:type_name -> collab.v1.DocumentSync
-	11, // 6: collab.v1.ServerMessage.missed_ops:type_name -> collab.v1.MissedOps
-	12, // 7: collab.v1.ServerMessage.error:type_name -> collab.v1.ErrorMessage
-	6,  // 8: collab.v1.ServerMessage.pong:type_name -> collab.v1.Pong
-	13, // 9: collab.v1.OperationBatch.operations:type_name -> crdt.v1.Operation
-	14, // 10: collab.v1.CursorMove.anchor:type_name -> crdt.v1.OpID
-	14, // 11: collab.v1.CursorMove.head:type_name -> crdt.v1.OpID
-	13, // 12: collab.v1.OperationBroadcast.operations:type_name -> crdt.v1.Operation
-	4,  // 13: collab.v1.PresenceBroadcast.cursor:type_name -> collab.v1.CursorMove
-	8,  // 14: collab.v1.PresenceBroadcast.left:type_name -> collab.v1.PresenceLeft
-	15, // 15: collab.v1.DocumentSync.snapshot:type_name -> crdt.v1.Snapshot
-	13, // 16: collab.v1.MissedOps.operations:type_name -> crdt.v1.Operation
-	0,  // 17: collab.v1.ErrorMessage.code:type_name -> collab.v1.ErrorMessage.Code
-	18, // [18:18] is the sub-list for method output_type
-	18, // [18:18] is the sub-list for method input_type
-	18, // [18:18] is the sub-list for extension type_name
-	18, // [18:18] is the sub-list for extension extendee
-	0,  // [0:18] is the sub-list for field type_name
+	5,  // 0: collab.v1.ClientMessage.operation_batch:type_name -> collab.v1.OperationBatch
+	6,  // 1: collab.v1.ClientMessage.cursor_move:type_name -> collab.v1.CursorMove
+	4,  // 2: collab.v1.ClientMessage.awareness_update:type_name -> collab.v1.AwarenessUpdate
+	7,  // 3: collab.v1.ClientMessage.ping:type_name -> collab.v1.Ping
+	9,  // 4: collab.v1.ServerMessage.operation_broadcast:type_name -> collab.v1.OperationBroadcast
+	11, // 5: collab.v1.ServerMessage.presence_broadcast:type_name -> collab.v1.PresenceBroadcast
+	14, // 6: collab.v1.ServerMessage.document_sync:type_name -> collab.v1.DocumentSync
+	15, // 7: collab.v1.ServerMessage.missed_ops:type_name -> collab.v1.MissedOps
+	16, // 8: collab.v1.ServerMessage.error:type_name -> collab.v1.ErrorMessage
+	8,  // 9: collab.v1.ServerMessage.pong:type_name -> collab.v1.Pong
+	13, // 10: collab.v1.ServerMessage.awareness_sync:type_name -> collab.v1.AwarenessSync
+	17, // 11: collab.v1.OperationBatch.operations:type_name -> crdt.v1.Operation
+	18, // 12: collab.v1.CursorMove.anchor:type_name -> crdt.v1.OpID
+	18, // 13: collab.v1.CursorMove.head:type_name -> crdt.v1.OpID
+	17, // 14: collab.v1.OperationBroadcast.operations:type_name -> crdt.v1.Operation
+	0,  // 15: collab.v1.PresenceLeft.reason:type_name -> collab.v1.PresenceLeft.Reason
+	6,  // 16: collab.v1.PresenceBroadcast.cursor:type_name -> collab.v1.CursorMove
+	10, // 17: collab.v1.PresenceBroadcast.left:type_name -> collab.v1.PresenceLeft
+	6,  // 18: collab.v1.PresenceState.cursor:type_name -> collab.v1.CursorMove
+	12, // 19: collab.v1.AwarenessSync.states:type_name -> collab.v1.PresenceState
+	19, // 20: collab.v1.DocumentSync.snapshot:type_name -> crdt.v1.Snapshot
+	17, // 21: collab.v1.MissedOps.operations:type_name -> crdt.v1.Operation
+	1,  // 22: collab.v1.ErrorMessage.code:type_name -> collab.v1.ErrorMessage.Code
+	23, // [23:23] is the sub-list for method output_type
+	23, // [23:23] is the sub-list for method input_type
+	23, // [23:23] is the sub-list for extension type_name
+	23, // [23:23] is the sub-list for extension extendee
+	0,  // [0:23] is the sub-list for field type_name
 }
 
 func init() { file_collab_v1_ws_proto_init() }
@@ -1018,6 +1322,7 @@ func file_collab_v1_ws_proto_init() {
 	file_collab_v1_ws_proto_msgTypes[0].OneofWrappers = []any{
 		(*ClientMessage_OperationBatch)(nil),
 		(*ClientMessage_CursorMove)(nil),
+		(*ClientMessage_AwarenessUpdate)(nil),
 		(*ClientMessage_Ping)(nil),
 	}
 	file_collab_v1_ws_proto_msgTypes[1].OneofWrappers = []any{
@@ -1027,8 +1332,9 @@ func file_collab_v1_ws_proto_init() {
 		(*ServerMessage_MissedOps)(nil),
 		(*ServerMessage_Error)(nil),
 		(*ServerMessage_Pong)(nil),
+		(*ServerMessage_AwarenessSync)(nil),
 	}
-	file_collab_v1_ws_proto_msgTypes[8].OneofWrappers = []any{
+	file_collab_v1_ws_proto_msgTypes[9].OneofWrappers = []any{
 		(*PresenceBroadcast_Cursor)(nil),
 		(*PresenceBroadcast_Left)(nil),
 	}
@@ -1037,8 +1343,8 @@ func file_collab_v1_ws_proto_init() {
 		File: protoimpl.DescBuilder{
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_collab_v1_ws_proto_rawDesc), len(file_collab_v1_ws_proto_rawDesc)),
-			NumEnums:      1,
-			NumMessages:   12,
+			NumEnums:      2,
+			NumMessages:   15,
 			NumExtensions: 0,
 			NumServices:   0,
 		},

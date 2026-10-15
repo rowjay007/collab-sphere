@@ -44,6 +44,9 @@ type Subscription interface {
 type Bus interface {
 	Join(docID string, sink Sink) Subscription
 	Publish(docID string, b Batch)
+	// Loopback hands ev to this process's sinks for docID and nothing else.
+	// In-process presence uses it in place of presence-service.
+	Loopback(docID string, ev *presencev1.Event)
 }
 
 // DocChannel carries a document's SequencedOps.

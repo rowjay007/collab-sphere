@@ -49,6 +49,7 @@ message ApplyRequest {
 
 message ApplyResponse {
   repeated Touch missing = 1;
+  repeated Touch superseded = 2;
 }
 
 message JoinRequest {

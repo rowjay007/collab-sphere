@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -113,7 +114,7 @@ func TestConvergence(t *testing.T) {
 		t.Fatalf("client 2 missing peer ops (seed %d): %v", seed, err)
 	}
 
-	server := store.Doc("doc")
+	server := store.Doc(canonicalTestDocumentID("doc"))
 	if server == nil {
 		t.Fatal("store has no document")
 	}
@@ -169,7 +170,7 @@ func TestLateJoinerSync(t *testing.T) {
 	}
 
 	b := dial(t, srv, "doc", 2)
-	if b.syncMsg == nil || b.syncMsg.GetDocumentId() != "doc" {
+	if b.syncMsg == nil || b.syncMsg.GetDocumentId() != canonicalTestDocumentID("doc") {
 		t.Fatalf("late joiner missing DocumentSync: %#v", b.syncMsg)
 	}
 	if b.text() != a.text() {
@@ -294,35 +295,132 @@ func TestProtocolErrors(t *testing.T) {
 
 func TestPresence(t *testing.T) {
 	srv, _ := startHub(t)
-	a := dial(t, srv, "doc", 1)
-	b := dial(t, srv, "doc", 2)
 	ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
 	defer cancel()
+	a := dial(t, srv, "doc", 1)
+	if sync, err := a.firstAwareness(ctx); err != nil || len(sync.GetStates()) != 0 {
+		t.Fatalf("first joiner's AwarenessSync %v, %v", sync, err)
+	}
+	if err := a.sendName("ann"); err != nil {
+		t.Fatal(err)
+	}
+	b := dial(t, srv, "doc", 2)
+	sync, err := b.firstAwareness(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(sync.GetStates()) != 1 || sync.GetStates()[0].GetClient() != 1 || sync.GetStates()[0].GetCursor() != nil {
+		t.Fatalf("joiner's AwarenessSync %v, want client 1 with no cursor", sync)
+	}
+	joinVersion := sync.GetVersion()
 
 	if err := a.sendCursor(crdt.Root, crdt.Root); err != nil {
 		t.Fatal(err)
 	}
+	var cursorVersion uint64
 	if err := b.waitPresence(ctx, func(p *collabv1.PresenceBroadcast) bool {
-		return p.GetClient() == 1 && p.GetCursor() != nil && p.GetCursor().GetAnchor().GetClock() == 0
+		if p.GetClient() == 1 && p.GetCursor() != nil && p.GetDisplayName() == "ann" {
+			cursorVersion = p.GetVersion()
+			return true
+		}
+		return false
 	}); err != nil {
 		t.Fatalf("cursor relay: %v", err)
+	}
+	if cursorVersion <= joinVersion {
+		t.Fatalf("cursor version %d not above the sync's %d", cursorVersion, joinVersion)
 	}
 
 	_ = a.Close()
 	if err := b.waitPresence(ctx, func(p *collabv1.PresenceBroadcast) bool {
-		return p.GetClient() == 1 && p.GetLeft() != nil
+		return p.GetClient() == 1 && p.GetLeft().GetReason() == collabv1.PresenceLeft_REASON_LEAVE && p.GetVersion() > cursorVersion
 	}); err != nil {
 		t.Fatalf("left broadcast: %v", err)
 	}
 
+	c := dial(t, srv, "doc", 3)
 	if err := b.sendCursor(crdt.Root, crdt.Root); err != nil {
 		t.Fatal(err)
 	}
+	if err := c.waitPresence(ctx, func(p *collabv1.PresenceBroadcast) bool { return p.GetClient() == 2 && p.GetCursor() != nil }); err != nil {
+		t.Fatalf("cursor relay to a later joiner: %v", err)
+	}
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	for _, p := range b.presence {
+		if p.GetClient() == 2 {
+			t.Fatalf("client 2 was sent its own presence: %v", p)
+		}
+	}
+}
+
+func TestPresenceJoinerSeesCursorAndName(t *testing.T) {
+	srv, _ := startHub(t)
+	ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
+	defer cancel()
+	b := dial(t, srv, "doc", 2)
+	if err := b.sendName("bea"); err != nil {
+		t.Fatal(err)
+	}
+	if err := b.sendCursor(crdt.Root, crdt.Root); err != nil {
+		t.Fatal(err)
+	}
+	if err := b.sendPing(1); err != nil {
+		t.Fatal(err)
+	}
+	if err := b.waitPong(ctx, 1); err != nil {
+		t.Fatal(err)
+	}
 	late := dial(t, srv, "doc", 3)
-	if err := late.waitPresence(ctx, func(p *collabv1.PresenceBroadcast) bool {
-		return p.GetClient() == 2 && p.GetCursor() != nil
+	sync, err := late.firstAwareness(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(sync.GetStates()) != 1 {
+		t.Fatalf("joiner's AwarenessSync %v", sync)
+	}
+	st := sync.GetStates()[0]
+	if st.GetClient() != 2 || st.GetDisplayName() != "bea" || st.GetCursor() == nil || st.GetVersion() == 0 {
+		t.Fatalf("joiner's AwarenessSync state %v, want client 2 named bea with a cursor", st)
+	}
+
+	if err := late.sendName(strings.Repeat("x", maxNameBytes+1)); err != nil {
+		t.Fatal(err)
+	}
+	if err := late.waitError(ctx, collabv1.ErrorMessage_CODE_MALFORMED_MESSAGE); err != nil {
+		t.Fatalf("oversized name: %v", err)
+	}
+}
+
+func TestDocumentIDCanonicalizationSharesHubOpsAndPresence(t *testing.T) {
+	srv, store := startHub(t)
+	lower := "123e4567-e89b-12d3-a456-426614174000"
+	upper := strings.ToUpper(lower)
+	ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
+	defer cancel()
+
+	a := dial(t, srv, upper, 1)
+	b := dial(t, srv, lower, 2)
+	op, err := a.insertAt(0, 'x')
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := b.waitHas(ctx, []crdt.ID{op.ID}); err != nil {
+		t.Fatalf("lowercase client did not receive uppercase client's op: %v", err)
+	}
+	if err := a.sendName("ann"); err != nil {
+		t.Fatal(err)
+	}
+	if err := a.sendCursor(crdt.Root, crdt.Root); err != nil {
+		t.Fatal(err)
+	}
+	if err := b.waitPresence(ctx, func(p *collabv1.PresenceBroadcast) bool {
+		return p.GetClient() == 1 && p.GetDisplayName() == "ann" && p.GetCursor() != nil
 	}); err != nil {
-		t.Fatalf("joiner existing cursor: %v", err)
+		t.Fatalf("lowercase client did not receive uppercase client's presence: %v", err)
+	}
+	if store.Doc(lower) == nil || store.Doc(upper) != nil {
+		t.Fatalf("documents were not stored under the canonical id")
 	}
 }
 
@@ -337,7 +435,7 @@ func TestAppendFailStopReloads(t *testing.T) {
 	if err := a.waitEchoed(ctx); err != nil {
 		t.Fatal(err)
 	}
-	if got := store.Doc("doc").Text(); got != "A" {
+	if got := store.Doc(canonicalTestDocumentID("doc")).Text(); got != "A" {
 		t.Fatalf("store text %q", got)
 	}
 
@@ -450,6 +548,16 @@ func TestInvalidClientQuery(t *testing.T) {
 	_, _, err := websocket.Dial(ctx, wsURL(srv, "doc", 0), nil)
 	if err == nil {
 		t.Fatal("expected dial to fail for client=0")
+	}
+}
+
+func TestInvalidDocumentID(t *testing.T) {
+	srv, _ := startHub(t)
+	ctx, cancel := context.WithTimeout(t.Context(), 2*time.Second)
+	defer cancel()
+	_, resp, err := websocket.Dial(ctx, rawWSURL(srv, "not-a-uuid", 1), nil)
+	if err == nil || resp == nil || resp.StatusCode != http.StatusBadRequest {
+		t.Fatalf("dial error %v, response %v", err, resp)
 	}
 }
 

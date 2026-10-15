@@ -12,13 +12,15 @@ import (
 
 	"github.com/rowjay007/collab-sphere/pkg/crdt"
 	"github.com/rowjay007/collab-sphere/services/collab-hub/internal/fanout"
+	"github.com/rowjay007/collab-sphere/services/collab-hub/internal/presence"
 )
 
 func registries(t *testing.T, store *MemoryStore, bus fanout.Bus, n int) []*Registry {
 	t.Helper()
+	pres := presence.NewLocal(bus.Loopback)
 	regs := make([]*Registry, n)
 	for i := range regs {
-		regs[i] = NewRegistry(store, bus)
+		regs[i] = NewRegistry(store, bus, pres)
 		t.Cleanup(regs[i].Close)
 	}
 	return regs
@@ -216,7 +218,7 @@ func TestFullPublishQueueNeverBlocksHub(t *testing.T) {
 	// publish queue fills and stays full.
 	bus := fanout.NewRedis(redis.NewClient(&redis.Options{Addr: "127.0.0.1:1"}), "stalled")
 	store := NewMemoryStore()
-	reg := NewRegistry(store, bus)
+	reg := NewRegistry(store, bus, presence.NewLocal(bus.Loopback))
 	reg.readyWait = 10 * time.Millisecond
 	t.Cleanup(reg.Close)
 	alice, _, aliceStream := join(t, ctx, reg, 1)

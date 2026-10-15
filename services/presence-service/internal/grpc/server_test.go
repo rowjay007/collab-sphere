@@ -83,13 +83,17 @@ func TestGRPCJoinApplyList(t *testing.T) {
 	touched, err := client.Apply(ctx, &presencev1.ApplyRequest{Changes: []*presencev1.Change{
 		{Kind: &presencev1.Change_Touch{Touch: &presencev1.Touch{DocumentId: doc, Client: 1, Session: 10}}},
 		{Kind: &presencev1.Change_Touch{Touch: &presencev1.Touch{DocumentId: doc, Client: 1, Session: 99}}},
+		{Kind: &presencev1.Change_Touch{Touch: &presencev1.Touch{DocumentId: doc, Client: 3, Session: 30}}},
 		{Kind: &presencev1.Change_Leave{Leave: &presencev1.Leave{DocumentId: doc, Client: 2, Session: 20}}},
 	}})
 	if err != nil {
 		t.Fatalf("apply: %v", err)
 	}
-	if len(touched.GetMissing()) != 1 || touched.GetMissing()[0].GetSession() != 99 {
+	if len(touched.GetMissing()) != 1 || touched.GetMissing()[0].GetSession() != 30 {
 		t.Fatalf("missing %+v", touched.GetMissing())
+	}
+	if len(touched.GetSuperseded()) != 1 || touched.GetSuperseded()[0].GetSession() != 99 {
+		t.Fatalf("superseded %+v", touched.GetSuperseded())
 	}
 
 	listed, err = client.List(ctx, &presencev1.ListRequest{DocumentId: doc})

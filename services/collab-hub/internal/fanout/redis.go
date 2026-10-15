@@ -19,9 +19,11 @@ import (
 )
 
 const (
-	publishQueue = 1024
-	minBackoff   = 50 * time.Millisecond
-	maxBackoff   = time.Second
+	publishQueue     = 1024
+	minBackoff       = 50 * time.Millisecond
+	maxBackoff       = time.Second
+	defaultPingEvery = 15 * time.Second
+	defaultPongWait  = 5 * time.Second
 )
 
 // Redis is a Bus over Redis Pub/Sub. One connection subscribes to every
@@ -32,6 +34,9 @@ type Redis struct {
 	origin string
 	pubq   chan published
 	wake   chan struct{}
+
+	pingEvery time.Duration
+	pongWait  time.Duration
 
 	mu   sync.Mutex
 	docs map[string]*redisDoc
@@ -75,12 +80,14 @@ type redisSub struct {
 // until Run.
 func NewRedis(rdb *redis.Client, origin string) *Redis {
 	return &Redis{
-		rdb:    rdb,
-		ps:     rdb.Subscribe(context.Background()),
-		origin: origin,
-		pubq:   make(chan published, publishQueue),
-		wake:   make(chan struct{}, 1),
-		docs:   make(map[string]*redisDoc),
+		rdb:       rdb,
+		ps:        rdb.Subscribe(context.Background()),
+		origin:    origin,
+		pubq:      make(chan published, publishQueue),
+		wake:      make(chan struct{}, 1),
+		pingEvery: defaultPingEvery,
+		pongWait:  defaultPongWait,
+		docs:      make(map[string]*redisDoc),
 	}
 }
 
@@ -194,21 +201,42 @@ func (r *Redis) joined(docID string) bool {
 	return r.docs[docID] != nil
 }
 
+// receive reads the subscriber connection and checks its health: it pings
+// every pingEvery, and a pong missing for pongWait means the connection is
+// stalled without having failed, so it is closed and go-redis redials and
+// resubscribes, which resyncs every document.
 func (r *Redis) receive(ctx context.Context) {
 	backoff := minBackoff
+	nextPing := time.Now().Add(r.pingEvery)
+	var pongDue time.Time
 	for ctx.Err() == nil {
-		msg, err := r.ps.Receive(ctx)
-		if err != nil {
-			if ctx.Err() != nil {
-				return
+		if now := time.Now(); pongDue.IsZero() && !now.Before(nextPing) {
+			if err := r.ps.Ping(ctx); err != nil && ctx.Err() == nil {
+				r.subWarn.log("fanout ping", err)
 			}
-			r.subWarn.log("fanout receive", err)
+			pongDue, nextPing = now.Add(r.pongWait), now.Add(r.pingEvery)
+		}
+		msg, err := r.receiveOne(ctx, nextPing, pongDue)
+		if err != nil {
+			switch {
+			case ctx.Err() != nil:
+				return
+			case pongDue.IsZero() && !time.Now().Before(nextPing):
+				continue
+			case !pongDue.IsZero() && !time.Now().Before(pongDue):
+				r.subWarn.log("fanout pong missed, reconnecting", err)
+				pongDue = time.Time{}
+			default:
+				r.subWarn.log("fanout receive", err)
+			}
 			sleep(ctx, backoff)
 			backoff = min(2*backoff, maxBackoff)
 			continue
 		}
 		backoff = minBackoff
 		switch msg := msg.(type) {
+		case *redis.Pong:
+			pongDue = time.Time{}
 		case *redis.Subscription:
 			if msg.Kind == "subscribe" {
 				r.confirm(msg.Channel)
@@ -217,6 +245,19 @@ func (r *Redis) receive(ctx context.Context) {
 			r.dispatch(msg)
 		}
 	}
+}
+
+// receiveOne waits for one message. While no pong is due, the read times out
+// when the next ping is due, which go-redis treats as harmless. While a pong
+// is due, the read runs under a context deadline instead, and go-redis closes
+// the connection when that deadline passes.
+func (r *Redis) receiveOne(ctx context.Context, nextPing, pongDue time.Time) (any, error) {
+	if pongDue.IsZero() {
+		return r.ps.ReceiveTimeout(ctx, max(time.Until(nextPing), time.Millisecond))
+	}
+	ctx, cancel := context.WithDeadline(ctx, pongDue)
+	defer cancel()
+	return r.ps.Receive(ctx)
 }
 
 func (r *Redis) confirm(channel string) {
@@ -257,24 +298,17 @@ func (r *Redis) dispatch(msg *redis.Message) {
 	if !ok {
 		return
 	}
-	r.mu.Lock()
-	var sinks []Sink
-	if d := r.docs[docID]; d != nil {
-		sinks = d.sinkList()
-	}
-	r.mu.Unlock()
-	if len(sinks) == 0 {
-		return
-	}
 	if presence {
 		ev := &presencev1.Event{}
 		if err := proto.Unmarshal([]byte(msg.Payload), ev); err != nil {
 			r.subWarn.log("fanout presence event dropped", err)
 			return
 		}
-		for _, s := range sinks {
-			s.Presence(ev)
-		}
+		r.Loopback(docID, ev)
+		return
+	}
+	sinks := r.sinks(docID)
+	if len(sinks) == 0 {
 		return
 	}
 	origin, b, err := decodeBatch([]byte(msg.Payload))
@@ -288,6 +322,21 @@ func (r *Redis) dispatch(msg *redis.Message) {
 	for _, s := range sinks {
 		s.RemoteOps(b)
 	}
+}
+
+func (r *Redis) Loopback(docID string, ev *presencev1.Event) {
+	for _, s := range r.sinks(docID) {
+		s.Presence(ev)
+	}
+}
+
+func (r *Redis) sinks(docID string) []Sink {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if d := r.docs[docID]; d != nil {
+		return d.sinkList()
+	}
+	return nil
 }
 
 func (d *redisDoc) sinkList() []Sink {

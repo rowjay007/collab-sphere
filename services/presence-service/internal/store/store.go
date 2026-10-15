@@ -20,6 +20,14 @@ type Store struct {
 	ttl time.Duration
 }
 
+type TouchResult uint8
+
+const (
+	TouchMissing TouchResult = iota
+	TouchApplied
+	TouchSuperseded
+)
+
 func New(rdb *redis.Client, ttl time.Duration) *Store {
 	return &Store{rdb: rdb, ttl: ttl}
 }
@@ -45,15 +53,15 @@ func (s *Store) Upsert(ctx context.Context, st *presencev1.State) error {
 	return nil
 }
 
-func (s *Store) Touch(ctx context.Context, t *presencev1.Touch) (bool, error) {
+func (s *Store) Touch(ctx context.Context, t *presencev1.Touch) (TouchResult, error) {
 	n, err := touchScript.Run(ctx, s.rdb, []string{
 		stateKey(t.GetDocumentId(), t.GetClient()),
 		expiryKey,
 	}, uvarint(t.GetSession()), s.ttl.Milliseconds(), expiryMember(t.GetDocumentId(), t.GetClient()), s.pxMillis()).Int64()
 	if err != nil {
-		return false, err
+		return TouchMissing, err
 	}
-	return n == 1, nil
+	return TouchResult(n), nil
 }
 
 func (s *Store) Remove(ctx context.Context, l *presencev1.Leave) error {
