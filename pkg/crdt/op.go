@@ -8,11 +8,14 @@ type Op interface {
 	isOp()
 }
 
-// Insert adds one rune after Parent.
+// Insert adds one rune after Parent. A Copy insert re-creates Parent's
+// character under a new ID, so Value equals Parent's value; restore writes
+// copies because RGA has no undelete.
 type Insert struct {
 	ID     ID
 	Parent ID
 	Value  rune
+	Copy   bool
 }
 
 // OpID returns the operation ID.
@@ -56,4 +59,5 @@ var (
 	ErrInvalidOp = errors.New("crdt: invalid operation")
 	ErrConflict  = errors.New("crdt: conflicting operation")
 	ErrIndex     = errors.New("crdt: index out of range")
+	ErrPending   = errors.New("crdt: document holds pending operations")
 )

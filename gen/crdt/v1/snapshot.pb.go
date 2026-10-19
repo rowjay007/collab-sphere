@@ -75,10 +75,13 @@ func (x *OpID) GetClock() uint64 {
 	return 0
 }
 
+// Insert with copy set re-creates its parent's character under a new ID, so
+// value equals the parent's value. Only version-service writes copies.
 type Insert struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	Parent        *OpID                  `protobuf:"bytes,1,opt,name=parent,proto3" json:"parent,omitempty"`
 	Value         uint32                 `protobuf:"varint,2,opt,name=value,proto3" json:"value,omitempty"`
+	Copy          bool                   `protobuf:"varint,3,opt,name=copy,proto3" json:"copy,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -125,6 +128,13 @@ func (x *Insert) GetValue() uint32 {
 		return x.Value
 	}
 	return 0
+}
+
+func (x *Insert) GetCopy() bool {
+	if x != nil {
+		return x.Copy
+	}
+	return false
 }
 
 type Delete struct {
@@ -321,6 +331,7 @@ type Node struct {
 	Parent        *OpID                  `protobuf:"bytes,2,opt,name=parent,proto3" json:"parent,omitempty"`
 	Value         uint32                 `protobuf:"varint,3,opt,name=value,proto3" json:"value,omitempty"`
 	DeletedBy     []*OpID                `protobuf:"bytes,4,rep,name=deleted_by,json=deletedBy,proto3" json:"deleted_by,omitempty"`
+	Copy          bool                   `protobuf:"varint,5,opt,name=copy,proto3" json:"copy,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -381,6 +392,13 @@ func (x *Node) GetDeletedBy() []*OpID {
 		return x.DeletedBy
 	}
 	return nil
+}
+
+func (x *Node) GetCopy() bool {
+	if x != nil {
+		return x.Copy
+	}
+	return false
 }
 
 // Snapshot is the full replica state. nodes are in document order, so every
@@ -461,10 +479,11 @@ const file_crdt_v1_snapshot_proto_rawDesc = "" +
 	"\x16crdt/v1/snapshot.proto\x12\acrdt.v1\"4\n" +
 	"\x04OpID\x12\x16\n" +
 	"\x06client\x18\x01 \x01(\x04R\x06client\x12\x14\n" +
-	"\x05clock\x18\x02 \x01(\x04R\x05clock\"E\n" +
+	"\x05clock\x18\x02 \x01(\x04R\x05clock\"Y\n" +
 	"\x06Insert\x12%\n" +
 	"\x06parent\x18\x01 \x01(\v2\r.crdt.v1.OpIDR\x06parent\x12\x14\n" +
-	"\x05value\x18\x02 \x01(\rR\x05value\"/\n" +
+	"\x05value\x18\x02 \x01(\rR\x05value\x12\x12\n" +
+	"\x04copy\x18\x03 \x01(\bR\x04copy\"/\n" +
 	"\x06Delete\x12%\n" +
 	"\x06target\x18\x01 \x01(\v2\r.crdt.v1.OpIDR\x06target\"\x88\x01\n" +
 	"\tOperation\x12\x1d\n" +
@@ -474,13 +493,14 @@ const file_crdt_v1_snapshot_proto_rawDesc = "" +
 	"\x04kind\";\n" +
 	"\vVectorEntry\x12\x16\n" +
 	"\x06client\x18\x01 \x01(\x04R\x06client\x12\x14\n" +
-	"\x05clock\x18\x02 \x01(\x04R\x05clock\"\x90\x01\n" +
+	"\x05clock\x18\x02 \x01(\x04R\x05clock\"\xa4\x01\n" +
 	"\x04Node\x12\x1d\n" +
 	"\x02id\x18\x01 \x01(\v2\r.crdt.v1.OpIDR\x02id\x12%\n" +
 	"\x06parent\x18\x02 \x01(\v2\r.crdt.v1.OpIDR\x06parent\x12\x14\n" +
 	"\x05value\x18\x03 \x01(\rR\x05value\x12,\n" +
 	"\n" +
-	"deleted_by\x18\x04 \x03(\v2\r.crdt.v1.OpIDR\tdeletedBy\"\xbf\x01\n" +
+	"deleted_by\x18\x04 \x03(\v2\r.crdt.v1.OpIDR\tdeletedBy\x12\x12\n" +
+	"\x04copy\x18\x05 \x01(\bR\x04copy\"\xbf\x01\n" +
 	"\bSnapshot\x12#\n" +
 	"\x05nodes\x18\x01 \x03(\v2\r.crdt.v1.NodeR\x05nodes\x12,\n" +
 	"\apending\x18\x02 \x03(\v2\x12.crdt.v1.OperationR\apending\x12,\n" +

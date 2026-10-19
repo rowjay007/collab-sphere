@@ -12,6 +12,7 @@ type node struct {
 	id        ID
 	parent    ID
 	value     rune
+	copy      bool
 	children  []ID
 	deletedBy []ID
 }
@@ -91,6 +92,9 @@ func (d *Doc) applyInsert(op Insert) (Status, error) {
 	if !d.Has(op.Parent) && d.collected.Covers(op.Parent) {
 		return 0, fmt.Errorf("%w: parent %s was collected", ErrInvalidOp, op.Parent)
 	}
+	if parent, ok := d.nodes[op.Parent]; ok && op.Copy && parent.value != op.Value {
+		return 0, fmt.Errorf("%w: copy value differs from its parent", ErrInvalidOp)
+	}
 
 	d.observe(op.ID)
 	d.inserts[op.ID] = op
@@ -114,6 +118,9 @@ func validateInsert(op Insert) error {
 	if op.Parent.Client == 0 && op.Parent.Clock != 0 {
 		return fmt.Errorf("%w: malformed parent", ErrInvalidOp)
 	}
+	if op.Copy && op.Parent.IsRoot() {
+		return fmt.Errorf("%w: copy of Root", ErrInvalidOp)
+	}
 	if op.ID.Clock <= op.Parent.Clock {
 		return fmt.Errorf("%w: insert clock does not follow parent", ErrInvalidOp)
 	}
@@ -130,7 +137,7 @@ func (d *Doc) integrate(first Insert) {
 		queue = queue[1:]
 		delete(d.pendingInserts, op.ID)
 
-		n := &node{id: op.ID, parent: op.Parent, value: op.Value}
+		n := &node{id: op.ID, parent: op.Parent, value: op.Value, copy: op.Copy}
 		d.nodes[op.ID] = n
 		if op.Parent.IsRoot() {
 			d.rootChildren = insertIDDescending(d.rootChildren, op.ID)

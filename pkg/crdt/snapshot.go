@@ -20,6 +20,7 @@ func (d *Doc) Snapshot() *crdtv1.Snapshot {
 			Id:     idToProto(n.id),
 			Parent: idToProto(n.parent),
 			Value:  uint32(n.value),
+			Copy:   n.copy,
 		}
 		for _, deleteID := range n.deletedBy {
 			pbNode.DeletedBy = append(pbNode.DeletedBy, idToProto(deleteID))
@@ -74,7 +75,7 @@ func FromSnapshot(snapshot *crdtv1.Snapshot) (*Doc, error) {
 		}
 		id := idFromProto(pbNode.Id)
 		parent := idFromProto(pbNode.Parent)
-		op := Insert{ID: id, Parent: parent, Value: rune(pbNode.Value)}
+		op := Insert{ID: id, Parent: parent, Value: rune(pbNode.Value), Copy: pbNode.Copy}
 		if uint32(op.Value) != pbNode.Value {
 			return nil, fmt.Errorf("%w: invalid rune", ErrInvalidOp)
 		}
@@ -85,8 +86,12 @@ func FromSnapshot(snapshot *crdtv1.Snapshot) (*Doc, error) {
 			return nil, fmt.Errorf("%w: duplicate operation ID %s", ErrInvalidOp, id)
 		}
 		if !parent.IsRoot() {
-			if _, exists := d.nodes[parent]; !exists {
+			parentNode, exists := d.nodes[parent]
+			if !exists {
 				return nil, fmt.Errorf("%w: parent does not precede child", ErrInvalidOp)
+			}
+			if op.Copy && parentNode.value != op.Value {
+				return nil, fmt.Errorf("%w: copy value differs from its parent", ErrInvalidOp)
 			}
 		}
 		if previous, ok := lastChild[parent]; ok && !id.Less(previous) {
@@ -94,7 +99,7 @@ func FromSnapshot(snapshot *crdtv1.Snapshot) (*Doc, error) {
 		}
 		lastChild[parent] = id
 		seen[id] = struct{}{}
-		n := &node{id: id, parent: parent, value: op.Value}
+		n := &node{id: id, parent: parent, value: op.Value, copy: op.Copy}
 		var previousDelete ID
 		for i, pbDeleteID := range pbNode.DeletedBy {
 			if pbDeleteID == nil {
@@ -193,6 +198,7 @@ func OpToProto(op Op) *crdtv1.Operation {
 			Kind: &crdtv1.Operation_Insert{Insert: &crdtv1.Insert{
 				Parent: idToProto(op.Parent),
 				Value:  uint32(op.Value),
+				Copy:   op.Copy,
 			}},
 		}
 	case *Insert:
@@ -235,7 +241,7 @@ func OpFromProto(pbOp *crdtv1.Operation) (Op, error) {
 		if uint32(value) != kind.Insert.Value || !utf8.ValidRune(value) {
 			return nil, fmt.Errorf("%w: invalid rune", ErrInvalidOp)
 		}
-		op := Insert{ID: id, Parent: idFromProto(kind.Insert.Parent), Value: value}
+		op := Insert{ID: id, Parent: idFromProto(kind.Insert.Parent), Value: value, Copy: kind.Insert.Copy}
 		if err := validateInsert(op); err != nil {
 			return nil, err
 		}

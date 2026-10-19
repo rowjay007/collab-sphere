@@ -37,6 +37,18 @@ func (v VersionVector) Covers(id ID) bool {
 	return id.IsRoot() || v[id.Client] >= id.Clock
 }
 
+// CoversAll reports whether v includes every operation o includes. It is
+// exact containment because every document holds a prefix of each replica's
+// operations.
+func (v VersionVector) CoversAll(o VersionVector) bool {
+	for client, clock := range o {
+		if v[client] < clock {
+			return false
+		}
+	}
+	return true
+}
+
 // Clone returns an independent copy of the vector.
 func (v VersionVector) Clone() VersionVector {
 	clone := make(VersionVector, len(v))
