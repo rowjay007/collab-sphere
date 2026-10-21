@@ -26,6 +26,9 @@ type Document struct {
 	SnapshotSeq uint64
 	CreatedAt   time.Time
 	UpdatedAt   time.Time
+	ForkOf      *uuid.UUID
+	ForkSeq     uint64
+	ForkRoot    uuid.UUID
 }
 
 var (
@@ -34,6 +37,8 @@ var (
 	ErrInvalidArgument       = errors.New("document: invalid argument")
 	ErrConflict              = errors.New("document: conflict")
 	ErrReplicaHomedElsewhere = errors.New("document: replica homed elsewhere")
+	ErrOutOfRange            = errors.New("document: out of range")
+	ErrAlreadyExists         = errors.New("document: already exists")
 )
 
 // ConflictError names the op whose (client, clock) is already stored, or

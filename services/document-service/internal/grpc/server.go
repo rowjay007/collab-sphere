@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"strconv"
+	"time"
 
 	"github.com/google/uuid"
 	"google.golang.org/genproto/googleapis/rpc/errdetails"
@@ -117,6 +118,37 @@ func (s *Server) ClaimReplica(ctx context.Context, req *documentv1.ClaimReplicaR
 	return &documentv1.ClaimReplicaResponse{Client: client}, nil
 }
 
+func (s *Server) ForkDocument(ctx context.Context, req *documentv1.ForkDocumentRequest) (*documentv1.Document, error) {
+	id, err := parseID(req.GetSourceId())
+	if err != nil {
+		return nil, err
+	}
+	doc, err := s.store.Fork(ctx, id, req.GetSeq(), req.GetTitle(), req.GetRequestId())
+	if err != nil {
+		return nil, mapError(err)
+	}
+	return toProto(doc), nil
+}
+
+func (s *Server) ListChangedDocuments(ctx context.Context, req *documentv1.ListChangedRequest) (*documentv1.ListChangedResponse, error) {
+	var since time.Time
+	if ts := req.GetSince(); ts != nil {
+		since = ts.AsTime()
+	}
+	docs, next, err := s.store.ListChanged(ctx, since, int(req.GetLimit()))
+	if err != nil {
+		return nil, mapError(err)
+	}
+	out := make([]*documentv1.Document, len(docs))
+	for i, doc := range docs {
+		out[i] = toProto(doc)
+	}
+	return &documentv1.ListChangedResponse{
+		Documents: out,
+		NextSince: timestamppb.New(next),
+	}, nil
+}
+
 func parseID(raw string) (uuid.UUID, error) {
 	id, err := uuid.Parse(raw)
 	if err != nil {
@@ -162,6 +194,10 @@ func mapError(err error) error {
 		return st.Err()
 	case errors.Is(err, domain.ErrInvalidArgument):
 		return status.Error(codes.InvalidArgument, err.Error())
+	case errors.Is(err, domain.ErrOutOfRange):
+		return status.Error(codes.OutOfRange, err.Error())
+	case errors.Is(err, domain.ErrAlreadyExists):
+		return status.Error(codes.AlreadyExists, err.Error())
 	default:
 		return status.Error(codes.Internal, "internal error")
 	}
@@ -172,7 +208,7 @@ func toProto(doc domain.Document) *documentv1.Document {
 	if doc.Status == domain.StatusArchived {
 		status = documentv1.Document_STATUS_ARCHIVED
 	}
-	return &documentv1.Document{
+	out := &documentv1.Document{
 		Id:          doc.ID.String(),
 		Title:       doc.Title,
 		OwnerId:     doc.OwnerID,
@@ -181,5 +217,11 @@ func toProto(doc domain.Document) *documentv1.Document {
 		SnapshotSeq: doc.SnapshotSeq,
 		CreatedAt:   timestamppb.New(doc.CreatedAt),
 		UpdatedAt:   timestamppb.New(doc.UpdatedAt),
+		ForkSeq:     doc.ForkSeq,
+		ForkRoot:    doc.ForkRoot.String(),
 	}
+	if doc.ForkOf != nil {
+		out.ForkOf = doc.ForkOf.String()
+	}
+	return out
 }

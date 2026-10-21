@@ -17,6 +17,8 @@ service DocumentService {
   rpc AppendOperations(AppendOperationsRequest) returns (AppendOperationsResponse);
   rpc ReadOperations(ReadOperationsRequest) returns (ReadOperationsResponse);
   rpc ClaimReplica(ClaimReplicaRequest) returns (ClaimReplicaResponse);
+  rpc ForkDocument(ForkDocumentRequest) returns (Document);
+  rpc ListChangedDocuments(ListChangedRequest) returns (ListChangedResponse);
 }
 
 message Document {
@@ -33,6 +35,9 @@ message Document {
   uint64 snapshot_seq = 6;
   google.protobuf.Timestamp created_at = 7;
   google.protobuf.Timestamp updated_at = 8;
+  string fork_of = 9;
+  uint64 fork_seq = 10;
+  string fork_root = 11;
 }
 
 message CreateDocumentRequest {
@@ -94,4 +99,21 @@ message ClaimReplicaRequest {
 
 message ClaimReplicaResponse {
   uint64 client = 1;
+}
+
+message ForkDocumentRequest {
+  string source_id = 1;
+  uint64 seq = 2;
+  string title = 3;
+  string request_id = 4;
+}
+
+message ListChangedRequest {
+  google.protobuf.Timestamp since = 1;
+  uint32 limit = 2;
+}
+
+message ListChangedResponse {
+  repeated Document documents = 1;
+  google.protobuf.Timestamp next_since = 2;
 }

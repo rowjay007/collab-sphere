@@ -19,13 +19,15 @@ import (
 const _ = grpc.SupportPackageIsVersion9
 
 const (
-	DocumentService_CreateDocument_FullMethodName   = "/document.v1.DocumentService/CreateDocument"
-	DocumentService_GetDocument_FullMethodName      = "/document.v1.DocumentService/GetDocument"
-	DocumentService_ArchiveDocument_FullMethodName  = "/document.v1.DocumentService/ArchiveDocument"
-	DocumentService_LoadState_FullMethodName        = "/document.v1.DocumentService/LoadState"
-	DocumentService_AppendOperations_FullMethodName = "/document.v1.DocumentService/AppendOperations"
-	DocumentService_ReadOperations_FullMethodName   = "/document.v1.DocumentService/ReadOperations"
-	DocumentService_ClaimReplica_FullMethodName     = "/document.v1.DocumentService/ClaimReplica"
+	DocumentService_CreateDocument_FullMethodName       = "/document.v1.DocumentService/CreateDocument"
+	DocumentService_GetDocument_FullMethodName          = "/document.v1.DocumentService/GetDocument"
+	DocumentService_ArchiveDocument_FullMethodName      = "/document.v1.DocumentService/ArchiveDocument"
+	DocumentService_LoadState_FullMethodName            = "/document.v1.DocumentService/LoadState"
+	DocumentService_AppendOperations_FullMethodName     = "/document.v1.DocumentService/AppendOperations"
+	DocumentService_ReadOperations_FullMethodName       = "/document.v1.DocumentService/ReadOperations"
+	DocumentService_ClaimReplica_FullMethodName         = "/document.v1.DocumentService/ClaimReplica"
+	DocumentService_ForkDocument_FullMethodName         = "/document.v1.DocumentService/ForkDocument"
+	DocumentService_ListChangedDocuments_FullMethodName = "/document.v1.DocumentService/ListChangedDocuments"
 )
 
 // DocumentServiceClient is the client API for DocumentService service.
@@ -41,6 +43,8 @@ type DocumentServiceClient interface {
 	AppendOperations(ctx context.Context, in *AppendOperationsRequest, opts ...grpc.CallOption) (*AppendOperationsResponse, error)
 	ReadOperations(ctx context.Context, in *ReadOperationsRequest, opts ...grpc.CallOption) (*ReadOperationsResponse, error)
 	ClaimReplica(ctx context.Context, in *ClaimReplicaRequest, opts ...grpc.CallOption) (*ClaimReplicaResponse, error)
+	ForkDocument(ctx context.Context, in *ForkDocumentRequest, opts ...grpc.CallOption) (*Document, error)
+	ListChangedDocuments(ctx context.Context, in *ListChangedRequest, opts ...grpc.CallOption) (*ListChangedResponse, error)
 }
 
 type documentServiceClient struct {
@@ -121,6 +125,26 @@ func (c *documentServiceClient) ClaimReplica(ctx context.Context, in *ClaimRepli
 	return out, nil
 }
 
+func (c *documentServiceClient) ForkDocument(ctx context.Context, in *ForkDocumentRequest, opts ...grpc.CallOption) (*Document, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(Document)
+	err := c.cc.Invoke(ctx, DocumentService_ForkDocument_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *documentServiceClient) ListChangedDocuments(ctx context.Context, in *ListChangedRequest, opts ...grpc.CallOption) (*ListChangedResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(ListChangedResponse)
+	err := c.cc.Invoke(ctx, DocumentService_ListChangedDocuments_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 // DocumentServiceServer is the server API for DocumentService service.
 // All implementations must embed UnimplementedDocumentServiceServer
 // for forward compatibility.
@@ -134,6 +158,8 @@ type DocumentServiceServer interface {
 	AppendOperations(context.Context, *AppendOperationsRequest) (*AppendOperationsResponse, error)
 	ReadOperations(context.Context, *ReadOperationsRequest) (*ReadOperationsResponse, error)
 	ClaimReplica(context.Context, *ClaimReplicaRequest) (*ClaimReplicaResponse, error)
+	ForkDocument(context.Context, *ForkDocumentRequest) (*Document, error)
+	ListChangedDocuments(context.Context, *ListChangedRequest) (*ListChangedResponse, error)
 	mustEmbedUnimplementedDocumentServiceServer()
 }
 
@@ -164,6 +190,12 @@ func (UnimplementedDocumentServiceServer) ReadOperations(context.Context, *ReadO
 }
 func (UnimplementedDocumentServiceServer) ClaimReplica(context.Context, *ClaimReplicaRequest) (*ClaimReplicaResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method ClaimReplica not implemented")
+}
+func (UnimplementedDocumentServiceServer) ForkDocument(context.Context, *ForkDocumentRequest) (*Document, error) {
+	return nil, status.Error(codes.Unimplemented, "method ForkDocument not implemented")
+}
+func (UnimplementedDocumentServiceServer) ListChangedDocuments(context.Context, *ListChangedRequest) (*ListChangedResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method ListChangedDocuments not implemented")
 }
 func (UnimplementedDocumentServiceServer) mustEmbedUnimplementedDocumentServiceServer() {}
 func (UnimplementedDocumentServiceServer) testEmbeddedByValue()                         {}
@@ -312,6 +344,42 @@ func _DocumentService_ClaimReplica_Handler(srv interface{}, ctx context.Context,
 	return interceptor(ctx, in, info, handler)
 }
 
+func _DocumentService_ForkDocument_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(ForkDocumentRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(DocumentServiceServer).ForkDocument(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: DocumentService_ForkDocument_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(DocumentServiceServer).ForkDocument(ctx, req.(*ForkDocumentRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _DocumentService_ListChangedDocuments_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(ListChangedRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(DocumentServiceServer).ListChangedDocuments(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: DocumentService_ListChangedDocuments_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(DocumentServiceServer).ListChangedDocuments(ctx, req.(*ListChangedRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 // DocumentService_ServiceDesc is the grpc.ServiceDesc for DocumentService service.
 // It's only intended for direct use with grpc.RegisterService,
 // and not to be introspected or modified (even as a copy)
@@ -346,6 +414,14 @@ var DocumentService_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "ClaimReplica",
 			Handler:    _DocumentService_ClaimReplica_Handler,
+		},
+		{
+			MethodName: "ForkDocument",
+			Handler:    _DocumentService_ForkDocument_Handler,
+		},
+		{
+			MethodName: "ListChangedDocuments",
+			Handler:    _DocumentService_ListChangedDocuments_Handler,
 		},
 	},
 	Streams:  []grpc.StreamDesc{},

@@ -133,7 +133,12 @@ func (s *Store) finishCompaction(id uuid.UUID) {
 	s.compactionMu.Unlock()
 }
 
-const documentColumns = `id, title, owner_id, status, op_seq, snapshot_seq, created_at, updated_at`
+const documentColumns = `id, title, owner_id, status, op_seq, snapshot_seq, created_at, updated_at, fork_of, fork_seq, fork_root`
+
+const (
+	defaultChangedLimit = 500
+	maxChangedLimit     = 5000
+)
 
 func (s *Store) Create(ctx context.Context, title, ownerID string) (domain.Document, error) {
 	if title == "" || ownerID == "" {
@@ -175,11 +180,53 @@ func (s *Store) Archive(ctx context.Context, id uuid.UUID) (domain.Document, err
 	return doc, nil
 }
 
+func (s *Store) ListChanged(ctx context.Context, since time.Time, limit int) ([]domain.Document, time.Time, error) {
+	if limit < 0 {
+		return nil, time.Time{}, fmt.Errorf("%w: limit %d", domain.ErrInvalidArgument, limit)
+	}
+	if limit == 0 {
+		limit = defaultChangedLimit
+	}
+	if limit > maxChangedLimit {
+		return nil, time.Time{}, fmt.Errorf("%w: limit %d", domain.ErrInvalidArgument, limit)
+	}
+
+	rows, err := s.pool.Query(ctx, `
+		SELECT `+documentColumns+`
+		FROM documents
+		WHERE status = $1 AND updated_at >= $2
+		ORDER BY updated_at, id
+		LIMIT $3`, domain.StatusActive, since, limit)
+	if err != nil {
+		return nil, time.Time{}, fmt.Errorf("list changed: %w", err)
+	}
+	defer rows.Close()
+
+	docs := make([]domain.Document, 0)
+	for rows.Next() {
+		doc, err := scanDocument(rows)
+		if err != nil {
+			return nil, time.Time{}, err
+		}
+		docs = append(docs, doc)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, time.Time{}, err
+	}
+	next := since
+	if len(docs) > 0 {
+		next = docs[len(docs)-1].UpdatedAt
+	}
+	return docs, next, nil
+}
+
 func scanDocument(row pgx.Row) (domain.Document, error) {
 	var (
 		doc            domain.Document
 		status         string
 		opSeq, snapSeq int64
+		forkOf         *uuid.UUID
+		forkSeq        *int64
 	)
 	if err := row.Scan(
 		&doc.ID,
@@ -190,6 +237,9 @@ func scanDocument(row pgx.Row) (domain.Document, error) {
 		&snapSeq,
 		&doc.CreatedAt,
 		&doc.UpdatedAt,
+		&forkOf,
+		&forkSeq,
+		&doc.ForkRoot,
 	); err != nil {
 		return domain.Document{}, err
 	}
@@ -200,6 +250,10 @@ func scanDocument(row pgx.Row) (domain.Document, error) {
 	doc.Status = parsed
 	doc.OpSeq = uint64(opSeq)
 	doc.SnapshotSeq = uint64(snapSeq)
+	doc.ForkOf = forkOf
+	if forkSeq != nil {
+		doc.ForkSeq = uint64(*forkSeq)
+	}
 	return doc, nil
 }
 

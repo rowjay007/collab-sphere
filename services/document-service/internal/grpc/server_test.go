@@ -294,6 +294,135 @@ func TestGRPCClaimReplica(t *testing.T) {
 	}
 }
 
+func TestGRPCForkAndListChanged(t *testing.T) {
+	st, _ := testdb.Open(t)
+	client, stop := startGRPC(t, st)
+	defer stop()
+	ctx := t.Context()
+
+	src, err := client.CreateDocument(ctx, &documentv1.CreateDocumentRequest{Title: "src", OwnerId: "o"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if src.GetForkRoot() != src.GetId() || src.GetForkOf() != "" || src.GetForkSeq() != 0 {
+		t.Fatalf("created %+v", src)
+	}
+
+	r, err := crdt.NewReplica(41, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	op, err := r.InsertAt(0, 'f')
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := client.AppendOperations(ctx, &documentv1.AppendOperationsRequest{
+		Id:         src.GetId(),
+		Operations: []*crdtv1.Operation{testdb.ProtoFromInsert(op)},
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	fork, err := client.ForkDocument(ctx, &documentv1.ForkDocumentRequest{
+		SourceId:  src.GetId(),
+		Seq:       1,
+		Title:     "branch",
+		RequestId: "grpc-fork",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if fork.GetForkOf() != src.GetId() || fork.GetForkSeq() != 1 || fork.GetForkRoot() != src.GetId() || fork.GetOpSeq() != 1 {
+		t.Fatalf("fork %+v", fork)
+	}
+
+	got, err := client.GetDocument(ctx, &documentv1.GetDocumentRequest{Id: fork.GetId()})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.GetForkOf() != src.GetId() || got.GetForkSeq() != 1 || got.GetForkRoot() != src.GetId() {
+		t.Fatalf("get fork %+v", got)
+	}
+
+	again, err := client.ForkDocument(ctx, &documentv1.ForkDocumentRequest{
+		SourceId:  src.GetId(),
+		Seq:       1,
+		Title:     "branch",
+		RequestId: "grpc-fork",
+	})
+	if err != nil || again.GetId() != fork.GetId() {
+		t.Fatalf("retry = %v, %v", again, err)
+	}
+	_, err = client.ForkDocument(ctx, &documentv1.ForkDocumentRequest{
+		SourceId:  src.GetId(),
+		Seq:       0,
+		Title:     "other",
+		RequestId: "grpc-fork",
+	})
+	if status.Code(err) != codes.AlreadyExists {
+		t.Fatalf("conflict: %v", err)
+	}
+	_, err = client.ForkDocument(ctx, &documentv1.ForkDocumentRequest{
+		SourceId:  src.GetId(),
+		Seq:       2,
+		Title:     "beyond",
+		RequestId: "grpc-beyond",
+	})
+	if status.Code(err) != codes.OutOfRange {
+		t.Fatalf("beyond: %v", err)
+	}
+	_, err = client.ForkDocument(ctx, &documentv1.ForkDocumentRequest{
+		SourceId:  src.GetId(),
+		Seq:       1,
+		Title:     "branch",
+		RequestId: "",
+	})
+	if status.Code(err) != codes.InvalidArgument {
+		t.Fatalf("missing request_id: %v", err)
+	}
+
+	archived, err := client.CreateDocument(ctx, &documentv1.CreateDocumentRequest{Title: "old", OwnerId: "o"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := client.ArchiveDocument(ctx, &documentv1.ArchiveDocumentRequest{Id: archived.GetId()}); err != nil {
+		t.Fatal(err)
+	}
+	_, err = client.ForkDocument(ctx, &documentv1.ForkDocumentRequest{
+		SourceId:  archived.GetId(),
+		Seq:       0,
+		Title:     "nope",
+		RequestId: "grpc-archived",
+	})
+	if status.Code(err) != codes.FailedPrecondition {
+		t.Fatalf("archived: %v", err)
+	}
+
+	listed, err := client.ListChangedDocuments(ctx, &documentv1.ListChangedRequest{Limit: 5000})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if listed.GetNextSince() == nil {
+		t.Fatal("missing next_since")
+	}
+	var sawFork, sawArchived bool
+	for _, doc := range listed.GetDocuments() {
+		if doc.GetId() == fork.GetId() {
+			sawFork = true
+		}
+		if doc.GetId() == archived.GetId() {
+			sawArchived = true
+		}
+	}
+	if !sawFork || sawArchived {
+		t.Fatalf("feed fork=%v archived=%v n=%d", sawFork, sawArchived, len(listed.GetDocuments()))
+	}
+	_, err = client.ListChangedDocuments(ctx, &documentv1.ListChangedRequest{Limit: 5001})
+	if status.Code(err) != codes.InvalidArgument {
+		t.Fatalf("limit: %v", err)
+	}
+}
+
 func startGRPC(t *testing.T, st *store.Store) (documentv1.DocumentServiceClient, func()) {
 	t.Helper()
 	lis := bufconn.Listen(1024 * 1024)
