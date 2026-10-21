@@ -12,6 +12,7 @@ import (
 )
 
 var ErrArchived = errors.New("document archived")
+var ErrUnknownReplica = errors.New("unknown replica")
 
 // ConflictError is an Append refused because the log holds one of Client's
 // op IDs with different content.
@@ -34,6 +35,7 @@ type AppendResult struct {
 
 // Store is the consumer-side persistence seam for a document hub.
 type Store interface {
+	Replica(ctx context.Context, docID string, requested crdt.ClientID) (crdt.ClientID, error)
 	// Load returns the document and the seq of the last op it holds.
 	Load(ctx context.Context, docID string) (*crdt.Doc, uint64, error)
 	Append(ctx context.Context, docID string, ops []crdt.Op) (AppendResult, error)
@@ -46,6 +48,8 @@ type Store interface {
 type MemoryStore struct {
 	mu        sync.Mutex
 	logs      map[string]*memoryLog
+	replicas  map[string]map[crdt.ClientID]struct{}
+	nextID    crdt.ClientID
 	appendErr error
 	loads     atomic.Int64
 }
@@ -57,7 +61,35 @@ type memoryLog struct {
 
 // NewMemoryStore returns an empty in-memory store.
 func NewMemoryStore() *MemoryStore {
-	return &MemoryStore{logs: make(map[string]*memoryLog)}
+	return &MemoryStore{
+		logs:     make(map[string]*memoryLog),
+		replicas: make(map[string]map[crdt.ClientID]struct{}),
+	}
+}
+
+func (s *MemoryStore) Replica(_ context.Context, docID string, requested crdt.ClientID) (crdt.ClientID, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	homes := s.replicas[docID]
+	if homes == nil {
+		homes = make(map[crdt.ClientID]struct{})
+		s.replicas[docID] = homes
+	}
+	if requested != 0 {
+		homes[requested] = struct{}{}
+		return requested, nil
+	}
+	for {
+		s.nextID++
+		if s.nextID == 0 {
+			continue
+		}
+		if _, exists := homes[s.nextID]; exists {
+			continue
+		}
+		homes[s.nextID] = struct{}{}
+		return s.nextID, nil
+	}
 }
 
 func (s *MemoryStore) log(docID string) *memoryLog {

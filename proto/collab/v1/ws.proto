@@ -101,6 +101,7 @@ message DocumentSync {
   string document_id = 1;
   crdt.v1.Snapshot snapshot = 2;
   uint64 seq = 3;
+  uint64 client = 4;
 }
 
 // The ops a resuming client missed, seqs first_seq..first_seq+len-1. seq is
@@ -127,6 +128,8 @@ message ErrorMessage {
     CODE_UNAVAILABLE = 7;
     // A newer connection with this client ID joined the hub.
     CODE_SUPERSEDED = 8;
+    // The requested replica is homed in another document in this fork tree.
+    CODE_UNKNOWN_REPLICA = 9;
   }
   Code code = 1;
   string message = 2;

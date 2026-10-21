@@ -139,10 +139,11 @@ func (s *Store) Create(ctx context.Context, title, ownerID string) (domain.Docum
 	if title == "" || ownerID == "" {
 		return domain.Document{}, fmt.Errorf("%w: title and owner_id are required", domain.ErrInvalidArgument)
 	}
+	id := uuid.New()
 	row := s.pool.QueryRow(ctx, `
-		INSERT INTO documents (title, owner_id)
-		VALUES ($1, $2)
-		RETURNING `+documentColumns, title, ownerID)
+		INSERT INTO documents (id, title, owner_id, fork_root)
+		VALUES ($1, $2, $3, $1)
+		RETURNING `+documentColumns, id, title, ownerID)
 	return scanDocument(row)
 }
 

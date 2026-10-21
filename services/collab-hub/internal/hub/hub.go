@@ -368,7 +368,7 @@ func (h *Hub) handleJoin(ev joinEvent) bool {
 			return false
 		}
 	}
-	frames, err := h.joinFrames(ev.resume, ev.seq)
+	frames, err := h.joinFrames(ev.peer.id, ev.resume, ev.seq)
 	if err != nil {
 		ev.peer.TrySend(EncodeError(collabv1.ErrorMessage_CODE_UNAVAILABLE, "document log unavailable"))
 		ev.reply <- ErrUnavailable
@@ -478,7 +478,7 @@ func (h *Hub) resyncPresence() {
 // is split into frames of at most missedFrameOps ops with contiguous
 // first_seq, and every frame carries seq D so the client knows when it has
 // them all. It is sent even when empty.
-func (h *Hub) joinFrames(resume bool, seq uint64) ([][]byte, error) {
+func (h *Hub) joinFrames(client crdt.ClientID, resume bool, seq uint64) ([][]byte, error) {
 	d := h.seq.Delivered()
 	if !resume || d-seq > h.registry.maxReplay {
 		return [][]byte{mustMarshal(&collabv1.ServerMessage{
@@ -486,6 +486,7 @@ func (h *Hub) joinFrames(resume bool, seq uint64) ([][]byte, error) {
 				DocumentId: h.docID,
 				Snapshot:   h.doc.Snapshot(),
 				Seq:        d,
+				Client:     uint64(client),
 			}},
 		})}, nil
 	}
@@ -561,6 +562,10 @@ func (h *Hub) applyOps(ev opsEvent) []crdt.Op {
 	for _, op := range ev.ops {
 		if op.OpID().Client != ev.id {
 			h.rejectOperation(p, collabv1.ErrorMessage_CODE_CLIENT_MISMATCH, "operation client does not match connection")
+			break
+		}
+		if insert, ok := op.(crdt.Insert); ok && insert.Copy {
+			h.rejectOperation(p, collabv1.ErrorMessage_CODE_INVALID_OPERATION, "copy inserts are server-only")
 			break
 		}
 		clock := op.OpID().Clock

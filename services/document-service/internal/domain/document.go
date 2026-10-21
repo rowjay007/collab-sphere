@@ -29,10 +29,11 @@ type Document struct {
 }
 
 var (
-	ErrNotFound        = errors.New("document: not found")
-	ErrArchived        = errors.New("document: archived")
-	ErrInvalidArgument = errors.New("document: invalid argument")
-	ErrConflict        = errors.New("document: conflict")
+	ErrNotFound              = errors.New("document: not found")
+	ErrArchived              = errors.New("document: archived")
+	ErrInvalidArgument       = errors.New("document: invalid argument")
+	ErrConflict              = errors.New("document: conflict")
+	ErrReplicaHomedElsewhere = errors.New("document: replica homed elsewhere")
 )
 
 // ConflictError names the op whose (client, clock) is already stored, or

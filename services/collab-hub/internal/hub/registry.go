@@ -21,6 +21,7 @@ type Registry struct {
 	maxReplay uint64
 	mu        sync.Mutex
 	hubs      map[string]*Hub
+	replicas  map[replicaKey]struct{}
 	closed    bool
 
 	loops         sync.WaitGroup
@@ -39,7 +40,33 @@ func NewRegistry(store Store, bus fanout.Bus, pres Presence) *Registry {
 		readyWait: defaultReadyWait,
 		maxReplay: defaultMaxReplay,
 		hubs:      make(map[string]*Hub),
+		replicas:  make(map[replicaKey]struct{}),
 	}
+}
+
+type replicaKey struct {
+	docID  string
+	client crdt.ClientID
+}
+
+func (r *Registry) Replica(ctx context.Context, docID string, requested crdt.ClientID) (crdt.ClientID, error) {
+	if requested != 0 {
+		key := replicaKey{docID: docID, client: requested}
+		r.mu.Lock()
+		_, ok := r.replicas[key]
+		r.mu.Unlock()
+		if ok {
+			return requested, nil
+		}
+	}
+	client, err := r.store.Replica(ctx, docID, requested)
+	if err != nil {
+		return 0, err
+	}
+	r.mu.Lock()
+	r.replicas[replicaKey{docID: docID, client: client}] = struct{}{}
+	r.mu.Unlock()
+	return client, nil
 }
 
 // Session is one client's attachment to the hub it joined. Every later

@@ -379,22 +379,29 @@ func (s *Stack) Dial(ctx context.Context, docID string, client crdt.ClientID) *c
 // DialHub joins hub i without auto-reconnect.
 func (s *Stack) DialHub(ctx context.Context, docID string, client crdt.ClientID, i int) *collabclient.Client {
 	s.t.Helper()
-	return s.dial(ctx, docID, client, collabclient.Options{URLs: []string{s.HubURL(i)}})
+	return s.dial(ctx, docID, collabclient.Options{URLs: []string{s.HubURL(i)}, Client: client})
 }
 
 // DialAuto joins hub i with auto-reconnect rotating through every hub after it.
 func (s *Stack) DialAuto(ctx context.Context, docID string, client crdt.ClientID, i int) *collabclient.Client {
 	s.t.Helper()
 	urls := s.HubURLs()
-	return s.dial(ctx, docID, client, collabclient.Options{
+	return s.dial(ctx, docID, collabclient.Options{
 		URLs:          append(urls[i:], urls[:i]...),
 		AutoReconnect: true,
+		Client:        client,
 	})
 }
 
-func (s *Stack) dial(ctx context.Context, docID string, client crdt.ClientID, opts collabclient.Options) *collabclient.Client {
+// DialAllocated joins hub i without supplying a replica ID.
+func (s *Stack) DialAllocated(ctx context.Context, docID string, i int) *collabclient.Client {
 	s.t.Helper()
-	c, err := collabclient.DialWith(ctx, docID, client, opts)
+	return s.dial(ctx, docID, collabclient.Options{URLs: []string{s.HubURL(i)}})
+}
+
+func (s *Stack) dial(ctx context.Context, docID string, opts collabclient.Options) *collabclient.Client {
+	s.t.Helper()
+	c, err := collabclient.DialWith(ctx, docID, opts)
 	if err != nil {
 		s.t.Fatal(err)
 	}

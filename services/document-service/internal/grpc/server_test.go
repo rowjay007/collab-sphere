@@ -5,6 +5,7 @@ import (
 	"net"
 	"testing"
 
+	"github.com/google/uuid"
 	"google.golang.org/genproto/googleapis/rpc/errdetails"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
@@ -248,6 +249,48 @@ func TestGRPCAppendSeqsAndReadOperations(t *testing.T) {
 	}
 	if archived.GetFirstSeq() != 1 || len(archived.GetOperations()) != 3 {
 		t.Fatalf("archived n=%d", len(archived.GetOperations()))
+	}
+}
+
+func TestGRPCClaimReplica(t *testing.T) {
+	st, pool := testdb.Open(t)
+	client, stop := startGRPC(t, st)
+	defer stop()
+	ctx := t.Context()
+	home, err := client.CreateDocument(ctx, &documentv1.CreateDocumentRequest{Title: "home", OwnerId: "o"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	allocated, err := client.ClaimReplica(ctx, &documentv1.ClaimReplicaRequest{DocumentId: home.GetId()})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if allocated.GetClient() == 0 {
+		t.Fatal("allocated zero replica")
+	}
+	claimed, err := client.ClaimReplica(ctx, &documentv1.ClaimReplicaRequest{DocumentId: home.GetId(), Client: 90})
+	if err != nil || claimed.GetClient() != 90 {
+		t.Fatalf("claim = %v, %v", claimed, err)
+	}
+
+	branch := uuid.New()
+	if _, err := pool.Exec(ctx, `
+		INSERT INTO documents (id, title, owner_id, fork_root)
+		VALUES ($1, 'branch', 'o', $2)`, branch, home.GetId()); err != nil {
+		t.Fatal(err)
+	}
+	_, err = client.ClaimReplica(ctx, &documentv1.ClaimReplicaRequest{DocumentId: branch.String(), Client: 90})
+	if status.Code(err) != codes.FailedPrecondition {
+		t.Fatalf("branch claim error = %v", err)
+	}
+	var info *errdetails.ErrorInfo
+	for _, detail := range status.Convert(err).Details() {
+		if candidate, ok := detail.(*errdetails.ErrorInfo); ok {
+			info = candidate
+		}
+	}
+	if info.GetReason() != docgrpc.ReplicaHomedElsewhereReason {
+		t.Fatalf("claim detail = %v", info)
 	}
 }
 

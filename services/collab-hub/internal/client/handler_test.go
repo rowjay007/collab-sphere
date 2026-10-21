@@ -572,3 +572,71 @@ func TestInvalidSeqQuery(t *testing.T) {
 		}
 	}
 }
+
+func TestUnknownReplicaRefused(t *testing.T) {
+	store := &refusingReplicaStore{MemoryStore: hub.NewMemoryStore()}
+	reg := localRegistry(store)
+	t.Cleanup(reg.Close)
+	mux := http.NewServeMux()
+	mux.Handle("GET /ws/{docID}", Handler(reg))
+	srv := httptest.NewServer(mux)
+	t.Cleanup(srv.Close)
+
+	conn, _, err := websocket.Dial(t.Context(), wsURL(srv, "doc", 91), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer conn.CloseNow()
+	msg := readMessage(t, conn)
+	if msg.GetError().GetCode() != collabv1.ErrorMessage_CODE_UNKNOWN_REPLICA {
+		t.Fatalf("error = %v", msg.GetError())
+	}
+	if _, _, err := conn.Read(t.Context()); err == nil {
+		t.Fatal("connection remained open after refusal")
+	}
+}
+
+func TestResumeWithoutReplicaRefused(t *testing.T) {
+	srv, _ := startHub(t)
+	u, err := url.Parse(wsURL(srv, "doc", 1))
+	if err != nil {
+		t.Fatal(err)
+	}
+	q := u.Query()
+	q.Del("client")
+	q.Set("seq", "0")
+	u.RawQuery = q.Encode()
+	conn, _, err := websocket.Dial(t.Context(), u.String(), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer conn.CloseNow()
+	msg := readMessage(t, conn)
+	if msg.GetError().GetCode() != collabv1.ErrorMessage_CODE_INVALID_RESUME {
+		t.Fatalf("error = %v", msg.GetError())
+	}
+}
+
+type refusingReplicaStore struct {
+	*hub.MemoryStore
+}
+
+func (s *refusingReplicaStore) Replica(context.Context, string, crdt.ClientID) (crdt.ClientID, error) {
+	return 0, hub.ErrUnknownReplica
+}
+
+func readMessage(t *testing.T, conn *websocket.Conn) *collabv1.ServerMessage {
+	t.Helper()
+	typ, data, err := conn.Read(t.Context())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if typ != websocket.MessageBinary {
+		t.Fatalf("message type = %v", typ)
+	}
+	msg := &collabv1.ServerMessage{}
+	if err := proto.Unmarshal(data, msg); err != nil {
+		t.Fatal(err)
+	}
+	return msg
+}

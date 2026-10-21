@@ -64,6 +64,8 @@ type Options struct {
 	// AutoReconnect reconnects in the background when the connection ends
 	// for any reason other than Close or Disconnect.
 	AutoReconnect bool
+	// Client is an existing replica ID. Zero asks the hub to allocate one.
+	Client crdt.ClientID
 }
 
 type state int
@@ -146,18 +148,18 @@ type departure struct {
 // Dial connects to baseURL (ws:// or wss://) without auto-reconnect and
 // waits for the initial DocumentSync before returning.
 func Dial(ctx context.Context, baseURL, docID string, client crdt.ClientID) (*Client, error) {
-	return DialWith(ctx, docID, client, Options{URLs: []string{baseURL}})
+	return DialWith(ctx, docID, Options{URLs: []string{baseURL}, Client: client})
 }
 
 // DialWith tries each URL in order until one hub sends its DocumentSync.
-func DialWith(ctx context.Context, docID string, client crdt.ClientID, opts Options) (*Client, error) {
+func DialWith(ctx context.Context, docID string, opts Options) (*Client, error) {
 	if len(opts.URLs) == 0 {
 		return nil, errors.New("collabclient: no hub URLs")
 	}
 	life, stop := context.WithCancel(context.Background())
 	c := &Client{
 		docID:     docID,
-		id:        client,
+		id:        opts.Client,
 		opts:      opts,
 		life:      life,
 		stop:      stop,
@@ -430,6 +432,13 @@ func (c *Client) Seq() uint64 {
 	return c.seq
 }
 
+// ID returns the replica ID supplied by the caller or allocated by the hub.
+func (c *Client) ID() crdt.ClientID {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.id
+}
+
 func (c *Client) Snapshot() *crdtv1.Snapshot {
 	c.mu.Lock()
 	defer c.mu.Unlock()
@@ -661,9 +670,9 @@ func (c *Client) joinURL(base string) (string, error) {
 	}
 	u = u.JoinPath("ws", c.docID)
 	c.epoch = max(c.epoch+1, uint64(time.Now().UnixMilli()))
-	q := url.Values{
-		"client": {strconv.FormatUint(uint64(c.id), 10)},
-		"conn":   {strconv.FormatUint(c.epoch, 10)},
+	q := url.Values{"conn": {strconv.FormatUint(c.epoch, 10)}}
+	if c.id != 0 {
+		q.Set("client", strconv.FormatUint(uint64(c.id), 10))
 	}
 	if c.replica != nil {
 		q.Set("seq", strconv.FormatUint(c.seq, 10))
@@ -703,6 +712,14 @@ func (c *Client) joinFrame(msg *collabv1.ServerMessage) (bool, error) {
 // rebuild replaces the replica with the snapshot plus the unacked ops it
 // does not hold, re-applied in order. The ones it holds are acked.
 func (c *Client) rebuild(sync *collabv1.DocumentSync) error {
+	client := crdt.ClientID(sync.GetClient())
+	if client == 0 {
+		return fmt.Errorf("%w: DocumentSync omitted client", errBrokenStream)
+	}
+	if c.id != 0 && c.id != client {
+		return fmt.Errorf("%w: DocumentSync changed client from %d to %d", errBrokenStream, c.id, client)
+	}
+	c.id = client
 	doc, err := crdt.FromSnapshot(sync.GetSnapshot())
 	if err != nil {
 		return fmt.Errorf("%w: %v", errBrokenStream, err)

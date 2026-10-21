@@ -25,6 +25,7 @@ const (
 	DocumentService_LoadState_FullMethodName        = "/document.v1.DocumentService/LoadState"
 	DocumentService_AppendOperations_FullMethodName = "/document.v1.DocumentService/AppendOperations"
 	DocumentService_ReadOperations_FullMethodName   = "/document.v1.DocumentService/ReadOperations"
+	DocumentService_ClaimReplica_FullMethodName     = "/document.v1.DocumentService/ClaimReplica"
 )
 
 // DocumentServiceClient is the client API for DocumentService service.
@@ -39,6 +40,7 @@ type DocumentServiceClient interface {
 	LoadState(ctx context.Context, in *LoadStateRequest, opts ...grpc.CallOption) (*LoadStateResponse, error)
 	AppendOperations(ctx context.Context, in *AppendOperationsRequest, opts ...grpc.CallOption) (*AppendOperationsResponse, error)
 	ReadOperations(ctx context.Context, in *ReadOperationsRequest, opts ...grpc.CallOption) (*ReadOperationsResponse, error)
+	ClaimReplica(ctx context.Context, in *ClaimReplicaRequest, opts ...grpc.CallOption) (*ClaimReplicaResponse, error)
 }
 
 type documentServiceClient struct {
@@ -109,6 +111,16 @@ func (c *documentServiceClient) ReadOperations(ctx context.Context, in *ReadOper
 	return out, nil
 }
 
+func (c *documentServiceClient) ClaimReplica(ctx context.Context, in *ClaimReplicaRequest, opts ...grpc.CallOption) (*ClaimReplicaResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(ClaimReplicaResponse)
+	err := c.cc.Invoke(ctx, DocumentService_ClaimReplica_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 // DocumentServiceServer is the server API for DocumentService service.
 // All implementations must embed UnimplementedDocumentServiceServer
 // for forward compatibility.
@@ -121,6 +133,7 @@ type DocumentServiceServer interface {
 	LoadState(context.Context, *LoadStateRequest) (*LoadStateResponse, error)
 	AppendOperations(context.Context, *AppendOperationsRequest) (*AppendOperationsResponse, error)
 	ReadOperations(context.Context, *ReadOperationsRequest) (*ReadOperationsResponse, error)
+	ClaimReplica(context.Context, *ClaimReplicaRequest) (*ClaimReplicaResponse, error)
 	mustEmbedUnimplementedDocumentServiceServer()
 }
 
@@ -148,6 +161,9 @@ func (UnimplementedDocumentServiceServer) AppendOperations(context.Context, *App
 }
 func (UnimplementedDocumentServiceServer) ReadOperations(context.Context, *ReadOperationsRequest) (*ReadOperationsResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method ReadOperations not implemented")
+}
+func (UnimplementedDocumentServiceServer) ClaimReplica(context.Context, *ClaimReplicaRequest) (*ClaimReplicaResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method ClaimReplica not implemented")
 }
 func (UnimplementedDocumentServiceServer) mustEmbedUnimplementedDocumentServiceServer() {}
 func (UnimplementedDocumentServiceServer) testEmbeddedByValue()                         {}
@@ -278,6 +294,24 @@ func _DocumentService_ReadOperations_Handler(srv interface{}, ctx context.Contex
 	return interceptor(ctx, in, info, handler)
 }
 
+func _DocumentService_ClaimReplica_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(ClaimReplicaRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(DocumentServiceServer).ClaimReplica(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: DocumentService_ClaimReplica_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(DocumentServiceServer).ClaimReplica(ctx, req.(*ClaimReplicaRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 // DocumentService_ServiceDesc is the grpc.ServiceDesc for DocumentService service.
 // It's only intended for direct use with grpc.RegisterService,
 // and not to be introspected or modified (even as a copy)
@@ -308,6 +342,10 @@ var DocumentService_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "ReadOperations",
 			Handler:    _DocumentService_ReadOperations_Handler,
+		},
+		{
+			MethodName: "ClaimReplica",
+			Handler:    _DocumentService_ClaimReplica_Handler,
 		},
 	},
 	Streams:  []grpc.StreamDesc{},

@@ -52,6 +52,7 @@ func syncAt(seq uint64) *collabv1.ServerMessage {
 	return &collabv1.ServerMessage{Payload: &collabv1.ServerMessage_DocumentSync{DocumentSync: &collabv1.DocumentSync{
 		Snapshot: crdt.New().Snapshot(),
 		Seq:      seq,
+		Client:   1,
 	}}}
 }
 

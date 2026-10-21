@@ -50,7 +50,8 @@ func serveCounting(t *testing.T, store hub.Store) (string, *atomic.Int64) {
 
 func dialWith(t *testing.T, ctx context.Context, id crdt.ClientID, opts collabclient.Options) *collabclient.Client {
 	t.Helper()
-	c, err := collabclient.DialWith(ctx, canonicalTestDocumentID("doc"), id, opts)
+	opts.Client = id
+	c, err := collabclient.DialWith(ctx, canonicalTestDocumentID("doc"), opts)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -353,6 +354,7 @@ func stalledHub(t *testing.T, release <-chan struct{}) *httptest.Server {
 		Payload: &collabv1.ServerMessage_DocumentSync{DocumentSync: &collabv1.DocumentSync{
 			DocumentId: canonicalTestDocumentID("doc"),
 			Snapshot:   crdt.New().Snapshot(),
+			Client:     1,
 		}},
 	})
 	if err != nil {
@@ -460,14 +462,37 @@ func TestClientArchivedJoinIsTerminal(t *testing.T) {
 	defer cancel()
 	url, attempts := serveCounting(t, archivedLoadStore{Store: hub.NewMemoryStore()})
 
-	_, err := collabclient.DialWith(ctx, canonicalTestDocumentID("doc"), 1, collabclient.Options{
+	_, err := collabclient.DialWith(ctx, canonicalTestDocumentID("doc"), collabclient.Options{
 		URLs:          []string{url, url},
 		AutoReconnect: true,
+		Client:        1,
 	})
 	if err == nil {
 		t.Fatal("DialWith succeeded for an archived document")
 	}
 	if got := attempts.Load(); got != 1 {
 		t.Fatalf("connection attempts = %d, want 1", got)
+	}
+}
+
+func TestClientAllocatesAndReusesReplicaOnReconnect(t *testing.T) {
+	url, _ := serveCounting(t, hub.NewMemoryStore())
+	ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
+	defer cancel()
+	c, err := collabclient.DialWith(ctx, canonicalTestDocumentID("doc"), collabclient.Options{URLs: []string{url}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { c.Close() })
+	id := c.ID()
+	if id == 0 {
+		t.Fatal("allocated client ID is zero")
+	}
+	c.Disconnect()
+	if err := c.Reconnect(ctx, url); err != nil {
+		t.Fatal(err)
+	}
+	if c.ID() != id {
+		t.Fatalf("client ID changed from %d to %d", id, c.ID())
 	}
 }

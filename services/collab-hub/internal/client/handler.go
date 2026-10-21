@@ -26,7 +26,7 @@ const (
 	keepaliveInterval = 30 * time.Second
 )
 
-// Handler serves GET /ws/{docID}?client=<nonzero uint64>[&seq=<uint64>][&conn=<uint64>].
+// Handler serves GET /ws/{docID}?[client=<nonzero uint64>][&seq=<uint64>][&conn=<uint64>].
 // seq is the last seq a resuming client holds; without it the join is fresh.
 // conn is the client's connection count, its presence epoch; absent or
 // invalid means zero.
@@ -39,7 +39,7 @@ func Handler(reg *hub.Registry) http.Handler {
 		}
 		docID := documentID.String()
 		query := r.URL.Query()
-		clientID, err := parseClient(query.Get("client"))
+		clientID, err := parseClient(query.Get("client"), query.Has("client"))
 		if err != nil {
 			http.Error(w, "invalid client", http.StatusBadRequest)
 			return
@@ -60,6 +60,20 @@ func Handler(reg *hub.Registry) http.Handler {
 		}
 		conn.SetReadLimit(readLimit)
 		defer conn.CloseNow()
+
+		if resume && clientID == 0 {
+			refuse(r.Context(), conn, collabv1.ErrorMessage_CODE_INVALID_RESUME, "resume requires a client")
+			return
+		}
+		clientID, err = reg.Replica(r.Context(), docID, clientID)
+		if err != nil {
+			if errors.Is(err, hub.ErrUnknownReplica) {
+				refuse(r.Context(), conn, collabv1.ErrorMessage_CODE_UNKNOWN_REPLICA, "unknown replica")
+			} else {
+				refuse(r.Context(), conn, collabv1.ErrorMessage_CODE_UNAVAILABLE, "replica service unavailable")
+			}
+			return
+		}
 
 		epoch, _ := strconv.ParseUint(query.Get("conn"), 10, 64)
 		peer := hub.NewPeer(clientID, epoch)
@@ -90,12 +104,22 @@ func Handler(reg *hub.Registry) http.Handler {
 	})
 }
 
-func parseClient(s string) (crdt.ClientID, error) {
+func parseClient(s string, present bool) (crdt.ClientID, error) {
+	if !present {
+		return 0, nil
+	}
 	n, err := strconv.ParseUint(s, 10, 64)
 	if err != nil || n == 0 {
 		return 0, strconv.ErrSyntax
 	}
 	return crdt.ClientID(n), nil
+}
+
+func refuse(ctx context.Context, conn *websocket.Conn, code collabv1.ErrorMessage_Code, message string) {
+	writeCtx, cancel := context.WithTimeout(ctx, writeTimeout)
+	defer cancel()
+	_ = conn.Write(writeCtx, websocket.MessageBinary, hub.EncodeError(code, message))
+	_ = conn.Close(websocket.StatusPolicyViolation, message)
 }
 
 func writePump(ctx context.Context, conn *websocket.Conn, peer *hub.Peer) {

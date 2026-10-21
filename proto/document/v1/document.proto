@@ -16,6 +16,7 @@ service DocumentService {
   rpc LoadState(LoadStateRequest) returns (LoadStateResponse);
   rpc AppendOperations(AppendOperationsRequest) returns (AppendOperationsResponse);
   rpc ReadOperations(ReadOperationsRequest) returns (ReadOperationsResponse);
+  rpc ClaimReplica(ClaimReplicaRequest) returns (ClaimReplicaResponse);
 }
 
 message Document {
@@ -84,4 +85,13 @@ message ReadOperationsResponse {
   uint64 first_seq = 1;
   repeated crdt.v1.Operation operations = 2;
   uint64 op_seq = 3;
+}
+
+message ClaimReplicaRequest {
+  string document_id = 1;
+  uint64 client = 2;
+}
+
+message ClaimReplicaResponse {
+  uint64 client = 1;
 }

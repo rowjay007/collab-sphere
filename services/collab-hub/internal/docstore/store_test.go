@@ -91,6 +91,33 @@ type conflictingClient struct {
 	err error
 }
 
+type replicaClient struct {
+	documentv1.DocumentServiceClient
+	client uint64
+	err    error
+}
+
+func (c replicaClient) ClaimReplica(context.Context, *documentv1.ClaimReplicaRequest, ...grpc.CallOption) (*documentv1.ClaimReplicaResponse, error) {
+	return &documentv1.ClaimReplicaResponse{Client: c.client}, c.err
+}
+
+func TestReplicaClaim(t *testing.T) {
+	got, err := New(replicaClient{client: 44}).Replica(t.Context(), "doc", 44)
+	if err != nil || got != 44 {
+		t.Fatalf("Replica = %d, %v", got, err)
+	}
+	st, err := status.New(codes.FailedPrecondition, "homed elsewhere").WithDetails(&errdetails.ErrorInfo{
+		Reason: replicaHomedElsewhereReason,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = New(replicaClient{err: st.Err()}).Replica(t.Context(), "doc", 44)
+	if !errors.Is(err, hub.ErrUnknownReplica) {
+		t.Fatalf("Replica error = %v", err)
+	}
+}
+
 func (c conflictingClient) AppendOperations(context.Context, *documentv1.AppendOperationsRequest, ...grpc.CallOption) (*documentv1.AppendOperationsResponse, error) {
 	return nil, c.err
 }

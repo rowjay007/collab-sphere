@@ -16,7 +16,10 @@ import (
 	"github.com/rowjay007/collab-sphere/services/collab-hub/internal/hub"
 )
 
-const conflictReason = "OP_CONFLICT"
+const (
+	conflictReason              = "OP_CONFLICT"
+	replicaHomedElsewhereReason = "REPLICA_HOMED_ELSEWHERE"
+)
 
 // Store loads, appends and reads document state through DocumentService.
 type Store struct {
@@ -26,6 +29,20 @@ type Store struct {
 // New wraps a document-service gRPC client as a hub.Store.
 func New(client documentv1.DocumentServiceClient) *Store {
 	return &Store{client: client}
+}
+
+func (s *Store) Replica(ctx context.Context, docID string, requested crdt.ClientID) (crdt.ClientID, error) {
+	resp, err := s.client.ClaimReplica(ctx, &documentv1.ClaimReplicaRequest{
+		DocumentId: docID,
+		Client:     uint64(requested),
+	})
+	if err != nil {
+		if hasErrorReason(err, codes.FailedPrecondition, replicaHomedElsewhereReason) {
+			return 0, hub.ErrUnknownReplica
+		}
+		return 0, err
+	}
+	return crdt.ClientID(resp.GetClient()), nil
 }
 
 // Load restores a document from the latest snapshot plus subsequent ops.
@@ -103,6 +120,19 @@ func conflictClient(err error) (crdt.ClientID, bool) {
 		return crdt.ClientID(client), true
 	}
 	return 0, false
+}
+
+func hasErrorReason(err error, code codes.Code, reason string) bool {
+	st, ok := status.FromError(err)
+	if !ok || st.Code() != code {
+		return false
+	}
+	for _, d := range st.Details() {
+		if info, ok := d.(*errdetails.ErrorInfo); ok && info.GetReason() == reason {
+			return true
+		}
+	}
+	return false
 }
 
 // ReadOperations reads up to limit ops after seq after.

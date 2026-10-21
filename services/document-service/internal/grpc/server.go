@@ -105,6 +105,18 @@ func (s *Server) ReadOperations(ctx context.Context, req *documentv1.ReadOperati
 	}, nil
 }
 
+func (s *Server) ClaimReplica(ctx context.Context, req *documentv1.ClaimReplicaRequest) (*documentv1.ClaimReplicaResponse, error) {
+	id, err := parseID(req.GetDocumentId())
+	if err != nil {
+		return nil, err
+	}
+	client, err := s.store.ClaimReplica(ctx, id, req.GetClient())
+	if err != nil {
+		return nil, mapError(err)
+	}
+	return &documentv1.ClaimReplicaResponse{Client: client}, nil
+}
+
 func parseID(raw string) (uuid.UUID, error) {
 	id, err := uuid.Parse(raw)
 	if err != nil {
@@ -116,6 +128,8 @@ func parseID(raw string) (uuid.UUID, error) {
 // ConflictReason is the ErrorInfo reason on an AlreadyExists append; its
 // metadata names the conflicting op's client and clock.
 const ConflictReason = "OP_CONFLICT"
+
+const ReplicaHomedElsewhereReason = "REPLICA_HOMED_ELSEWHERE"
 
 func mapError(err error) error {
 	var conflict *domain.ConflictError
@@ -137,6 +151,15 @@ func mapError(err error) error {
 		return status.Error(codes.NotFound, err.Error())
 	case errors.Is(err, domain.ErrArchived):
 		return status.Error(codes.FailedPrecondition, err.Error())
+	case errors.Is(err, domain.ErrReplicaHomedElsewhere):
+		st, detailErr := status.New(codes.FailedPrecondition, err.Error()).WithDetails(&errdetails.ErrorInfo{
+			Reason: ReplicaHomedElsewhereReason,
+			Domain: "document-service",
+		})
+		if detailErr != nil {
+			return status.Error(codes.Internal, "internal error")
+		}
+		return st.Err()
 	case errors.Is(err, domain.ErrInvalidArgument):
 		return status.Error(codes.InvalidArgument, err.Error())
 	default:
