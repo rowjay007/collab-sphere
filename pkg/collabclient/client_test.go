@@ -157,6 +157,49 @@ func TestPresenceVersionRules(t *testing.T) {
 	}
 }
 
+func TestResolveAnchorUsesLocalReplica(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	r, err := crdt.NewReplica(1, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, ch := range "abcd" {
+		if _, err := r.InsertAt(r.Len(), ch); err != nil {
+			t.Fatal(err)
+		}
+	}
+	start, err := r.IDAt(1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	end, err := r.IDAt(2)
+	if err != nil {
+		t.Fatal(err)
+	}
+	url := fakeHub(t, &collabv1.ServerMessage{Payload: &collabv1.ServerMessage_DocumentSync{DocumentSync: &collabv1.DocumentSync{
+		Snapshot: r.Snapshot(),
+		Seq:      4,
+		Client:   1,
+	}}})
+	c, err := Dial(ctx, url, "doc", 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { c.Close() })
+	got, err := c.ResolveAnchor(start, end)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want, err := r.ResolveRange(start, end)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got != want {
+		t.Fatalf("ResolveAnchor = %+v, want %+v", got, want)
+	}
+}
+
 func TestSeqGapClosesConnection(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()

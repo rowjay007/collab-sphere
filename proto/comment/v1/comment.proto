@@ -1,0 +1,110 @@
+syntax = "proto3";
+
+package comment.v1;
+
+import "crdt/v1/snapshot.proto";
+import "google/protobuf/timestamp.proto";
+
+option go_package = "github.com/rowjay007/collab-sphere/gen/comment/v1;commentv1";
+
+service CommentService {
+  rpc CreateThread(CreateThreadRequest) returns (Thread);
+  rpc Reply(ReplyRequest) returns (Comment);
+  rpc SetResolved(SetResolvedRequest) returns (Thread);
+  rpc ListThreads(ListThreadsRequest) returns (ListThreadsResponse);
+  rpc ListNotifications(ListNotificationsRequest) returns (ListNotificationsResponse);
+}
+
+message Anchor {
+  crdt.v1.OpID start = 1;
+  crdt.v1.OpID end = 2;
+}
+
+message Resolution {
+  enum State {
+    STATE_UNSPECIFIED = 0;
+    STATE_ATTACHED = 1;
+    STATE_DETACHED = 2;
+  }
+  State state = 1;
+  crdt.v1.OpID first = 2;
+  crdt.v1.OpID last = 3;
+  string text = 4;
+}
+
+message Comment {
+  string id = 1;
+  string author = 2;
+  string body = 3;
+  repeated string mentions = 4;
+  google.protobuf.Timestamp created_at = 5;
+}
+
+message Thread {
+  string id = 1;
+  string document_id = 2;
+  uint64 created_seq = 3;
+  Anchor anchor = 4;
+  bool resolved = 5;
+  string author = 6;
+  repeated Comment comments = 7;
+  Resolution resolution = 8;
+  google.protobuf.Timestamp created_at = 9;
+}
+
+message Notification {
+  enum Kind {
+    KIND_UNSPECIFIED = 0;
+    KIND_MENTION = 1;
+    KIND_REPLY = 2;
+    KIND_RESOLVED = 3;
+    KIND_UNRESOLVED = 4;
+  }
+  uint64 id = 1;
+  string user = 2;
+  string thread_id = 3;
+  string comment_id = 4;
+  Kind kind = 5;
+  google.protobuf.Timestamp created_at = 6;
+}
+
+message CreateThreadRequest {
+  string document_id = 1;
+  Anchor anchor = 2;
+  string author = 3;
+  string body = 4;
+  string request_id = 5;
+}
+
+message ReplyRequest {
+  string thread_id = 1;
+  string author = 2;
+  string body = 3;
+  string request_id = 4;
+}
+
+message SetResolvedRequest {
+  string thread_id = 1;
+  bool resolved = 2;
+  string actor = 3;
+  string request_id = 4;
+}
+
+message ListThreadsRequest {
+  string document_id = 1;
+  bool include_resolved = 2;
+}
+
+message ListThreadsResponse {
+  repeated Thread threads = 1;
+}
+
+message ListNotificationsRequest {
+  string user = 1;
+  uint64 after_id = 2;
+  uint32 limit = 3;
+}
+
+message ListNotificationsResponse {
+  repeated Notification notifications = 1;
+}

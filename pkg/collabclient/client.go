@@ -419,6 +419,17 @@ func (c *Client) Read(fn func(r *crdt.Replica)) {
 	fn(c.replica)
 }
 
+// ResolveAnchor resolves [start, end] on the local replica. It takes c.mu
+// and does no I/O.
+func (c *Client) ResolveAnchor(start, end crdt.ID) (crdt.Range, error) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.replica == nil || c.replica.Doc == nil {
+		return crdt.Range{}, errors.New("collabclient: no replica")
+	}
+	return c.replica.ResolveRange(start, end)
+}
+
 func (c *Client) Text() string {
 	c.mu.Lock()
 	defer c.mu.Unlock()
