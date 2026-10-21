@@ -152,12 +152,17 @@ func writePump(ctx context.Context, conn *websocket.Conn, peer *hub.Peer) {
 }
 
 func drainWrites(conn *websocket.Conn, peer *hub.Peer) {
-	ctx, cancel := context.WithTimeout(context.Background(), drainTimeout)
-	defer cancel()
-	for {
+	deadline := time.Now().Add(drainTimeout)
+	for time.Now().Before(deadline) {
 		select {
 		case frame := <-peer.Frames():
-			if writeFrame(ctx, conn, frame) != nil {
+			// A write whose context expires tears the connection down, so the
+			// drain deadline is checked between frames and each write gets its
+			// own budget; otherwise the close frame never reaches the client.
+			ctx, cancel := context.WithTimeout(context.Background(), drainTimeout)
+			err := conn.Write(ctx, websocket.MessageBinary, frame)
+			cancel()
+			if err != nil {
 				return
 			}
 		default:
