@@ -899,6 +899,231 @@ func (x *FrontierResponse) GetEntries() []*FrontierEntry {
 	return nil
 }
 
+type MergeRequest struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	SourceDocId   string                 `protobuf:"bytes,1,opt,name=source_doc_id,json=sourceDocId,proto3" json:"source_doc_id,omitempty"`
+	TargetDocId   string                 `protobuf:"bytes,2,opt,name=target_doc_id,json=targetDocId,proto3" json:"target_doc_id,omitempty"`
+	RequestId     string                 `protobuf:"bytes,3,opt,name=request_id,json=requestId,proto3" json:"request_id,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *MergeRequest) Reset() {
+	*x = MergeRequest{}
+	mi := &file_version_v1_version_proto_msgTypes[15]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *MergeRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*MergeRequest) ProtoMessage() {}
+
+func (x *MergeRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_version_v1_version_proto_msgTypes[15]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use MergeRequest.ProtoReflect.Descriptor instead.
+func (*MergeRequest) Descriptor() ([]byte, []int) {
+	return file_version_v1_version_proto_rawDescGZIP(), []int{15}
+}
+
+func (x *MergeRequest) GetSourceDocId() string {
+	if x != nil {
+		return x.SourceDocId
+	}
+	return ""
+}
+
+func (x *MergeRequest) GetTargetDocId() string {
+	if x != nil {
+		return x.TargetDocId
+	}
+	return ""
+}
+
+func (x *MergeRequest) GetRequestId() string {
+	if x != nil {
+		return x.RequestId
+	}
+	return ""
+}
+
+type MergeResponse struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Version       *Version               `protobuf:"bytes,1,opt,name=version,proto3" json:"version,omitempty"`
+	Appended      uint32                 `protobuf:"varint,2,opt,name=appended,proto3" json:"appended,omitempty"`
+	Noop          bool                   `protobuf:"varint,3,opt,name=noop,proto3" json:"noop,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *MergeResponse) Reset() {
+	*x = MergeResponse{}
+	mi := &file_version_v1_version_proto_msgTypes[16]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *MergeResponse) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*MergeResponse) ProtoMessage() {}
+
+func (x *MergeResponse) ProtoReflect() protoreflect.Message {
+	mi := &file_version_v1_version_proto_msgTypes[16]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use MergeResponse.ProtoReflect.Descriptor instead.
+func (*MergeResponse) Descriptor() ([]byte, []int) {
+	return file_version_v1_version_proto_rawDescGZIP(), []int{16}
+}
+
+func (x *MergeResponse) GetVersion() *Version {
+	if x != nil {
+		return x.Version
+	}
+	return nil
+}
+
+func (x *MergeResponse) GetAppended() uint32 {
+	if x != nil {
+		return x.Appended
+	}
+	return 0
+}
+
+func (x *MergeResponse) GetNoop() bool {
+	if x != nil {
+		return x.Noop
+	}
+	return false
+}
+
+type RestoreRequest struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	DocId         string                 `protobuf:"bytes,1,opt,name=doc_id,json=docId,proto3" json:"doc_id,omitempty"`
+	VersionId     []byte                 `protobuf:"bytes,2,opt,name=version_id,json=versionId,proto3" json:"version_id,omitempty"`
+	RequestId     string                 `protobuf:"bytes,3,opt,name=request_id,json=requestId,proto3" json:"request_id,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *RestoreRequest) Reset() {
+	*x = RestoreRequest{}
+	mi := &file_version_v1_version_proto_msgTypes[17]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *RestoreRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*RestoreRequest) ProtoMessage() {}
+
+func (x *RestoreRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_version_v1_version_proto_msgTypes[17]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use RestoreRequest.ProtoReflect.Descriptor instead.
+func (*RestoreRequest) Descriptor() ([]byte, []int) {
+	return file_version_v1_version_proto_rawDescGZIP(), []int{17}
+}
+
+func (x *RestoreRequest) GetDocId() string {
+	if x != nil {
+		return x.DocId
+	}
+	return ""
+}
+
+func (x *RestoreRequest) GetVersionId() []byte {
+	if x != nil {
+		return x.VersionId
+	}
+	return nil
+}
+
+func (x *RestoreRequest) GetRequestId() string {
+	if x != nil {
+		return x.RequestId
+	}
+	return ""
+}
+
+// Persisted mutation plan: the exact ops that will be Appended.
+type OpPlan struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Operations    []*v1.Operation        `protobuf:"bytes,1,rep,name=operations,proto3" json:"operations,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *OpPlan) Reset() {
+	*x = OpPlan{}
+	mi := &file_version_v1_version_proto_msgTypes[18]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *OpPlan) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*OpPlan) ProtoMessage() {}
+
+func (x *OpPlan) ProtoReflect() protoreflect.Message {
+	mi := &file_version_v1_version_proto_msgTypes[18]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use OpPlan.ProtoReflect.Descriptor instead.
+func (*OpPlan) Descriptor() ([]byte, []int) {
+	return file_version_v1_version_proto_rawDescGZIP(), []int{18}
+}
+
+func (x *OpPlan) GetOperations() []*v1.Operation {
+	if x != nil {
+		return x.Operations
+	}
+	return nil
+}
+
 var File_version_v1_version_proto protoreflect.FileDescriptor
 
 const file_version_v1_version_proto_rawDesc = "" +
@@ -966,7 +1191,26 @@ const file_version_v1_version_proto_rawDesc = "" +
 	"documentId\x12\x10\n" +
 	"\x03seq\x18\x02 \x01(\x04R\x03seq\"G\n" +
 	"\x10FrontierResponse\x123\n" +
-	"\aentries\x18\x01 \x03(\v2\x19.version.v1.FrontierEntryR\aentries2\xee\x03\n" +
+	"\aentries\x18\x01 \x03(\v2\x19.version.v1.FrontierEntryR\aentries\"u\n" +
+	"\fMergeRequest\x12\"\n" +
+	"\rsource_doc_id\x18\x01 \x01(\tR\vsourceDocId\x12\"\n" +
+	"\rtarget_doc_id\x18\x02 \x01(\tR\vtargetDocId\x12\x1d\n" +
+	"\n" +
+	"request_id\x18\x03 \x01(\tR\trequestId\"n\n" +
+	"\rMergeResponse\x12-\n" +
+	"\aversion\x18\x01 \x01(\v2\x13.version.v1.VersionR\aversion\x12\x1a\n" +
+	"\bappended\x18\x02 \x01(\rR\bappended\x12\x12\n" +
+	"\x04noop\x18\x03 \x01(\bR\x04noop\"e\n" +
+	"\x0eRestoreRequest\x12\x15\n" +
+	"\x06doc_id\x18\x01 \x01(\tR\x05docId\x12\x1d\n" +
+	"\n" +
+	"version_id\x18\x02 \x01(\fR\tversionId\x12\x1d\n" +
+	"\n" +
+	"request_id\x18\x03 \x01(\tR\trequestId\"<\n" +
+	"\x06OpPlan\x122\n" +
+	"\n" +
+	"operations\x18\x01 \x03(\v2\x12.crdt.v1.OperationR\n" +
+	"operations2\xe8\x04\n" +
 	"\x0eVersionService\x12Q\n" +
 	"\fListVersions\x12\x1f.version.v1.ListVersionsRequest\x1a .version.v1.ListVersionsResponse\x12@\n" +
 	"\n" +
@@ -976,7 +1220,9 @@ const file_version_v1_version_proto_rawDesc = "" +
 	"Checkpoint\x12\x1d.version.v1.CheckpointRequest\x1a\x13.version.v1.Version\x12?\n" +
 	"\x06Branch\x12\x19.version.v1.BranchRequest\x1a\x1a.version.v1.BranchResponse\x129\n" +
 	"\x04Diff\x12\x17.version.v1.DiffRequest\x1a\x18.version.v1.DiffResponse\x12E\n" +
-	"\bFrontier\x12\x1b.version.v1.FrontierRequest\x1a\x1c.version.v1.FrontierResponseB=Z;github.com/rowjay007/collab-sphere/gen/version/v1;versionv1b\x06proto3"
+	"\bFrontier\x12\x1b.version.v1.FrontierRequest\x1a\x1c.version.v1.FrontierResponse\x12<\n" +
+	"\x05Merge\x12\x18.version.v1.MergeRequest\x1a\x19.version.v1.MergeResponse\x12:\n" +
+	"\aRestore\x12\x1a.version.v1.RestoreRequest\x1a\x13.version.v1.VersionB=Z;github.com/rowjay007/collab-sphere/gen/version/v1;versionv1b\x06proto3"
 
 var (
 	file_version_v1_version_proto_rawDescOnce sync.Once
@@ -991,7 +1237,7 @@ func file_version_v1_version_proto_rawDescGZIP() []byte {
 }
 
 var file_version_v1_version_proto_enumTypes = make([]protoimpl.EnumInfo, 1)
-var file_version_v1_version_proto_msgTypes = make([]protoimpl.MessageInfo, 15)
+var file_version_v1_version_proto_msgTypes = make([]protoimpl.MessageInfo, 19)
 var file_version_v1_version_proto_goTypes = []any{
 	(Span_Kind)(0),                // 0: version.v1.Span.Kind
 	(*Version)(nil),               // 1: version.v1.Version
@@ -1009,37 +1255,48 @@ var file_version_v1_version_proto_goTypes = []any{
 	(*FrontierRequest)(nil),       // 13: version.v1.FrontierRequest
 	(*FrontierEntry)(nil),         // 14: version.v1.FrontierEntry
 	(*FrontierResponse)(nil),      // 15: version.v1.FrontierResponse
-	(*timestamppb.Timestamp)(nil), // 16: google.protobuf.Timestamp
-	(*v1.OpID)(nil),               // 17: crdt.v1.OpID
+	(*MergeRequest)(nil),          // 16: version.v1.MergeRequest
+	(*MergeResponse)(nil),         // 17: version.v1.MergeResponse
+	(*RestoreRequest)(nil),        // 18: version.v1.RestoreRequest
+	(*OpPlan)(nil),                // 19: version.v1.OpPlan
+	(*timestamppb.Timestamp)(nil), // 20: google.protobuf.Timestamp
+	(*v1.OpID)(nil),               // 21: crdt.v1.OpID
+	(*v1.Operation)(nil),          // 22: crdt.v1.Operation
 }
 var file_version_v1_version_proto_depIdxs = []int32{
-	16, // 0: version.v1.Version.created_at:type_name -> google.protobuf.Timestamp
+	20, // 0: version.v1.Version.created_at:type_name -> google.protobuf.Timestamp
 	1,  // 1: version.v1.ListVersionsResponse.versions:type_name -> version.v1.Version
 	1,  // 2: version.v1.BranchResponse.version:type_name -> version.v1.Version
 	0,  // 3: version.v1.Span.kind:type_name -> version.v1.Span.Kind
-	17, // 4: version.v1.Span.first:type_name -> crdt.v1.OpID
-	17, // 5: version.v1.Span.last:type_name -> crdt.v1.OpID
+	21, // 4: version.v1.Span.first:type_name -> crdt.v1.OpID
+	21, // 5: version.v1.Span.last:type_name -> crdt.v1.OpID
 	11, // 6: version.v1.DiffResponse.spans:type_name -> version.v1.Span
 	14, // 7: version.v1.FrontierResponse.entries:type_name -> version.v1.FrontierEntry
-	2,  // 8: version.v1.VersionService.ListVersions:input_type -> version.v1.ListVersionsRequest
-	4,  // 9: version.v1.VersionService.GetVersion:input_type -> version.v1.GetVersionRequest
-	5,  // 10: version.v1.VersionService.GetBlob:input_type -> version.v1.GetBlobRequest
-	7,  // 11: version.v1.VersionService.Checkpoint:input_type -> version.v1.CheckpointRequest
-	8,  // 12: version.v1.VersionService.Branch:input_type -> version.v1.BranchRequest
-	10, // 13: version.v1.VersionService.Diff:input_type -> version.v1.DiffRequest
-	13, // 14: version.v1.VersionService.Frontier:input_type -> version.v1.FrontierRequest
-	3,  // 15: version.v1.VersionService.ListVersions:output_type -> version.v1.ListVersionsResponse
-	1,  // 16: version.v1.VersionService.GetVersion:output_type -> version.v1.Version
-	6,  // 17: version.v1.VersionService.GetBlob:output_type -> version.v1.GetBlobResponse
-	1,  // 18: version.v1.VersionService.Checkpoint:output_type -> version.v1.Version
-	9,  // 19: version.v1.VersionService.Branch:output_type -> version.v1.BranchResponse
-	12, // 20: version.v1.VersionService.Diff:output_type -> version.v1.DiffResponse
-	15, // 21: version.v1.VersionService.Frontier:output_type -> version.v1.FrontierResponse
-	15, // [15:22] is the sub-list for method output_type
-	8,  // [8:15] is the sub-list for method input_type
-	8,  // [8:8] is the sub-list for extension type_name
-	8,  // [8:8] is the sub-list for extension extendee
-	0,  // [0:8] is the sub-list for field type_name
+	1,  // 8: version.v1.MergeResponse.version:type_name -> version.v1.Version
+	22, // 9: version.v1.OpPlan.operations:type_name -> crdt.v1.Operation
+	2,  // 10: version.v1.VersionService.ListVersions:input_type -> version.v1.ListVersionsRequest
+	4,  // 11: version.v1.VersionService.GetVersion:input_type -> version.v1.GetVersionRequest
+	5,  // 12: version.v1.VersionService.GetBlob:input_type -> version.v1.GetBlobRequest
+	7,  // 13: version.v1.VersionService.Checkpoint:input_type -> version.v1.CheckpointRequest
+	8,  // 14: version.v1.VersionService.Branch:input_type -> version.v1.BranchRequest
+	10, // 15: version.v1.VersionService.Diff:input_type -> version.v1.DiffRequest
+	13, // 16: version.v1.VersionService.Frontier:input_type -> version.v1.FrontierRequest
+	16, // 17: version.v1.VersionService.Merge:input_type -> version.v1.MergeRequest
+	18, // 18: version.v1.VersionService.Restore:input_type -> version.v1.RestoreRequest
+	3,  // 19: version.v1.VersionService.ListVersions:output_type -> version.v1.ListVersionsResponse
+	1,  // 20: version.v1.VersionService.GetVersion:output_type -> version.v1.Version
+	6,  // 21: version.v1.VersionService.GetBlob:output_type -> version.v1.GetBlobResponse
+	1,  // 22: version.v1.VersionService.Checkpoint:output_type -> version.v1.Version
+	9,  // 23: version.v1.VersionService.Branch:output_type -> version.v1.BranchResponse
+	12, // 24: version.v1.VersionService.Diff:output_type -> version.v1.DiffResponse
+	15, // 25: version.v1.VersionService.Frontier:output_type -> version.v1.FrontierResponse
+	17, // 26: version.v1.VersionService.Merge:output_type -> version.v1.MergeResponse
+	1,  // 27: version.v1.VersionService.Restore:output_type -> version.v1.Version
+	19, // [19:28] is the sub-list for method output_type
+	10, // [10:19] is the sub-list for method input_type
+	10, // [10:10] is the sub-list for extension type_name
+	10, // [10:10] is the sub-list for extension extendee
+	0,  // [0:10] is the sub-list for field type_name
 }
 
 func init() { file_version_v1_version_proto_init() }
@@ -1053,7 +1310,7 @@ func file_version_v1_version_proto_init() {
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_version_v1_version_proto_rawDesc), len(file_version_v1_version_proto_rawDesc)),
 			NumEnums:      1,
-			NumMessages:   15,
+			NumMessages:   19,
 			NumExtensions: 0,
 			NumServices:   1,
 		},

@@ -58,6 +58,8 @@ type VersionService struct {
 	proc   *process
 	db     *pgxpool.Pool
 	Client versionv1.VersionServiceClient
+	// Env is extra process environment (VERSION_CRASH_AT=after_append).
+	Env []string
 }
 
 // StartVersionService starts version-service against the stack's
@@ -82,8 +84,13 @@ func StartVersionService(s *Stack, sweep time.Duration) *VersionService {
 
 func (v *VersionService) Start() {
 	v.s.t.Helper()
-	v.proc = start(v.s.t, "version-service", versionBinary(v.s.t),
-		"DATABASE_URL="+v.dbURL, "GRPC_ADDR="+v.addr, "DOCUMENT_ADDR="+v.s.grpc, "SWEEP_INTERVAL="+v.sweep.String())
+	env := []string{
+		"DATABASE_URL=" + v.dbURL,
+		"GRPC_ADDR=" + v.addr,
+		"DOCUMENT_ADDR=" + v.s.grpc,
+		"SWEEP_INTERVAL=" + v.sweep.String(),
+	}
+	v.proc = start(v.s.t, "version-service", versionBinary(v.s.t), append(env, v.Env...)...)
 	waitFor(v.s.t, "version-service", func(ctx context.Context) error {
 		_, err := v.Client.ListVersions(ctx, &versionv1.ListVersionsRequest{DocId: uuid.NewString()})
 		if status.Code(err) == codes.NotFound {

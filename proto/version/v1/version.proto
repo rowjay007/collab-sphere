@@ -22,6 +22,12 @@ service VersionService {
   // Frontier returns the document at its head seq plus every document its
   // nodes reach through cross-document parents, each at the highest seq reached.
   rpc Frontier(FrontierRequest) returns (FrontierResponse);
+  // Merge appends the source ops that the target lacks. Same request_id
+  // returns the recorded result. A rerun that is already contained is noop.
+  rpc Merge(MergeRequest) returns (MergeResponse);
+  // Restore appends ops that make the document's visible text equal the
+  // version's. The returned node is new and names restored_from.
+  rpc Restore(RestoreRequest) returns (Version);
 }
 
 message Version {
@@ -112,4 +118,27 @@ message FrontierEntry {
 
 message FrontierResponse {
   repeated FrontierEntry entries = 1;
+}
+
+message MergeRequest {
+  string source_doc_id = 1;
+  string target_doc_id = 2;
+  string request_id = 3;
+}
+
+message MergeResponse {
+  Version version = 1;
+  uint32 appended = 2;
+  bool noop = 3;
+}
+
+message RestoreRequest {
+  string doc_id = 1;
+  bytes version_id = 2;
+  string request_id = 3;
+}
+
+// Persisted mutation plan: the exact ops that will be Appended.
+message OpPlan {
+  repeated crdt.v1.Operation operations = 1;
 }

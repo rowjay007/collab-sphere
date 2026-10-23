@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"slices"
 	"time"
 
 	"github.com/google/uuid"
@@ -53,41 +52,15 @@ type Tx struct {
 	tx pgx.Tx
 }
 
-// WithDoc locks the version_docs rows of docs in UUID order, creating them if
-// needed, finishes their pending mutations, then runs fn and commits.
+// WithDoc takes the per-document advisory locks in UUID order, then runs fn
+// in one transaction that also holds the version_docs row locks.
 func (s *Store) WithDoc(ctx context.Context, docs []uuid.UUID, fn func(Tx) error) error {
-	sorted := slices.Clone(docs)
-	slices.SortFunc(sorted, func(a, b uuid.UUID) int { return slices.Compare(a[:], b[:]) })
-	sorted = slices.Compact(sorted)
-
-	tx, err := s.pool.Begin(ctx)
+	hold, err := s.Hold(ctx, docs)
 	if err != nil {
-		return fmt.Errorf("begin: %w", err)
-	}
-	defer tx.Rollback(ctx)
-	for _, doc := range sorted {
-		if _, err := tx.Exec(ctx, `INSERT INTO version_docs (doc) VALUES ($1) ON CONFLICT DO NOTHING`, doc); err != nil {
-			return fmt.Errorf("ensure version_docs %s: %w", doc, err)
-		}
-		if _, err := tx.Exec(ctx, `SELECT 1 FROM version_docs WHERE doc = $1 FOR UPDATE`, doc); err != nil {
-			return fmt.Errorf("lock %s: %w", doc, err)
-		}
-	}
-	t := Tx{tx: tx}
-	if err := t.finishPendingMutations(ctx, sorted); err != nil {
 		return err
 	}
-	if err := fn(t); err != nil {
-		return err
-	}
-	if err := tx.Commit(ctx); err != nil {
-		return fmt.Errorf("commit: %w", err)
-	}
-	return nil
-}
-
-func (t Tx) finishPendingMutations(context.Context, []uuid.UUID) error {
-	return nil
+	defer hold.Release()
+	return hold.Do(ctx, docs, fn)
 }
 
 // Tip returns the document's highest-seq node; false before its chain starts.

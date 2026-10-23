@@ -132,6 +132,38 @@ func (s *Server) Diff(ctx context.Context, req *versionv1.DiffRequest) (*version
 	return resp, nil
 }
 
+func (s *Server) Merge(ctx context.Context, req *versionv1.MergeRequest) (*versionv1.MergeResponse, error) {
+	src, err := parseDoc(req.GetSourceDocId())
+	if err != nil {
+		return nil, err
+	}
+	dst, err := parseDoc(req.GetTargetDocId())
+	if err != nil {
+		return nil, err
+	}
+	r, err := s.history.Merge(ctx, src, dst, req.GetRequestId())
+	if err != nil {
+		return nil, mapError(err)
+	}
+	return &versionv1.MergeResponse{Version: toProto(r.Version), Appended: uint32(r.Appended), Noop: r.Noop}, nil
+}
+
+func (s *Server) Restore(ctx context.Context, req *versionv1.RestoreRequest) (*versionv1.Version, error) {
+	doc, err := parseDoc(req.GetDocId())
+	if err != nil {
+		return nil, err
+	}
+	id, err := parseNodeID(req.GetVersionId())
+	if err != nil {
+		return nil, err
+	}
+	v, err := s.history.Restore(ctx, doc, id, req.GetRequestId())
+	if err != nil {
+		return nil, mapError(err)
+	}
+	return toProto(v), nil
+}
+
 func (s *Server) Frontier(ctx context.Context, req *versionv1.FrontierRequest) (*versionv1.FrontierResponse, error) {
 	doc, err := parseDoc(req.GetDocId())
 	if err != nil {
@@ -191,10 +223,11 @@ func parseNodeID(raw []byte) (dag.NodeID, error) {
 
 func mapError(err error) error {
 	for sentinel, code := range map[error]codes.Code{
-		history.ErrNotFound:        codes.NotFound,
-		history.ErrAlreadyExists:   codes.AlreadyExists,
-		history.ErrInvalidArgument: codes.InvalidArgument,
-		history.ErrOutOfRange:      codes.OutOfRange,
+		history.ErrNotFound:           codes.NotFound,
+		history.ErrAlreadyExists:      codes.AlreadyExists,
+		history.ErrInvalidArgument:    codes.InvalidArgument,
+		history.ErrOutOfRange:         codes.OutOfRange,
+		history.ErrFailedPrecondition: codes.FailedPrecondition,
 	} {
 		if errors.Is(err, sentinel) {
 			return status.Error(code, err.Error())

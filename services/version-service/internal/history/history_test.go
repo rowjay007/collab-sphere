@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"google.golang.org/protobuf/proto"
 
 	"github.com/rowjay007/collab-sphere/pkg/crdt"
 	"github.com/rowjay007/collab-sphere/services/version-service/internal/dag"
@@ -20,10 +21,13 @@ import (
 )
 
 type fakeDoc struct {
-	ops     []crdt.Op
-	forkOf  *uuid.UUID
-	forkSeq uint64
-	replica *crdt.Replica
+	ops      []crdt.Op
+	byBytes  map[string]uint64
+	forkOf   *uuid.UUID
+	forkSeq  uint64
+	forkRoot uuid.UUID
+	replica  *crdt.Replica
+	claimed  uint64
 }
 
 type fakeDocs struct {
@@ -45,7 +49,7 @@ func (f *fakeDocs) create(t *testing.T) uuid.UUID {
 	if err != nil {
 		t.Fatal(err)
 	}
-	f.docs[id] = &fakeDoc{replica: r}
+	f.docs[id] = &fakeDoc{replica: r, forkRoot: id, byBytes: map[string]uint64{}, claimed: 10_000}
 	return id
 }
 
@@ -68,6 +72,9 @@ func (f *fakeDocs) edit(t *testing.T, id uuid.UUID, n int) {
 			t.Fatal(err)
 		}
 		d.ops = append(d.ops, op)
+		if raw, err := proto.Marshal(crdt.OpToProto(op)); err == nil {
+			d.byBytes[string(raw)] = uint64(len(d.ops))
+		}
 	}
 }
 
@@ -78,7 +85,7 @@ func (f *fakeDocs) Get(_ context.Context, id uuid.UUID) (history.Document, error
 	if !ok {
 		return history.Document{}, history.ErrNotFound
 	}
-	return history.Document{ID: id, OpSeq: uint64(len(d.ops)), ForkOf: d.forkOf, ForkSeq: d.forkSeq}, nil
+	return history.Document{ID: id, OpSeq: uint64(len(d.ops)), ForkOf: d.forkOf, ForkSeq: d.forkSeq, ForkRoot: d.forkRoot}, nil
 }
 
 func (f *fakeDocs) Read(_ context.Context, id uuid.UUID, after uint64, limit int) ([]crdt.Op, error) {
@@ -107,8 +114,69 @@ func (f *fakeDocs) Fork(_ context.Context, src uuid.UUID, seq uint64, _, _ strin
 		return history.Document{}, err
 	}
 	id := uuid.New()
-	f.docs[id] = &fakeDoc{ops: slices.Clone(s.ops[:seq]), forkOf: &src, forkSeq: seq, replica: r}
-	return history.Document{ID: id, OpSeq: seq, ForkOf: &src, ForkSeq: seq}, nil
+	byBytes := map[string]uint64{}
+	for i, op := range s.ops[:seq] {
+		if raw, err := proto.Marshal(crdt.OpToProto(op)); err == nil {
+			byBytes[string(raw)] = uint64(i + 1)
+		}
+	}
+	f.docs[id] = &fakeDoc{ops: slices.Clone(s.ops[:seq]), byBytes: byBytes, forkOf: &src, forkSeq: seq, forkRoot: s.forkRoot, replica: r, claimed: 10_000}
+	return history.Document{ID: id, OpSeq: seq, ForkOf: &src, ForkSeq: seq, ForkRoot: s.forkRoot}, nil
+}
+
+func (f *fakeDocs) LoadState(_ context.Context, id uuid.UUID) (*crdt.Doc, uint64, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	d := f.docs[id]
+	doc := crdt.New()
+	for _, op := range d.ops {
+		if _, err := doc.Apply(op); err != nil {
+			return nil, 0, err
+		}
+	}
+	return doc, uint64(len(d.ops)), nil
+}
+
+func (f *fakeDocs) Append(_ context.Context, id uuid.UUID, ops []crdt.Op) (history.AppendResult, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	d := f.docs[id]
+	if d.byBytes == nil {
+		d.byBytes = map[string]uint64{}
+	}
+	out := history.AppendResult{Seqs: make([]uint64, len(ops))}
+	for i, op := range ops {
+		raw, err := proto.Marshal(crdt.OpToProto(op))
+		if err != nil {
+			return history.AppendResult{}, err
+		}
+		if seq, ok := d.byBytes[string(raw)]; ok {
+			out.Seqs[i] = seq
+			continue
+		}
+		if _, err := d.replica.Apply(op); err != nil {
+			return history.AppendResult{}, err
+		}
+		d.ops = append(d.ops, op)
+		seq := uint64(len(d.ops))
+		d.byBytes[string(raw)] = seq
+		out.Seqs[i] = seq
+		if out.FirstNewSeq == 0 {
+			out.FirstNewSeq = seq
+		}
+	}
+	return out, nil
+}
+
+func (f *fakeDocs) ClaimReplica(_ context.Context, id uuid.UUID, client uint64) (crdt.ClientID, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	d := f.docs[id]
+	if client != 0 {
+		return crdt.ClientID(client), nil
+	}
+	d.claimed++
+	return crdt.ClientID(d.claimed), nil
 }
 
 func (f *fakeDocs) ListChanged(context.Context, time.Time, int) ([]uuid.UUID, time.Time, error) {

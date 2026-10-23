@@ -11,6 +11,7 @@ import (
 	"google.golang.org/grpc/status"
 	"google.golang.org/protobuf/types/known/timestamppb"
 
+	crdtv1 "github.com/rowjay007/collab-sphere/gen/crdt/v1"
 	documentv1 "github.com/rowjay007/collab-sphere/gen/document/v1"
 	"github.com/rowjay007/collab-sphere/pkg/crdt"
 	"github.com/rowjay007/collab-sphere/services/version-service/internal/history"
@@ -57,6 +58,49 @@ func (c *Client) Fork(ctx context.Context, src uuid.UUID, seq uint64, title, req
 	return fromProto(resp)
 }
 
+func (c *Client) LoadState(ctx context.Context, doc uuid.UUID) (*crdt.Doc, uint64, error) {
+	resp, err := c.rpc.LoadState(ctx, &documentv1.LoadStateRequest{Id: doc.String()})
+	if err != nil {
+		return nil, 0, mapError(err)
+	}
+	var state *crdt.Doc
+	if resp.GetSnapshot() == nil {
+		state = crdt.New()
+	} else if state, err = crdt.FromSnapshot(resp.GetSnapshot()); err != nil {
+		return nil, 0, fmt.Errorf("decode snapshot of %s: %w", doc, err)
+	}
+	for i, p := range resp.GetOperations() {
+		op, err := crdt.OpFromProto(p)
+		if err != nil {
+			return nil, 0, fmt.Errorf("decode %s op %d: %w", doc, i, err)
+		}
+		if _, err := state.Apply(op); err != nil {
+			return nil, 0, fmt.Errorf("apply %s op %d: %w", doc, i, err)
+		}
+	}
+	return state, resp.GetDocument().GetOpSeq(), nil
+}
+
+func (c *Client) Append(ctx context.Context, doc uuid.UUID, ops []crdt.Op) (history.AppendResult, error) {
+	req := &documentv1.AppendOperationsRequest{Id: doc.String(), Operations: make([]*crdtv1.Operation, len(ops))}
+	for i, op := range ops {
+		req.Operations[i] = crdt.OpToProto(op)
+	}
+	resp, err := c.rpc.AppendOperations(ctx, req)
+	if err != nil {
+		return history.AppendResult{}, mapError(err)
+	}
+	return history.AppendResult{Seqs: resp.GetSeqs(), FirstNewSeq: resp.GetFirstNewSeq()}, nil
+}
+
+func (c *Client) ClaimReplica(ctx context.Context, doc uuid.UUID, client uint64) (crdt.ClientID, error) {
+	resp, err := c.rpc.ClaimReplica(ctx, &documentv1.ClaimReplicaRequest{DocumentId: doc.String(), Client: client})
+	if err != nil {
+		return 0, mapError(err)
+	}
+	return crdt.ClientID(resp.GetClient()), nil
+}
+
 func (c *Client) ListChanged(ctx context.Context, since time.Time, limit int) ([]uuid.UUID, time.Time, error) {
 	req := &documentv1.ListChangedRequest{Limit: uint32(limit)}
 	if !since.IsZero() {
@@ -80,7 +124,7 @@ func fromProto(d *documentv1.Document) (history.Document, error) {
 	if err != nil {
 		return history.Document{}, fmt.Errorf("document id %q: %w", d.GetId(), err)
 	}
-	out := history.Document{ID: id, OpSeq: d.GetOpSeq(), ForkSeq: d.GetForkSeq()}
+	out := history.Document{ID: id, OpSeq: d.GetOpSeq(), ForkSeq: d.GetForkSeq(), ForkRoot: id}
 	if d.GetForkOf() != "" {
 		src, err := uuid.Parse(d.GetForkOf())
 		if err != nil {
@@ -88,15 +132,23 @@ func fromProto(d *documentv1.Document) (history.Document, error) {
 		}
 		out.ForkOf = &src
 	}
+	if d.GetForkRoot() != "" {
+		root, err := uuid.Parse(d.GetForkRoot())
+		if err != nil {
+			return history.Document{}, fmt.Errorf("fork_root %q: %w", d.GetForkRoot(), err)
+		}
+		out.ForkRoot = root
+	}
 	return out, nil
 }
 
 func mapError(err error) error {
 	sentinel := map[codes.Code]error{
-		codes.NotFound:        history.ErrNotFound,
-		codes.AlreadyExists:   history.ErrAlreadyExists,
-		codes.InvalidArgument: history.ErrInvalidArgument,
-		codes.OutOfRange:      history.ErrOutOfRange,
+		codes.NotFound:           history.ErrNotFound,
+		codes.AlreadyExists:      history.ErrAlreadyExists,
+		codes.InvalidArgument:    history.ErrInvalidArgument,
+		codes.OutOfRange:         history.ErrOutOfRange,
+		codes.FailedPrecondition: history.ErrFailedPrecondition,
 	}[status.Code(err)]
 	if sentinel == nil {
 		return err

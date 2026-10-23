@@ -26,6 +26,8 @@ const (
 	VersionService_Branch_FullMethodName       = "/version.v1.VersionService/Branch"
 	VersionService_Diff_FullMethodName         = "/version.v1.VersionService/Diff"
 	VersionService_Frontier_FullMethodName     = "/version.v1.VersionService/Frontier"
+	VersionService_Merge_FullMethodName        = "/version.v1.VersionService/Merge"
+	VersionService_Restore_FullMethodName      = "/version.v1.VersionService/Restore"
 )
 
 // VersionServiceClient is the client API for VersionService service.
@@ -47,6 +49,12 @@ type VersionServiceClient interface {
 	// Frontier returns the document at its head seq plus every document its
 	// nodes reach through cross-document parents, each at the highest seq reached.
 	Frontier(ctx context.Context, in *FrontierRequest, opts ...grpc.CallOption) (*FrontierResponse, error)
+	// Merge appends the source ops that the target lacks. Same request_id
+	// returns the recorded result. A rerun that is already contained is noop.
+	Merge(ctx context.Context, in *MergeRequest, opts ...grpc.CallOption) (*MergeResponse, error)
+	// Restore appends ops that make the document's visible text equal the
+	// version's. The returned node is new and names restored_from.
+	Restore(ctx context.Context, in *RestoreRequest, opts ...grpc.CallOption) (*Version, error)
 }
 
 type versionServiceClient struct {
@@ -127,6 +135,26 @@ func (c *versionServiceClient) Frontier(ctx context.Context, in *FrontierRequest
 	return out, nil
 }
 
+func (c *versionServiceClient) Merge(ctx context.Context, in *MergeRequest, opts ...grpc.CallOption) (*MergeResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(MergeResponse)
+	err := c.cc.Invoke(ctx, VersionService_Merge_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *versionServiceClient) Restore(ctx context.Context, in *RestoreRequest, opts ...grpc.CallOption) (*Version, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(Version)
+	err := c.cc.Invoke(ctx, VersionService_Restore_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 // VersionServiceServer is the server API for VersionService service.
 // All implementations must embed UnimplementedVersionServiceServer
 // for forward compatibility.
@@ -146,6 +174,12 @@ type VersionServiceServer interface {
 	// Frontier returns the document at its head seq plus every document its
 	// nodes reach through cross-document parents, each at the highest seq reached.
 	Frontier(context.Context, *FrontierRequest) (*FrontierResponse, error)
+	// Merge appends the source ops that the target lacks. Same request_id
+	// returns the recorded result. A rerun that is already contained is noop.
+	Merge(context.Context, *MergeRequest) (*MergeResponse, error)
+	// Restore appends ops that make the document's visible text equal the
+	// version's. The returned node is new and names restored_from.
+	Restore(context.Context, *RestoreRequest) (*Version, error)
 	mustEmbedUnimplementedVersionServiceServer()
 }
 
@@ -176,6 +210,12 @@ func (UnimplementedVersionServiceServer) Diff(context.Context, *DiffRequest) (*D
 }
 func (UnimplementedVersionServiceServer) Frontier(context.Context, *FrontierRequest) (*FrontierResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method Frontier not implemented")
+}
+func (UnimplementedVersionServiceServer) Merge(context.Context, *MergeRequest) (*MergeResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method Merge not implemented")
+}
+func (UnimplementedVersionServiceServer) Restore(context.Context, *RestoreRequest) (*Version, error) {
+	return nil, status.Error(codes.Unimplemented, "method Restore not implemented")
 }
 func (UnimplementedVersionServiceServer) mustEmbedUnimplementedVersionServiceServer() {}
 func (UnimplementedVersionServiceServer) testEmbeddedByValue()                        {}
@@ -324,6 +364,42 @@ func _VersionService_Frontier_Handler(srv interface{}, ctx context.Context, dec 
 	return interceptor(ctx, in, info, handler)
 }
 
+func _VersionService_Merge_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(MergeRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(VersionServiceServer).Merge(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: VersionService_Merge_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(VersionServiceServer).Merge(ctx, req.(*MergeRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _VersionService_Restore_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(RestoreRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(VersionServiceServer).Restore(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: VersionService_Restore_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(VersionServiceServer).Restore(ctx, req.(*RestoreRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 // VersionService_ServiceDesc is the grpc.ServiceDesc for VersionService service.
 // It's only intended for direct use with grpc.RegisterService,
 // and not to be introspected or modified (even as a copy)
@@ -358,6 +434,14 @@ var VersionService_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "Frontier",
 			Handler:    _VersionService_Frontier_Handler,
+		},
+		{
+			MethodName: "Merge",
+			Handler:    _VersionService_Merge_Handler,
+		},
+		{
+			MethodName: "Restore",
+			Handler:    _VersionService_Restore_Handler,
 		},
 	},
 	Streams:  []grpc.StreamDesc{},

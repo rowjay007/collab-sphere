@@ -23,6 +23,8 @@ const (
 	LabelAuto     = "auto"
 	LabelFork     = "fork"
 	LabelForkBase = "fork-base"
+	LabelMerge    = "merge"
+	LabelRestore  = "restore"
 )
 
 func CheckpointLabel(name string) string { return "checkpoint:" + name }
@@ -30,6 +32,7 @@ func CheckpointLabel(name string) string { return "checkpoint:" + name }
 type History struct {
 	store *store.Store
 	docs  Docs
+	hooks map[string]func() error
 }
 
 func New(st *store.Store, docs Docs) *History {
@@ -55,7 +58,7 @@ func (h *History) Materialize(ctx context.Context, id uuid.UUID) (Document, erro
 	var cache state
 	for {
 		done := false
-		err := h.store.WithDoc(ctx, []uuid.UUID{id}, func(tx store.Tx) error {
+		err := h.withDoc(ctx, []uuid.UUID{id}, func(tx store.Tx) error {
 			tip, ok, err := tx.Tip(ctx, id)
 			if err != nil {
 				return err
@@ -104,7 +107,7 @@ func (h *History) ensureStarted(ctx context.Context, doc Document) error {
 		start = dag.Node{Doc: doc.ID, Seq: doc.ForkSeq, Content: base.Node.Content, Parents: []dag.NodeID{base.ID}}
 		labels = labelsAt(doc.ForkSeq, LabelFork)
 	}
-	return h.store.WithDoc(ctx, []uuid.UUID{doc.ID}, func(tx store.Tx) error {
+	return h.withDoc(ctx, []uuid.UUID{doc.ID}, func(tx store.Tx) error {
 		if _, ok, err := tx.Tip(ctx, doc.ID); ok || err != nil {
 			return err
 		}
@@ -124,7 +127,7 @@ func (h *History) nodeAt(ctx context.Context, id uuid.UUID, seq uint64, createLa
 		return store.Version{}, fmt.Errorf("%w: seq %d exceeds op_seq %d of %s", ErrOutOfRange, seq, doc.OpSeq, id)
 	}
 	var v store.Version
-	err = h.store.WithDoc(ctx, []uuid.UUID{id}, func(tx store.Tx) error {
+	err = h.withDoc(ctx, []uuid.UUID{id}, func(tx store.Tx) error {
 		v, err = h.put(ctx, tx, id, seq, createLabel, &state{})
 		return err
 	})
@@ -135,6 +138,10 @@ func (h *History) nodeAt(ctx context.Context, id uuid.UUID, seq uint64, createLa
 // parent is the document's node with the greatest seq below it, and its
 // content is that node's state with the log ops up to seq applied.
 func (h *History) put(ctx context.Context, tx store.Tx, id uuid.UUID, seq uint64, createLabel string, cache *state) (store.Version, error) {
+	return h.putNode(ctx, tx, id, seq, nil, store.Meta{Labels: labelsAt(seq, createLabel)}, cache)
+}
+
+func (h *History) putNode(ctx context.Context, tx store.Tx, id uuid.UUID, seq uint64, extra []dag.NodeID, meta store.Meta, cache *state) (store.Version, error) {
 	prev, ok, err := tx.NodeAtOrBelow(ctx, id, seq)
 	if err != nil {
 		return store.Version{}, err
@@ -172,8 +179,12 @@ func (h *History) put(ctx context.Context, tx store.Tx, id uuid.UUID, seq uint64
 	if err != nil {
 		return store.Version{}, err
 	}
-	node := dag.Node{Doc: id, Seq: seq, Content: dag.ContentHash(canonical), Parents: []dag.NodeID{prev.ID}}
-	v, err := tx.PutNode(ctx, node, canonical, store.Meta{Labels: labelsAt(seq, createLabel)})
+	parents := append([]dag.NodeID{prev.ID}, extra...)
+	if meta.Labels == nil {
+		meta.Labels = labelsAt(seq, "")
+	}
+	node := dag.Node{Doc: id, Seq: seq, Content: dag.ContentHash(canonical), Parents: parents}
+	v, err := tx.PutNode(ctx, node, canonical, meta)
 	if err != nil {
 		return store.Version{}, err
 	}
@@ -220,7 +231,7 @@ func (h *History) Checkpoint(ctx context.Context, id uuid.UUID, name, requestID 
 		return store.Version{}, err
 	}
 	var node dag.NodeID
-	err = h.store.WithDoc(ctx, []uuid.UUID{id}, func(tx store.Tx) error {
+	err = h.withDoc(ctx, []uuid.UUID{id}, func(tx store.Tx) error {
 		v, err := h.put(ctx, tx, id, doc.OpSeq, "", &state{})
 		if err != nil {
 			return err
