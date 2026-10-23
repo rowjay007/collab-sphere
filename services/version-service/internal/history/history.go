@@ -52,7 +52,11 @@ func (h *History) Materialize(ctx context.Context, id uuid.UUID) (Document, erro
 	if err != nil {
 		return Document{}, err
 	}
-	if err := h.ensureStarted(ctx, doc); err != nil {
+	if holdFrom(ctx) == nil {
+		if err := h.startChain(ctx, id); err != nil {
+			return Document{}, err
+		}
+	} else if err := h.ensureStarted(ctx, doc); err != nil {
 		return Document{}, err
 	}
 	var cache state
@@ -83,10 +87,43 @@ func (h *History) Materialize(ctx context.Context, id uuid.UUID) (Document, erro
 	}
 }
 
+// startChain creates the document's first node and, for a fork, the
+// ancestor chain that node names as its parent. Each document is started
+// under its own lock. Call it before taking a merge or restore hold.
+func (h *History) startChain(ctx context.Context, id uuid.UUID) error {
+	if holdFrom(ctx) != nil {
+		return fmt.Errorf("startChain under an existing hold")
+	}
+	doc, err := h.docs.Get(ctx, id)
+	if err != nil {
+		return err
+	}
+	if doc.ForkOf != nil {
+		if err := h.startChain(ctx, *doc.ForkOf); err != nil {
+			return err
+		}
+	}
+	return h.ensureStarted(ctx, doc)
+}
+
+func (h *History) hasTip(ctx context.Context, id uuid.UUID) (bool, error) {
+	var ok bool
+	err := h.do(ctx, []uuid.UUID{id}, func(tx store.Tx) error {
+		_, found, err := tx.Tip(ctx, id)
+		ok = found
+		return err
+	})
+	return ok, err
+}
+
 // ensureStarted creates the document's first node: genesis at 0 for a root
 // document, or for a fork B of S at s the node B@s whose only parent is
-// S@s, created on S first if it is not a node yet.
+// S@s. If the chain already exists it returns without touching the parent.
 func (h *History) ensureStarted(ctx context.Context, doc Document) error {
+	started, err := h.hasTip(ctx, doc.ID)
+	if err != nil || started {
+		return err
+	}
 	var (
 		start     dag.Node
 		canonical []byte
@@ -100,20 +137,27 @@ func (h *History) ensureStarted(ctx context.Context, doc Document) error {
 		start = dag.Node{Doc: doc.ID, Seq: 0, Content: dag.ContentHash(empty)}
 		canonical, labels = empty, []string{LabelGenesis}
 	} else {
-		base, err := h.nodeAt(ctx, *doc.ForkOf, doc.ForkSeq, LabelForkBase)
+		base, err := h.forkBase(ctx, *doc.ForkOf, doc.ForkSeq)
 		if err != nil {
 			return fmt.Errorf("fork base of %s: %w", doc.ID, err)
 		}
 		start = dag.Node{Doc: doc.ID, Seq: doc.ForkSeq, Content: base.Node.Content, Parents: []dag.NodeID{base.ID}}
 		labels = labelsAt(doc.ForkSeq, LabelFork)
 	}
-	return h.withDoc(ctx, []uuid.UUID{doc.ID}, func(tx store.Tx) error {
+	return h.do(ctx, []uuid.UUID{doc.ID}, func(tx store.Tx) error {
 		if _, ok, err := tx.Tip(ctx, doc.ID); ok || err != nil {
 			return err
 		}
 		_, err := tx.PutNode(ctx, start, canonical, store.Meta{Labels: labels})
 		return err
 	})
+}
+
+func (h *History) forkBase(ctx context.Context, parent uuid.UUID, seq uint64) (store.Version, error) {
+	if hold := holdFrom(ctx); hold != nil && !hold.Covers([]uuid.UUID{parent}) {
+		return h.store.VersionAt(ctx, parent, seq)
+	}
+	return h.nodeAt(ctx, parent, seq, LabelForkBase)
 }
 
 // nodeAt materializes the document and returns its node at seq, creating it

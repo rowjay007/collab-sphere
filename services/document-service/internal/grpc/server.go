@@ -111,7 +111,7 @@ func (s *Server) ClaimReplica(ctx context.Context, req *documentv1.ClaimReplicaR
 	if err != nil {
 		return nil, err
 	}
-	client, err := s.store.ClaimReplica(ctx, id, req.GetClient())
+	client, err := s.store.ClaimReplica(ctx, id, req.GetClient(), req.GetSystem())
 	if err != nil {
 		return nil, mapError(err)
 	}
@@ -135,7 +135,15 @@ func (s *Server) ListChangedDocuments(ctx context.Context, req *documentv1.ListC
 	if ts := req.GetSince(); ts != nil {
 		since = ts.AsTime()
 	}
-	docs, next, err := s.store.ListChanged(ctx, since, int(req.GetLimit()))
+	var afterID uuid.UUID
+	if raw := req.GetAfterId(); raw != "" {
+		id, err := parseID(raw)
+		if err != nil {
+			return nil, err
+		}
+		afterID = id
+	}
+	docs, next, nextAfter, err := s.store.ListChanged(ctx, since, afterID, int(req.GetLimit()))
 	if err != nil {
 		return nil, mapError(err)
 	}
@@ -143,10 +151,14 @@ func (s *Server) ListChangedDocuments(ctx context.Context, req *documentv1.ListC
 	for i, doc := range docs {
 		out[i] = toProto(doc)
 	}
-	return &documentv1.ListChangedResponse{
+	resp := &documentv1.ListChangedResponse{
 		Documents: out,
 		NextSince: timestamppb.New(next),
-	}, nil
+	}
+	if nextAfter != uuid.Nil {
+		resp.NextAfterId = nextAfter.String()
+	}
+	return resp, nil
 }
 
 func parseID(raw string) (uuid.UUID, error) {

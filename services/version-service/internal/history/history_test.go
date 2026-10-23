@@ -1,6 +1,7 @@
 package history_test
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"maps"
@@ -28,12 +29,14 @@ type fakeDoc struct {
 	forkRoot uuid.UUID
 	replica  *crdt.Replica
 	claimed  uint64
+	updated  time.Time
 }
 
 type fakeDocs struct {
-	mu   sync.Mutex
-	docs map[uuid.UUID]*fakeDoc
-	rng  *rand.Rand
+	mu           sync.Mutex
+	docs         map[uuid.UUID]*fakeDoc
+	rng          *rand.Rand
+	hijackAppend func(uuid.UUID, []crdt.Op)
 }
 
 func newFakeDocs() *fakeDocs {
@@ -49,7 +52,7 @@ func (f *fakeDocs) create(t *testing.T) uuid.UUID {
 	if err != nil {
 		t.Fatal(err)
 	}
-	f.docs[id] = &fakeDoc{replica: r, forkRoot: id, byBytes: map[string]uint64{}, claimed: 10_000}
+	f.docs[id] = &fakeDoc{replica: r, forkRoot: id, byBytes: map[string]uint64{}, claimed: 10_000, updated: time.Now()}
 	return id
 }
 
@@ -120,7 +123,7 @@ func (f *fakeDocs) Fork(_ context.Context, src uuid.UUID, seq uint64, _, _ strin
 			byBytes[string(raw)] = uint64(i + 1)
 		}
 	}
-	f.docs[id] = &fakeDoc{ops: slices.Clone(s.ops[:seq]), byBytes: byBytes, forkOf: &src, forkSeq: seq, forkRoot: s.forkRoot, replica: r, claimed: 10_000}
+	f.docs[id] = &fakeDoc{ops: slices.Clone(s.ops[:seq]), byBytes: byBytes, forkOf: &src, forkSeq: seq, forkRoot: s.forkRoot, replica: r, claimed: 10_000, updated: time.Now()}
 	return history.Document{ID: id, OpSeq: seq, ForkOf: &src, ForkSeq: seq, ForkRoot: s.forkRoot}, nil
 }
 
@@ -138,6 +141,9 @@ func (f *fakeDocs) LoadState(_ context.Context, id uuid.UUID) (*crdt.Doc, uint64
 }
 
 func (f *fakeDocs) Append(_ context.Context, id uuid.UUID, ops []crdt.Op) (history.AppendResult, error) {
+	if f.hijackAppend != nil {
+		f.hijackAppend(id, ops)
+	}
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	d := f.docs[id]
@@ -168,7 +174,7 @@ func (f *fakeDocs) Append(_ context.Context, id uuid.UUID, ops []crdt.Op) (histo
 	return out, nil
 }
 
-func (f *fakeDocs) ClaimReplica(_ context.Context, id uuid.UUID, client uint64) (crdt.ClientID, error) {
+func (f *fakeDocs) ClaimReplica(_ context.Context, id uuid.UUID, client uint64, _ bool) (crdt.ClientID, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	d := f.docs[id]
@@ -179,10 +185,73 @@ func (f *fakeDocs) ClaimReplica(_ context.Context, id uuid.UUID, client uint64) 
 	return crdt.ClientID(d.claimed), nil
 }
 
-func (f *fakeDocs) ListChanged(context.Context, time.Time, int) ([]uuid.UUID, time.Time, error) {
+func (f *fakeDocs) ListChanged(_ context.Context, since time.Time, afterID string, limit int) ([]uuid.UUID, time.Time, string, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
-	return slices.Collect(maps.Keys(f.docs)), time.Now(), nil
+	type row struct {
+		id uuid.UUID
+		at time.Time
+	}
+	var rows []row
+	var after uuid.UUID
+	if afterID != "" {
+		var err error
+		after, err = uuid.Parse(afterID)
+		if err != nil {
+			return nil, time.Time{}, "", err
+		}
+	}
+	for id, d := range f.docs {
+		if afterID != "" {
+			if d.updated.Before(since) || d.updated.Equal(since) && bytes.Compare(id[:], after[:]) <= 0 {
+				continue
+			}
+		} else if d.updated.Before(since) {
+			continue
+		}
+		rows = append(rows, row{id, d.updated})
+	}
+	slices.SortFunc(rows, func(a, b row) int {
+		if a.at.Before(b.at) {
+			return -1
+		}
+		if a.at.After(b.at) {
+			return 1
+		}
+		return bytes.Compare(a.id[:], b.id[:])
+	})
+	if limit > 0 && len(rows) > limit {
+		rows = rows[:limit]
+	}
+	ids := make([]uuid.UUID, len(rows))
+	next, nextAfter := since, ""
+	for i, r := range rows {
+		ids[i] = r.id
+		next = r.at
+		nextAfter = r.id.String()
+	}
+	return ids, next, nextAfter, nil
+}
+
+func (f *fakeDocs) setUpdated(id uuid.UUID, at time.Time) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.docs[id].updated = at
+}
+
+func (f *fakeDocs) inject(id uuid.UUID, op crdt.Op) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	d := f.docs[id]
+	if _, err := d.replica.Apply(op); err != nil {
+		return err
+	}
+	d.ops = append(d.ops, op)
+	if raw, err := proto.Marshal(crdt.OpToProto(op)); err == nil {
+		d.byBytes[string(raw)] = uint64(len(d.ops))
+	}
+	d.updated = time.Now()
+	return nil
 }
 
 func (f *fakeDocs) contentAt(t *testing.T, id uuid.UUID, seq uint64) dag.Hash {

@@ -76,6 +76,13 @@ func (t Tx) NodeAtOrBelow(ctx context.Context, doc uuid.UUID, seq uint64) (Versi
 		LIMIT 1`, doc, int64(seq))))
 }
 
+func (s *Store) NodeAtOrBelow(ctx context.Context, doc uuid.UUID, seq uint64) (Version, bool, error) {
+	return optional(scanVersion(s.pool.QueryRow(ctx, selectVersion+`
+		WHERE n.doc = $1 AND n.seq <= $2
+		ORDER BY n.seq DESC
+		LIMIT 1`, doc, int64(seq))))
+}
+
 func (t Tx) Blob(ctx context.Context, hash dag.Hash) ([]byte, error) {
 	return blob(ctx, t.tx, hash)
 }

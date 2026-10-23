@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"google.golang.org/genproto/googleapis/rpc/errdetails"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 	"google.golang.org/protobuf/types/known/timestamppb"
@@ -88,35 +89,42 @@ func (c *Client) Append(ctx context.Context, doc uuid.UUID, ops []crdt.Op) (hist
 	}
 	resp, err := c.rpc.AppendOperations(ctx, req)
 	if err != nil {
+		if isOpConflict(err) {
+			return history.AppendResult{}, fmt.Errorf("%w: document-service: %s", history.ErrConflict, status.Convert(err).Message())
+		}
 		return history.AppendResult{}, mapError(err)
 	}
 	return history.AppendResult{Seqs: resp.GetSeqs(), FirstNewSeq: resp.GetFirstNewSeq()}, nil
 }
 
-func (c *Client) ClaimReplica(ctx context.Context, doc uuid.UUID, client uint64) (crdt.ClientID, error) {
-	resp, err := c.rpc.ClaimReplica(ctx, &documentv1.ClaimReplicaRequest{DocumentId: doc.String(), Client: client})
+func (c *Client) ClaimReplica(ctx context.Context, doc uuid.UUID, client uint64, system bool) (crdt.ClientID, error) {
+	resp, err := c.rpc.ClaimReplica(ctx, &documentv1.ClaimReplicaRequest{DocumentId: doc.String(), Client: client, System: system})
 	if err != nil {
 		return 0, mapError(err)
 	}
 	return crdt.ClientID(resp.GetClient()), nil
 }
 
-func (c *Client) ListChanged(ctx context.Context, since time.Time, limit int) ([]uuid.UUID, time.Time, error) {
-	req := &documentv1.ListChangedRequest{Limit: uint32(limit)}
+func (c *Client) ListChanged(ctx context.Context, since time.Time, afterID string, limit int) ([]uuid.UUID, time.Time, string, error) {
+	req := &documentv1.ListChangedRequest{Limit: uint32(limit), AfterId: afterID}
 	if !since.IsZero() {
 		req.Since = timestamppb.New(since)
 	}
 	resp, err := c.rpc.ListChangedDocuments(ctx, req)
 	if err != nil {
-		return nil, time.Time{}, mapError(err)
+		return nil, time.Time{}, "", mapError(err)
 	}
 	ids := make([]uuid.UUID, len(resp.GetDocuments()))
 	for i, d := range resp.GetDocuments() {
 		if ids[i], err = uuid.Parse(d.GetId()); err != nil {
-			return nil, time.Time{}, fmt.Errorf("document id %q: %w", d.GetId(), err)
+			return nil, time.Time{}, "", fmt.Errorf("document id %q: %w", d.GetId(), err)
 		}
 	}
-	return ids, resp.GetNextSince().AsTime(), nil
+	nextSince := since
+	if ts := resp.GetNextSince(); ts != nil {
+		nextSince = ts.AsTime()
+	}
+	return ids, nextSince, resp.GetNextAfterId(), nil
 }
 
 func fromProto(d *documentv1.Document) (history.Document, error) {
@@ -140,6 +148,21 @@ func fromProto(d *documentv1.Document) (history.Document, error) {
 		out.ForkRoot = root
 	}
 	return out, nil
+}
+
+const opConflictReason = "OP_CONFLICT"
+
+func isOpConflict(err error) bool {
+	st, ok := status.FromError(err)
+	if !ok || st.Code() != codes.AlreadyExists {
+		return false
+	}
+	for _, d := range st.Details() {
+		if info, ok := d.(*errdetails.ErrorInfo); ok && info.GetReason() == opConflictReason {
+			return true
+		}
+	}
+	return false
 }
 
 func mapError(err error) error {

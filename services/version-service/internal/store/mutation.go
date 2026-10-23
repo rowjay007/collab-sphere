@@ -17,6 +17,7 @@ const (
 	StatePlanned  = "planned"
 	StateAppended = "appended"
 	StateDone     = "done"
+	StateFailed   = "failed"
 )
 
 type Mutation struct {
@@ -42,7 +43,7 @@ func (t Tx) Mutation(ctx context.Context, requestID string) (Mutation, bool, err
 }
 
 func (t Tx) Pending(ctx context.Context, docs []uuid.UUID) ([]Mutation, error) {
-	rows, err := t.tx.Query(ctx, selectMutation+` WHERE doc = ANY($1) AND state <> 'done'`, docs)
+	rows, err := t.tx.Query(ctx, selectMutation+` WHERE doc = ANY($1) AND state IN ('planned', 'appended')`, docs)
 	if err != nil {
 		return nil, fmt.Errorf("list pending mutations: %w", err)
 	}
@@ -119,8 +120,8 @@ const selectMutation = `
 
 func scanMutation(row pgx.Row) (Mutation, error) {
 	var (
-		m                          Mutation
-		sourceDoc                  *uuid.UUID
+		m                           Mutation
+		sourceDoc                   *uuid.UUID
 		sourceNode, targetNode, res []byte
 	)
 	if err := row.Scan(&m.RequestID, &m.Doc, &m.Kind, &m.State, &sourceDoc, &sourceNode, &targetNode, &m.Plan, &res, &m.Appended, &m.Noop); err != nil {

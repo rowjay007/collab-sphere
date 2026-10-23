@@ -52,7 +52,7 @@ func TestForkCopiesPrefixAndStaysIndependent(t *testing.T) {
 		}
 	}
 
-	if _, err := st.ClaimReplica(ctx, src.ID, 21); err != nil {
+	if _, err := st.ClaimReplica(ctx, src.ID, 21, false); err != nil {
 		t.Fatal(err)
 	}
 
@@ -140,7 +140,7 @@ func TestForkCopiesPrefixAndStaysIndependent(t *testing.T) {
 		t.Fatalf("fork moved to %d", forkMeta.OpSeq)
 	}
 
-	if _, err := st.ClaimReplica(ctx, fork.ID, 21); !errors.Is(err, domain.ErrReplicaHomedElsewhere) {
+	if _, err := st.ClaimReplica(ctx, fork.ID, 21, false); !errors.Is(err, domain.ErrReplicaHomedElsewhere) {
 		t.Fatalf("source replica on fork: %v", err)
 	}
 	var replicaRows int
@@ -390,26 +390,26 @@ func TestListChangedPaginationAndArchive(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	page, next, err := st.ListChanged(ctx, t0, 2)
+	page, next, nextAfter, err := st.ListChanged(ctx, t0, uuid.Nil, 2)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if len(page) != 2 || page[0].ID != a.ID || page[1].ID != b.ID {
 		t.Fatalf("page1 = %v", idsOf(page))
 	}
-	if !next.Equal(t0.Add(2 * time.Second)) {
-		t.Fatalf("next_since %v", next)
+	if !next.Equal(t0.Add(2*time.Second)) || nextAfter != b.ID {
+		t.Fatalf("next_since %v next_after %s", next, nextAfter)
 	}
 
-	page2, next2, err := st.ListChanged(ctx, next, 2)
+	page2, next2, nextAfter2, err := st.ListChanged(ctx, next, nextAfter, 2)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(page2) != 2 || page2[0].ID != b.ID || page2[1].ID != c.ID {
+	if len(page2) != 1 || page2[0].ID != c.ID {
 		t.Fatalf("page2 = %v", idsOf(page2))
 	}
-	if !next2.Equal(t0.Add(3 * time.Second)) {
-		t.Fatalf("page2 next_since %v", next2)
+	if !next2.Equal(t0.Add(3*time.Second)) || nextAfter2 != c.ID {
+		t.Fatalf("page2 next_since %v next_after %s", next2, nextAfter2)
 	}
 
 	for _, doc := range page2 {
@@ -418,19 +418,71 @@ func TestListChangedPaginationAndArchive(t *testing.T) {
 		}
 	}
 
-	empty, emptyNext, err := st.ListChanged(ctx, t0.Add(10*time.Second), 10)
+	empty, emptyNext, emptyAfter, err := st.ListChanged(ctx, t0.Add(10*time.Second), uuid.Nil, 10)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(empty) != 0 || !emptyNext.Equal(t0.Add(10*time.Second)) {
-		t.Fatalf("empty n=%d next=%v", len(empty), emptyNext)
+	if len(empty) != 0 || !emptyNext.Equal(t0.Add(10*time.Second)) || emptyAfter != uuid.Nil {
+		t.Fatalf("empty n=%d next=%v after=%s", len(empty), emptyNext, emptyAfter)
 	}
 
-	if _, _, err := st.ListChanged(ctx, t0, 5001); !errors.Is(err, domain.ErrInvalidArgument) {
+	if _, _, _, err := st.ListChanged(ctx, t0, uuid.Nil, 5001); !errors.Is(err, domain.ErrInvalidArgument) {
 		t.Fatalf("max limit: %v", err)
 	}
-	if _, _, err := st.ListChanged(ctx, t0, -1); !errors.Is(err, domain.ErrInvalidArgument) {
+	if _, _, _, err := st.ListChanged(ctx, t0, uuid.Nil, -1); !errors.Is(err, domain.ErrInvalidArgument) {
 		t.Fatalf("neg limit: %v", err)
+	}
+}
+
+func TestListChangedKeysetSameTimestamp(t *testing.T) {
+	st, pool := testdb.Open(t)
+	ctx := t.Context()
+	t0 := time.Date(2026, 2, 1, 0, 0, 0, 0, time.UTC)
+	ids := make([]uuid.UUID, 3)
+	for i := range ids {
+		doc, err := st.Create(ctx, "same", "owner")
+		if err != nil {
+			t.Fatal(err)
+		}
+		ids[i] = doc.ID
+		if _, err := pool.Exec(ctx, `UPDATE documents SET updated_at = $2 WHERE id = $1`, doc.ID, t0); err != nil {
+			t.Fatal(err)
+		}
+	}
+	later, err := st.Create(ctx, "later", "owner")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := pool.Exec(ctx, `UPDATE documents SET updated_at = $2 WHERE id = $1`, later.ID, t0.Add(time.Second)); err != nil {
+		t.Fatal(err)
+	}
+
+	page1, next, after, err := st.ListChanged(ctx, t0, uuid.Nil, 2)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(page1) != 2 {
+		t.Fatalf("page1 n=%d", len(page1))
+	}
+	page2, next2, after2, err := st.ListChanged(ctx, next, after, 2)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(page2) != 2 {
+		t.Fatalf("page2 n=%d ids=%v", len(page2), idsOf(page2))
+	}
+	seen := map[uuid.UUID]bool{}
+	for _, doc := range append(page1, page2...) {
+		if seen[doc.ID] {
+			t.Fatalf("duplicate %s", doc.ID)
+		}
+		seen[doc.ID] = true
+	}
+	if !seen[later.ID] {
+		t.Fatal("later document missing")
+	}
+	if next2.Before(t0) || after2 == uuid.Nil {
+		t.Fatalf("page2 cursor %v %s", next2, after2)
 	}
 }
 

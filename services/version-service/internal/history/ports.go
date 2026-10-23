@@ -16,6 +16,7 @@ var (
 	ErrInvalidArgument    = errors.New("history: invalid argument")
 	ErrOutOfRange         = errors.New("history: out of range")
 	ErrFailedPrecondition = errors.New("history: failed precondition")
+	ErrConflict           = errors.New("history: op conflict")
 )
 
 type Document struct {
@@ -38,10 +39,10 @@ type Docs interface {
 	// starting at after+1.
 	Read(ctx context.Context, doc uuid.UUID, after uint64, limit int) ([]crdt.Op, error)
 	Fork(ctx context.Context, src uuid.UUID, seq uint64, title, requestID string) (Document, error)
-	// ListChanged returns active documents updated at or after since and the
-	// updated_at of the last one returned.
-	ListChanged(ctx context.Context, since time.Time, limit int) ([]uuid.UUID, time.Time, error)
+	// ListChanged returns active documents after the keyset (since, afterID)
+	// and the (updated_at, id) of the last one returned.
+	ListChanged(ctx context.Context, since time.Time, afterID string, limit int) ([]uuid.UUID, time.Time, string, error)
 	LoadState(ctx context.Context, doc uuid.UUID) (*crdt.Doc, uint64, error)
 	Append(ctx context.Context, doc uuid.UUID, ops []crdt.Op) (AppendResult, error)
-	ClaimReplica(ctx context.Context, doc uuid.UUID, client uint64) (crdt.ClientID, error)
+	ClaimReplica(ctx context.Context, doc uuid.UUID, client uint64, system bool) (crdt.ClientID, error)
 }

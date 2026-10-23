@@ -95,6 +95,7 @@ message ReadOperationsResponse {
 message ClaimReplicaRequest {
   string document_id = 1;
   uint64 client = 2;
+  bool system = 3;
 }
 
 message ClaimReplicaResponse {
@@ -111,9 +112,11 @@ message ForkDocumentRequest {
 message ListChangedRequest {
   google.protobuf.Timestamp since = 1;
   uint32 limit = 2;
+  string after_id = 3;
 }
 
 message ListChangedResponse {
   repeated Document documents = 1;
   google.protobuf.Timestamp next_since = 2;
+  string next_after_id = 3;
 }

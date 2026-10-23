@@ -12,7 +12,7 @@ import (
 	"github.com/rowjay007/collab-sphere/services/document-service/internal/domain"
 )
 
-func (s *Store) ClaimReplica(ctx context.Context, documentID uuid.UUID, requested uint64) (uint64, error) {
+func (s *Store) ClaimReplica(ctx context.Context, documentID uuid.UUID, requested uint64, system bool) (uint64, error) {
 	tx, err := s.pool.Begin(ctx)
 	if err != nil {
 		return 0, fmt.Errorf("begin replica claim: %w", err)
@@ -36,11 +36,12 @@ func (s *Store) ClaimReplica(ctx context.Context, documentID uuid.UUID, requeste
 		return 0, domain.ErrArchived
 	}
 
+	kind := replicaKind(system)
 	client := requested
 	if client == 0 {
-		client, err = allocateReplica(ctx, tx, documentID, forkRoot)
+		client, err = allocateReplica(ctx, tx, documentID, forkRoot, kind)
 	} else {
-		err = claimReplica(ctx, tx, documentID, forkRoot, client)
+		err = claimReplica(ctx, tx, documentID, forkRoot, client, kind)
 	}
 	if err != nil {
 		return 0, err
@@ -51,7 +52,14 @@ func (s *Store) ClaimReplica(ctx context.Context, documentID uuid.UUID, requeste
 	return client, nil
 }
 
-func allocateReplica(ctx context.Context, tx pgx.Tx, documentID, forkRoot uuid.UUID) (uint64, error) {
+func replicaKind(system bool) string {
+	if system {
+		return "system"
+	}
+	return "client"
+}
+
+func allocateReplica(ctx context.Context, tx pgx.Tx, documentID, forkRoot uuid.UUID, kind string) (uint64, error) {
 	for {
 		var next int64
 		if err := tx.QueryRow(ctx, `SELECT nextval('replica_ids')`).Scan(&next); err != nil {
@@ -59,9 +67,9 @@ func allocateReplica(ctx context.Context, tx pgx.Tx, documentID, forkRoot uuid.U
 		}
 		client := uint64(next)
 		tag, err := tx.Exec(ctx, `
-			INSERT INTO replicas (id, fork_root, document_id)
-			VALUES ($1::numeric, $2, $3)
-			ON CONFLICT DO NOTHING`, strconv.FormatUint(client, 10), forkRoot, documentID)
+			INSERT INTO replicas (id, fork_root, document_id, kind)
+			VALUES ($1::numeric, $2, $3, $4)
+			ON CONFLICT DO NOTHING`, strconv.FormatUint(client, 10), forkRoot, documentID, kind)
 		if err != nil {
 			return 0, fmt.Errorf("insert allocated replica: %w", err)
 		}
@@ -71,11 +79,11 @@ func allocateReplica(ctx context.Context, tx pgx.Tx, documentID, forkRoot uuid.U
 	}
 }
 
-func claimReplica(ctx context.Context, tx pgx.Tx, documentID, forkRoot uuid.UUID, client uint64) error {
+func claimReplica(ctx context.Context, tx pgx.Tx, documentID, forkRoot uuid.UUID, client uint64, kind string) error {
 	tag, err := tx.Exec(ctx, `
-		INSERT INTO replicas (id, fork_root, document_id)
-		VALUES ($1::numeric, $2, $3)
-		ON CONFLICT DO NOTHING`, strconv.FormatUint(client, 10), forkRoot, documentID)
+		INSERT INTO replicas (id, fork_root, document_id, kind)
+		VALUES ($1::numeric, $2, $3, $4)
+		ON CONFLICT DO NOTHING`, strconv.FormatUint(client, 10), forkRoot, documentID, kind)
 	if err != nil {
 		return fmt.Errorf("insert claimed replica: %w", err)
 	}
@@ -84,15 +92,16 @@ func claimReplica(ctx context.Context, tx pgx.Tx, documentID, forkRoot uuid.UUID
 	}
 
 	var home uuid.UUID
+	var existing string
 	err = tx.QueryRow(ctx, `
-		SELECT document_id
+		SELECT document_id, kind
 		FROM replicas
 		WHERE id = $1::numeric AND fork_root = $2`,
-		strconv.FormatUint(client, 10), forkRoot).Scan(&home)
+		strconv.FormatUint(client, 10), forkRoot).Scan(&home, &existing)
 	if err != nil {
 		return fmt.Errorf("load replica home: %w", err)
 	}
-	if home != documentID {
+	if home != documentID || existing == "system" && kind != "system" {
 		return domain.ErrReplicaHomedElsewhere
 	}
 	return nil

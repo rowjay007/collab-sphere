@@ -10,6 +10,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/google/uuid"
+
 	documentv1 "github.com/rowjay007/collab-sphere/gen/document/v1"
 	versionv1 "github.com/rowjay007/collab-sphere/gen/version/v1"
 	"github.com/rowjay007/collab-sphere/pkg/collabclient"
@@ -276,6 +278,38 @@ func mergeOracle(t *testing.T, ctx context.Context, vs versionv1.VersionServiceC
 		}
 	}
 	return doc.Text()
+}
+
+func TestHubRefusesSystemReplica(t *testing.T) {
+	s := stack.New(t, stack.WithHubs(1))
+	ctx, cancel := context.WithTimeout(t.Context(), time.Minute)
+	defer cancel()
+	vs := stack.StartVersionService(s, 0)
+
+	d := s.CreateDocument(ctx)
+	c := s.DialAllocated(ctx, d, 0)
+	edit(t, ctx, s, d, []*collabclient.Client{c}, 7, 8)
+	v := checkpoint(t, ctx, vs.Client, d, "v")
+	if err := c.InsertAt(0, 'Z'); err != nil {
+		t.Fatal(err)
+	}
+	stack.Settle(t, ctx, s.Docs, d, []*collabclient.Client{c})
+	if _, err := vs.Client.Restore(ctx, &versionv1.RestoreRequest{DocId: d, VersionId: v.GetId(), RequestId: t.Name()}); err != nil {
+		t.Fatal(err)
+	}
+
+	docID, err := uuid.Parse(d)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var replica int64
+	if err := vs.DB().QueryRow(ctx, `SELECT system_replica FROM version_docs WHERE doc = $1`, docID).Scan(&replica); err != nil {
+		t.Fatal(err)
+	}
+	_, err = collabclient.DialWith(ctx, d, collabclient.Options{URLs: s.HubURLs(), Client: crdt.ClientID(replica)})
+	if err == nil || !strings.Contains(err.Error(), "CODE_UNKNOWN_REPLICA") {
+		t.Fatalf("system replica on hub: %v", err)
+	}
 }
 
 func nodeAtSeq(t *testing.T, ctx context.Context, vs versionv1.VersionServiceClient, docID string, seq uint64) *versionv1.Version {

@@ -682,6 +682,7 @@ type ClaimReplicaRequest struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	DocumentId    string                 `protobuf:"bytes,1,opt,name=document_id,json=documentId,proto3" json:"document_id,omitempty"`
 	Client        uint64                 `protobuf:"varint,2,opt,name=client,proto3" json:"client,omitempty"`
+	System        bool                   `protobuf:"varint,3,opt,name=system,proto3" json:"system,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -728,6 +729,13 @@ func (x *ClaimReplicaRequest) GetClient() uint64 {
 		return x.Client
 	}
 	return 0
+}
+
+func (x *ClaimReplicaRequest) GetSystem() bool {
+	if x != nil {
+		return x.System
+	}
+	return false
 }
 
 type ClaimReplicaResponse struct {
@@ -846,6 +854,7 @@ type ListChangedRequest struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	Since         *timestamppb.Timestamp `protobuf:"bytes,1,opt,name=since,proto3" json:"since,omitempty"`
 	Limit         uint32                 `protobuf:"varint,2,opt,name=limit,proto3" json:"limit,omitempty"`
+	AfterId       string                 `protobuf:"bytes,3,opt,name=after_id,json=afterId,proto3" json:"after_id,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -894,10 +903,18 @@ func (x *ListChangedRequest) GetLimit() uint32 {
 	return 0
 }
 
+func (x *ListChangedRequest) GetAfterId() string {
+	if x != nil {
+		return x.AfterId
+	}
+	return ""
+}
+
 type ListChangedResponse struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	Documents     []*Document            `protobuf:"bytes,1,rep,name=documents,proto3" json:"documents,omitempty"`
 	NextSince     *timestamppb.Timestamp `protobuf:"bytes,2,opt,name=next_since,json=nextSince,proto3" json:"next_since,omitempty"`
+	NextAfterId   string                 `protobuf:"bytes,3,opt,name=next_after_id,json=nextAfterId,proto3" json:"next_after_id,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -944,6 +961,13 @@ func (x *ListChangedResponse) GetNextSince() *timestamppb.Timestamp {
 		return x.NextSince
 	}
 	return nil
+}
+
+func (x *ListChangedResponse) GetNextAfterId() string {
+	if x != nil {
+		return x.NextAfterId
+	}
+	return ""
 }
 
 var File_document_v1_document_proto protoreflect.FileDescriptor
@@ -1003,11 +1027,12 @@ const file_document_v1_document_proto_rawDesc = "" +
 	"\n" +
 	"operations\x18\x02 \x03(\v2\x12.crdt.v1.OperationR\n" +
 	"operations\x12\x15\n" +
-	"\x06op_seq\x18\x03 \x01(\x04R\x05opSeq\"N\n" +
+	"\x06op_seq\x18\x03 \x01(\x04R\x05opSeq\"f\n" +
 	"\x13ClaimReplicaRequest\x12\x1f\n" +
 	"\vdocument_id\x18\x01 \x01(\tR\n" +
 	"documentId\x12\x16\n" +
-	"\x06client\x18\x02 \x01(\x04R\x06client\".\n" +
+	"\x06client\x18\x02 \x01(\x04R\x06client\x12\x16\n" +
+	"\x06system\x18\x03 \x01(\bR\x06system\".\n" +
 	"\x14ClaimReplicaResponse\x12\x16\n" +
 	"\x06client\x18\x01 \x01(\x04R\x06client\"y\n" +
 	"\x13ForkDocumentRequest\x12\x1b\n" +
@@ -1015,14 +1040,16 @@ const file_document_v1_document_proto_rawDesc = "" +
 	"\x03seq\x18\x02 \x01(\x04R\x03seq\x12\x14\n" +
 	"\x05title\x18\x03 \x01(\tR\x05title\x12\x1d\n" +
 	"\n" +
-	"request_id\x18\x04 \x01(\tR\trequestId\"\\\n" +
+	"request_id\x18\x04 \x01(\tR\trequestId\"w\n" +
 	"\x12ListChangedRequest\x120\n" +
 	"\x05since\x18\x01 \x01(\v2\x1a.google.protobuf.TimestampR\x05since\x12\x14\n" +
-	"\x05limit\x18\x02 \x01(\rR\x05limit\"\x85\x01\n" +
+	"\x05limit\x18\x02 \x01(\rR\x05limit\x12\x19\n" +
+	"\bafter_id\x18\x03 \x01(\tR\aafterId\"\xa9\x01\n" +
 	"\x13ListChangedResponse\x123\n" +
 	"\tdocuments\x18\x01 \x03(\v2\x15.document.v1.DocumentR\tdocuments\x129\n" +
 	"\n" +
-	"next_since\x18\x02 \x01(\v2\x1a.google.protobuf.TimestampR\tnextSince2\xf5\x05\n" +
+	"next_since\x18\x02 \x01(\v2\x1a.google.protobuf.TimestampR\tnextSince\x12\"\n" +
+	"\rnext_after_id\x18\x03 \x01(\tR\vnextAfterId2\xf5\x05\n" +
 	"\x0fDocumentService\x12K\n" +
 	"\x0eCreateDocument\x12\".document.v1.CreateDocumentRequest\x1a\x15.document.v1.Document\x12E\n" +
 	"\vGetDocument\x12\x1f.document.v1.GetDocumentRequest\x1a\x15.document.v1.Document\x12M\n" +

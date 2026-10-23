@@ -25,20 +25,20 @@ func TestClaimReplica(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if got, err := st.ClaimReplica(ctx, home.ID, 77); err != nil || got != 77 {
+	if got, err := st.ClaimReplica(ctx, home.ID, 77, false); err != nil || got != 77 {
 		t.Fatalf("claim = %d, %v", got, err)
 	}
-	if got, err := st.ClaimReplica(ctx, home.ID, 77); err != nil || got != 77 {
+	if got, err := st.ClaimReplica(ctx, home.ID, 77, false); err != nil || got != 77 {
 		t.Fatalf("repeat claim = %d, %v", got, err)
 	}
-	if _, err := st.ClaimReplica(ctx, branch, 77); !errors.Is(err, domain.ErrReplicaHomedElsewhere) {
+	if _, err := st.ClaimReplica(ctx, branch, 77, false); !errors.Is(err, domain.ErrReplicaHomedElsewhere) {
 		t.Fatalf("branch claim error = %v", err)
 	}
-	if got, err := st.ClaimReplica(ctx, unrelated.ID, 77); err != nil || got != 77 {
+	if got, err := st.ClaimReplica(ctx, unrelated.ID, 77, false); err != nil || got != 77 {
 		t.Fatalf("unrelated claim = %d, %v", got, err)
 	}
 
-	allocated, err := st.ClaimReplica(ctx, home.ID, 0)
+	allocated, err := st.ClaimReplica(ctx, home.ID, 0, false)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -68,7 +68,7 @@ func TestClaimReplicaConcurrentRace(t *testing.T) {
 		go func() {
 			defer wg.Done()
 			<-start
-			_, err := st.ClaimReplica(ctx, doc, 88)
+			_, err := st.ClaimReplica(ctx, doc, 88, false)
 			results <- result{doc: doc, err: err}
 		}()
 	}
@@ -95,7 +95,7 @@ func TestClaimReplicaConcurrentRace(t *testing.T) {
 func TestClaimReplicaRejectsMissingAndArchived(t *testing.T) {
 	st, _ := testdb.Open(t)
 	ctx := t.Context()
-	if _, err := st.ClaimReplica(ctx, uuid.New(), 1); !errors.Is(err, domain.ErrNotFound) {
+	if _, err := st.ClaimReplica(ctx, uuid.New(), 1, false); !errors.Is(err, domain.ErrNotFound) {
 		t.Fatalf("missing error = %v", err)
 	}
 	doc, err := st.Create(ctx, "archived", "owner")
@@ -105,8 +105,27 @@ func TestClaimReplicaRejectsMissingAndArchived(t *testing.T) {
 	if _, err := st.Archive(ctx, doc.ID); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := st.ClaimReplica(ctx, doc.ID, 1); !errors.Is(err, domain.ErrArchived) {
+	if _, err := st.ClaimReplica(ctx, doc.ID, 1, false); !errors.Is(err, domain.ErrArchived) {
 		t.Fatalf("archived error = %v", err)
+	}
+}
+
+func TestClaimReplicaRefusesClientClaimOfSystemID(t *testing.T) {
+	st, _ := testdb.Open(t)
+	ctx := t.Context()
+	doc, err := st.Create(ctx, "home", "owner")
+	if err != nil {
+		t.Fatal(err)
+	}
+	sys, err := st.ClaimReplica(ctx, doc.ID, 0, true)
+	if err != nil || sys == 0 {
+		t.Fatalf("system allocate = %d, %v", sys, err)
+	}
+	if _, err := st.ClaimReplica(ctx, doc.ID, sys, false); !errors.Is(err, domain.ErrReplicaHomedElsewhere) {
+		t.Fatalf("client claim of system id = %v", err)
+	}
+	if got, err := st.ClaimReplica(ctx, doc.ID, sys, true); err != nil || got != sys {
+		t.Fatalf("system re-claim = %d, %v", got, err)
 	}
 }
 

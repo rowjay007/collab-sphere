@@ -59,6 +59,12 @@ func (h *History) Merge(ctx context.Context, src, dst uuid.UUID, requestID strin
 	if src == dst {
 		return MergeResult{}, fmt.Errorf("%w: source and target are the same document", ErrInvalidArgument)
 	}
+	if err := h.startChain(ctx, src); err != nil {
+		return MergeResult{}, err
+	}
+	if err := h.startChain(ctx, dst); err != nil {
+		return MergeResult{}, err
+	}
 	ctx, unlock, err := h.ensureHold(ctx, []uuid.UUID{src, dst})
 	if err != nil {
 		return MergeResult{}, err
@@ -171,6 +177,9 @@ func (h *History) Merge(ctx context.Context, src, dst uuid.UUID, requestID strin
 func (h *History) Restore(ctx context.Context, doc uuid.UUID, vid dag.NodeID, requestID string) (store.Version, error) {
 	if requestID == "" {
 		return store.Version{}, fmt.Errorf("%w: request_id is required", ErrInvalidArgument)
+	}
+	if err := h.startChain(ctx, doc); err != nil {
+		return store.Version{}, err
 	}
 	ctx, unlock, err := h.ensureHold(ctx, []uuid.UUID{doc})
 	if err != nil {
@@ -289,6 +298,9 @@ func (h *History) mergeIfKnown(ctx context.Context, requestID string, src, dst u
 	if m.Kind != store.KindMerge || m.Doc != dst || m.SourceDoc == nil || *m.SourceDoc != src {
 		return MergeResult{}, true, fmt.Errorf("%w: request_id %s is a different mutation", ErrAlreadyExists, requestID)
 	}
+	if m.State == store.StateFailed {
+		return MergeResult{}, true, fmt.Errorf("%w: mutation %s failed", ErrFailedPrecondition, requestID)
+	}
 	if m.State != store.StateDone {
 		if err := h.drive(ctx, m); err != nil {
 			return MergeResult{}, true, err
@@ -316,6 +328,9 @@ func (h *History) restoreIfKnown(ctx context.Context, requestID string, doc uuid
 	if m.Kind != store.KindRestore || m.Doc != doc || m.SourceNode == nil || *m.SourceNode != vid {
 		return store.Version{}, true, fmt.Errorf("%w: request_id %s is a different mutation", ErrAlreadyExists, requestID)
 	}
+	if m.State == store.StateFailed {
+		return store.Version{}, true, fmt.Errorf("%w: mutation %s failed", ErrFailedPrecondition, requestID)
+	}
 	if m.State != store.StateDone {
 		if err := h.drive(ctx, m); err != nil {
 			return store.Version{}, true, err
@@ -336,6 +351,20 @@ func (h *History) drive(ctx context.Context, m store.Mutation) error {
 	if m.State == store.StateDone {
 		return nil
 	}
+	if m.State == store.StateFailed {
+		return fmt.Errorf("%w: mutation %s failed", ErrFailedPrecondition, m.RequestID)
+	}
+	doc, err := h.docs.Get(ctx, m.Doc)
+	if err != nil {
+		return err
+	}
+	if holdFrom(ctx) == nil {
+		if err := h.startChain(ctx, m.Doc); err != nil {
+			return err
+		}
+	} else if err := h.ensureStarted(ctx, doc); err != nil {
+		return err
+	}
 	ctx, unlock, err := h.ensureHold(ctx, []uuid.UUID{m.Doc})
 	if err != nil {
 		return err
@@ -351,6 +380,14 @@ func (h *History) drive(ctx context.Context, m store.Mutation) error {
 		end := min(i+appendChunk, len(ops))
 		res, err := h.docs.Append(ctx, m.Doc, ops[i:end])
 		if err != nil {
+			if isOpConflict(err) {
+				if markErr := h.do(ctx, []uuid.UUID{m.Doc}, func(tx store.Tx) error {
+					return tx.SetMutationState(ctx, m.RequestID, store.StateFailed)
+				}); markErr != nil {
+					return markErr
+				}
+				return fmt.Errorf("%w: %v", ErrFailedPrecondition, err)
+			}
 			return err
 		}
 		seqs = append(seqs, res.Seqs...)
@@ -422,26 +459,45 @@ func (h *History) materializeBelow(ctx context.Context, tx store.Tx, id uuid.UUI
 }
 
 func (h *History) firstCovering(ctx context.Context, doc uuid.UUID, vec crdt.VersionVector) (store.Version, error) {
-	if _, err := h.nodeAtHead(ctx, doc); err != nil {
-		return store.Version{}, err
-	}
-	vs, err := h.store.Versions(ctx, doc, -1, 1_000_000)
+	head, err := h.nodeAtHead(ctx, doc)
 	if err != nil {
 		return store.Version{}, err
 	}
-	for _, v := range vs {
+	d, err := h.load(ctx, head.Node.Content)
+	if err != nil {
+		return store.Version{}, err
+	}
+	if !d.Vector().CoversAll(vec) {
+		return store.Version{}, fmt.Errorf("head of %s does not cover the source", doc)
+	}
+	// Containment is monotonic along one document's chain: if i < j then
+	// state@j covers state@i. Binary search finds the earliest covering seq.
+	lo, hi := uint64(0), head.Node.Seq
+	found := head
+	for lo <= hi {
+		mid := lo + (hi-lo)/2
+		v, ok, err := h.store.NodeAtOrBelow(ctx, doc, mid)
+		if err != nil {
+			return store.Version{}, err
+		}
+		if !ok {
+			return store.Version{}, fmt.Errorf("no versions of %s at or below %d", doc, mid)
+		}
 		d, err := h.load(ctx, v.Node.Content)
 		if err != nil {
 			return store.Version{}, err
 		}
 		if d.Vector().CoversAll(vec) {
-			return v, nil
+			found = v
+			if v.Node.Seq == 0 {
+				break
+			}
+			hi = v.Node.Seq - 1
+		} else {
+			lo = mid + 1
 		}
 	}
-	if len(vs) == 0 {
-		return store.Version{}, fmt.Errorf("no versions of %s", doc)
-	}
-	return vs[len(vs)-1], nil
+	return found, nil
 }
 
 func (h *History) nodeAtHead(ctx context.Context, id uuid.UUID) (store.Version, error) {
@@ -450,6 +506,10 @@ func (h *History) nodeAtHead(ctx context.Context, id uuid.UUID) (store.Version, 
 		return store.Version{}, err
 	}
 	return h.nodeAt(ctx, id, doc.OpSeq, "")
+}
+
+func isOpConflict(err error) bool {
+	return errors.Is(err, ErrConflict) || errors.Is(err, crdt.ErrConflict)
 }
 
 func (h *History) systemReplica(ctx context.Context, doc uuid.UUID) (crdt.ClientID, error) {
@@ -466,7 +526,7 @@ func (h *History) systemReplica(ctx context.Context, doc uuid.UUID) (crdt.Client
 	if found {
 		return crdt.ClientID(id), nil
 	}
-	claimed, err := h.docs.ClaimReplica(ctx, doc, 0)
+	claimed, err := h.docs.ClaimReplica(ctx, doc, 0, true)
 	if err != nil {
 		return 0, err
 	}

@@ -292,6 +292,15 @@ func TestGRPCClaimReplica(t *testing.T) {
 	if info.GetReason() != docgrpc.ReplicaHomedElsewhereReason {
 		t.Fatalf("claim detail = %v", info)
 	}
+
+	sys, err := client.ClaimReplica(ctx, &documentv1.ClaimReplicaRequest{DocumentId: home.GetId(), System: true})
+	if err != nil || sys.GetClient() == 0 {
+		t.Fatalf("system allocate = %v, %v", sys, err)
+	}
+	_, err = client.ClaimReplica(ctx, &documentv1.ClaimReplicaRequest{DocumentId: home.GetId(), Client: sys.GetClient()})
+	if status.Code(err) != codes.FailedPrecondition {
+		t.Fatalf("client claim of system id = %v", err)
+	}
 }
 
 func TestGRPCForkAndListChanged(t *testing.T) {

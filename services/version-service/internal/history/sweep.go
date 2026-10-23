@@ -28,14 +28,19 @@ func (h *History) Sweep(ctx context.Context, interval time.Duration) {
 	}
 }
 
+func (h *History) SweepOnce(ctx context.Context, since time.Time) time.Time {
+	return h.sweepOnce(ctx, since)
+}
+
 func (h *History) sweepOnce(ctx context.Context, since time.Time) time.Time {
 	from := since
 	if !from.IsZero() {
 		from = from.Add(-sweepOverlap)
 	}
 	newest := since
+	var afterID string
 	for ctx.Err() == nil {
-		ids, next, err := h.docs.ListChanged(ctx, from, sweepPage)
+		ids, next, nextAfter, err := h.docs.ListChanged(ctx, from, afterID, sweepPage)
 		if err != nil {
 			slog.Error("sweep: list changed documents", "err", err)
 			return newest
@@ -48,10 +53,11 @@ func (h *History) sweepOnce(ctx context.Context, since time.Time) time.Time {
 		if next.After(newest) {
 			newest = next
 		}
-		if len(ids) < sweepPage || !next.After(from) {
+		if len(ids) < sweepPage {
 			return newest
 		}
 		from = next
+		afterID = nextAfter
 	}
 	return newest
 }

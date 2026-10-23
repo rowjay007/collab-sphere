@@ -180,25 +180,38 @@ func (s *Store) Archive(ctx context.Context, id uuid.UUID) (domain.Document, err
 	return doc, nil
 }
 
-func (s *Store) ListChanged(ctx context.Context, since time.Time, limit int) ([]domain.Document, time.Time, error) {
+func (s *Store) ListChanged(ctx context.Context, since time.Time, afterID uuid.UUID, limit int) ([]domain.Document, time.Time, uuid.UUID, error) {
 	if limit < 0 {
-		return nil, time.Time{}, fmt.Errorf("%w: limit %d", domain.ErrInvalidArgument, limit)
+		return nil, time.Time{}, uuid.Nil, fmt.Errorf("%w: limit %d", domain.ErrInvalidArgument, limit)
 	}
 	if limit == 0 {
 		limit = defaultChangedLimit
 	}
 	if limit > maxChangedLimit {
-		return nil, time.Time{}, fmt.Errorf("%w: limit %d", domain.ErrInvalidArgument, limit)
+		return nil, time.Time{}, uuid.Nil, fmt.Errorf("%w: limit %d", domain.ErrInvalidArgument, limit)
 	}
 
-	rows, err := s.pool.Query(ctx, `
-		SELECT `+documentColumns+`
-		FROM documents
-		WHERE status = $1 AND updated_at >= $2
-		ORDER BY updated_at, id
-		LIMIT $3`, domain.StatusActive, since, limit)
+	var (
+		rows pgx.Rows
+		err  error
+	)
+	if afterID != uuid.Nil {
+		rows, err = s.pool.Query(ctx, `
+			SELECT `+documentColumns+`
+			FROM documents
+			WHERE status = $1 AND (updated_at, id) > ($2, $3)
+			ORDER BY updated_at, id
+			LIMIT $4`, domain.StatusActive, since, afterID, limit)
+	} else {
+		rows, err = s.pool.Query(ctx, `
+			SELECT `+documentColumns+`
+			FROM documents
+			WHERE status = $1 AND updated_at >= $2
+			ORDER BY updated_at, id
+			LIMIT $3`, domain.StatusActive, since, limit)
+	}
 	if err != nil {
-		return nil, time.Time{}, fmt.Errorf("list changed: %w", err)
+		return nil, time.Time{}, uuid.Nil, fmt.Errorf("list changed: %w", err)
 	}
 	defer rows.Close()
 
@@ -206,18 +219,20 @@ func (s *Store) ListChanged(ctx context.Context, since time.Time, limit int) ([]
 	for rows.Next() {
 		doc, err := scanDocument(rows)
 		if err != nil {
-			return nil, time.Time{}, err
+			return nil, time.Time{}, uuid.Nil, err
 		}
 		docs = append(docs, doc)
 	}
 	if err := rows.Err(); err != nil {
-		return nil, time.Time{}, err
+		return nil, time.Time{}, uuid.Nil, err
 	}
 	next := since
+	nextAfter := uuid.Nil
 	if len(docs) > 0 {
 		next = docs[len(docs)-1].UpdatedAt
+		nextAfter = docs[len(docs)-1].ID
 	}
-	return docs, next, nil
+	return docs, next, nextAfter, nil
 }
 
 func scanDocument(row pgx.Row) (domain.Document, error) {
