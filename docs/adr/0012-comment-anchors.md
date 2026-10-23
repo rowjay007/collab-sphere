@@ -14,7 +14,7 @@ An anchor is an inclusive range `[start, end]` of character IDs. comment-service
 
 Resolution is `(*Doc).ResolveRange(start, end)`. Each endpoint maps through `Resolve` to a visible copy, or stays at its tombstone. The range is every visible node from that start position to that end position, inclusive. Inserts inside the range join it. Text typed immediately before start, or as a child of end, stays outside. Zero visible characters is `DETACHED`. The stored IDs stay, so a restore or a merge that brings the text back re-attaches the comment.
 
-A thread with home H and `created_seq` S is visible in document X if and only if `Frontier(X)[H] >= S`. That is one predicate. ListThreads loads X, asks Versions for the frontier, and applies the predicate to every thread. It then resolves each visible anchor on X's state.
+A thread with home H and `created_seq` S is visible in document X if and only if `Frontier(X)[H] >= S`. That is one predicate. ListThreads asks Versions for Frontier(X), loads threads whose `home` is a key of that map (`WHERE home = ANY(...)`), and then applies the `created_seq` rule. It then resolves each visible anchor on X's state.
 
 Mentions are parsed at write time with `(?:^|\s)@([a-z0-9][a-z0-9._-]{0,63})`, stored in first-appearance order, and de-duplicated. Notifications are rows in the same transaction as the comment or resolve write. That table is the outbox. ListNotifications pages it by a monotonic id. Phase 3 does not push comments over the WebSocket. Clients poll ListThreads and resolve anchors on the local replica.
 
@@ -24,9 +24,9 @@ Every write carries `request_id`. The store records a payload fingerprint. The s
 
 Phase 5 must not collect a comment-anchor endpoint. Tombstones are what keep a detached range positioned.
 
-### Version-service Frontier is unbound in this unit
+### Version-service Frontier is bound
 
-`proto/version` is owned by a concurrent unit and is not in the tree. comment-service still requires `VERSION_ADDR` at process start and exits if it is unset. `versions.FrontierClient` implements the Versions port and returns Unavailable. It does not treat Frontier as `{X: head}`. Tests inject a fake Versions. A later unit binds the real `version.v1.VersionService/Frontier` client behind the same port.
+`versions.FrontierClient` is a gRPC client of `version.v1.VersionService/Frontier`. `VERSION_ADDR` is still required at process start. An Unavailable RPC error becomes `ErrUnavailable`. The client does not invent `{X: head}`. Unit tests still inject a fake Versions.
 
 ## Alternatives rejected
 
@@ -42,4 +42,4 @@ Clients highlight at keystroke latency because `ResolveAnchor` runs under the re
 
 A B comment appears in D only after the merge that contains `B@created_seq`. Resolving it in D resolves it in B, because there is one thread row.
 
-cmd cannot serve ListThreads in production until the later Frontier binding lands. Create, Reply, and SetResolved do not call Frontier.
+ListThreads returns Unavailable when version-service is down. Create, Reply, and SetResolved do not call Frontier.

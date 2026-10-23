@@ -80,7 +80,11 @@ func (s *Service) List(ctx context.Context, docID uuid.UUID, includeResolved boo
 	if err != nil {
 		return nil, err
 	}
-	threads, err := s.db.listThreads(ctx)
+	homes := make([]uuid.UUID, 0, len(frontier))
+	for home := range frontier {
+		homes = append(homes, home)
+	}
+	threads, err := s.db.listThreads(ctx, homes)
 	if err != nil {
 		return nil, err
 	}

@@ -5,20 +5,44 @@ import (
 	"fmt"
 
 	"github.com/google/uuid"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
 
+	versionv1 "github.com/rowjay007/collab-sphere/gen/version/v1"
 	"github.com/rowjay007/collab-sphere/services/comment-service/internal/comments"
 )
 
-// FrontierClient implements comments.Versions until version-service exposes
-// version.v1.VersionService/Frontier. It never invents {doc: head}.
 type FrontierClient struct {
-	addr string
+	rpc versionv1.VersionServiceClient
 }
 
-func NewFrontierClient(addr string) *FrontierClient {
-	return &FrontierClient{addr: addr}
+func NewFrontierClient(rpc versionv1.VersionServiceClient) *FrontierClient {
+	return &FrontierClient{rpc: rpc}
 }
 
-func (c *FrontierClient) Frontier(context.Context, uuid.UUID) (map[uuid.UUID]uint64, error) {
-	return nil, fmt.Errorf("%w: version-service Frontier at %s is not bound yet", comments.ErrUnavailable, c.addr)
+func (c *FrontierClient) Frontier(ctx context.Context, doc uuid.UUID) (map[uuid.UUID]uint64, error) {
+	resp, err := c.rpc.Frontier(ctx, &versionv1.FrontierRequest{DocId: doc.String()})
+	if err != nil {
+		return nil, mapError(err)
+	}
+	out := make(map[uuid.UUID]uint64, len(resp.GetEntries()))
+	for _, e := range resp.GetEntries() {
+		id, err := uuid.Parse(e.GetDocumentId())
+		if err != nil {
+			return nil, fmt.Errorf("frontier document_id %q: %w", e.GetDocumentId(), err)
+		}
+		out[id] = e.GetSeq()
+	}
+	return out, nil
+}
+
+func mapError(err error) error {
+	switch status.Code(err) {
+	case codes.Unavailable:
+		return fmt.Errorf("%w: version-service: %s", comments.ErrUnavailable, status.Convert(err).Message())
+	case codes.NotFound:
+		return fmt.Errorf("%w: version-service: %s", comments.ErrNotFound, status.Convert(err).Message())
+	default:
+		return err
+	}
 }

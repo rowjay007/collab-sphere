@@ -341,10 +341,10 @@ func (s *store) loadMentions(ctx context.Context, commentID uuid.UUID) ([]string
 	return out, rows.Err()
 }
 
-func (s *store) listThreads(ctx context.Context) ([]Thread, error) {
+func (s *store) listThreads(ctx context.Context, homes []uuid.UUID) ([]Thread, error) {
 	rows, err := s.pool.Query(ctx, `
 		SELECT id, home, created_seq, start_client, start_clock, end_client, end_clock, resolved, author, created_at
-		FROM threads ORDER BY created_at, id`)
+		FROM threads WHERE home = ANY($1) ORDER BY created_at, id`, homes)
 	if err != nil {
 		return nil, err
 	}

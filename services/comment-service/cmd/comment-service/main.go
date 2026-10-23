@@ -15,6 +15,7 @@ import (
 
 	commentv1 "github.com/rowjay007/collab-sphere/gen/comment/v1"
 	documentv1 "github.com/rowjay007/collab-sphere/gen/document/v1"
+	versionv1 "github.com/rowjay007/collab-sphere/gen/version/v1"
 	"github.com/rowjay007/collab-sphere/services/comment-service/internal/comments"
 	"github.com/rowjay007/collab-sphere/services/comment-service/internal/docs"
 	commentgrpc "github.com/rowjay007/collab-sphere/services/comment-service/internal/grpc"
@@ -79,13 +80,20 @@ func main() {
 	}
 	defer docConn.Close()
 
+	verConn, err := grpc.NewClient(cfg.versionAddr, grpc.WithTransportCredentials(insecure.NewCredentials()))
+	if err != nil {
+		slog.Error("dial version-service", "err", err)
+		os.Exit(1)
+	}
+	defer verConn.Close()
+
 	lis, err := net.Listen("tcp", cfg.grpcAddr)
 	if err != nil {
 		slog.Error("listen", "err", err, "addr", cfg.grpcAddr)
 		os.Exit(1)
 	}
 
-	svc := comments.New(pool, docs.New(documentv1.NewDocumentServiceClient(docConn)), versions.NewFrontierClient(cfg.versionAddr))
+	svc := comments.New(pool, docs.New(documentv1.NewDocumentServiceClient(docConn)), versions.NewFrontierClient(versionv1.NewVersionServiceClient(verConn)))
 	server := grpc.NewServer()
 	commentv1.RegisterCommentServiceServer(server, commentgrpc.New(svc))
 

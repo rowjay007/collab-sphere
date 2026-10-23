@@ -255,6 +255,26 @@ func TestListFiltersByFrontier(t *testing.T) {
 		t.Fatalf("created_seq %d", th.CreatedSeq)
 	}
 
+	other := uuid.New()
+	docs.put(other, doc, 5)
+	thOther, err := svc.Create(ctx, other, anchor, "ann", "on other", "vis-other")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	vers.set(view, map[uuid.UUID]uint64{home: 10, other: 5})
+	both, err := svc.List(ctx, view, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(both) != 2 {
+		t.Fatalf("frontier keys listed %d", len(both))
+	}
+	seen := map[uuid.UUID]bool{both[0].ID: true, both[1].ID: true}
+	if !seen[th.ID] || !seen[thOther.ID] {
+		t.Fatalf("frontier keys %+v", both)
+	}
+
 	vers.set(view, map[uuid.UUID]uint64{home: 10})
 	listed, err := svc.List(ctx, view, false)
 	if err != nil {

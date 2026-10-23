@@ -2,47 +2,62 @@ package stack
 
 import (
 	"context"
-	"net"
+	"fmt"
+	"os"
+	"os/exec"
+	"path/filepath"
+	"sync"
+	"testing"
 
 	"github.com/google/uuid"
-	"github.com/jackc/pgx/v5/pgxpool"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/credentials/insecure"
 	"google.golang.org/grpc/status"
 
 	commentv1 "github.com/rowjay007/collab-sphere/gen/comment/v1"
-	"github.com/rowjay007/collab-sphere/services/comment-service/inproc"
 )
 
-type CommentVersions interface {
-	Frontier(ctx context.Context, doc uuid.UUID) (map[uuid.UUID]uint64, error)
+var (
+	commentBuildOnce sync.Once
+	commentBin       string
+	commentBuildErr  error
+)
+
+func commentBinary(t *testing.T) string {
+	t.Helper()
+	commentBuildOnce.Do(func() {
+		dir, err := os.MkdirTemp("", "collab-e2e-comment")
+		if err != nil {
+			commentBuildErr = err
+			return
+		}
+		commentBin = filepath.Join(dir, "comment-service")
+		args := append(append([]string{"build"}, buildFlags...), "-o", commentBin, "./services/comment-service/cmd/comment-service")
+		cmd := exec.Command("go", args...)
+		cmd.Dir = repoRoot()
+		if out, err := cmd.CombinedOutput(); err != nil {
+			commentBuildErr = fmt.Errorf("build comment-service: %v\n%s", err, out)
+		}
+	})
+	if commentBuildErr != nil {
+		t.Fatal(commentBuildErr)
+	}
+	return commentBin
 }
 
-func StartCommentService(s *Stack, versions CommentVersions) commentv1.CommentServiceClient {
+// StartCommentService starts comment-service against the stack's
+// document-service and vs, on its own database.
+func StartCommentService(s *Stack, vs *VersionService) commentv1.CommentServiceClient {
 	s.t.Helper()
-	ctx := context.Background()
-	pool, err := pgxpool.New(ctx, freshDatabase(s.t))
-	if err != nil {
-		s.t.Fatal(err)
-	}
-	s.t.Cleanup(pool.Close)
-	if err := inproc.Migrate(ctx, pool); err != nil {
-		s.t.Fatal(err)
-	}
-
 	addr := freeAddr(s.t)
-	lis, err := net.Listen("tcp", addr)
-	if err != nil {
-		s.t.Fatal(err)
+	env := []string{
+		"DATABASE_URL=" + freshDatabase(s.t),
+		"GRPC_ADDR=" + addr,
+		"DOCUMENT_ADDR=" + s.grpc,
+		"VERSION_ADDR=" + vs.addr,
 	}
-	server := inproc.NewServer(pool, s.Docs, versions)
-	go server.Serve(lis)
-	s.t.Cleanup(func() {
-		server.GracefulStop()
-		_ = lis.Close()
-	})
-
+	start(s.t, "comment-service", commentBinary(s.t), env...)
 	conn, err := grpc.NewClient(addr, grpc.WithTransportCredentials(insecure.NewCredentials()))
 	if err != nil {
 		s.t.Fatal(err)
