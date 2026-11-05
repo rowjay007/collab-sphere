@@ -61,7 +61,11 @@ func (s *Store) Load(ctx context.Context, docID string) (*crdt.Doc, uint64, erro
 	}
 	var doc *crdt.Doc
 	if resp.GetSnapshot() == nil {
-		doc = crdt.New()
+		if resp.GetDocument().GetEncryption() == "encrypted" {
+			doc = crdt.NewEncrypted()
+		} else {
+			doc = crdt.New()
+		}
 	} else {
 		doc, err = crdt.FromSnapshot(resp.GetSnapshot())
 		if err != nil {

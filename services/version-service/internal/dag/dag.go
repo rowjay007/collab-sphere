@@ -23,10 +23,11 @@ func (h Hash) String() string { return hex.EncodeToString(h[:]) }
 // [base] for a fork's first node and [prev] for any later node; the first
 // parent is the document's own line.
 type Node struct {
-	Doc     uuid.UUID
-	Seq     uint64
-	Content Hash
-	Parents []NodeID
+	Doc      uuid.UUID
+	Seq      uint64
+	Content  Hash
+	Parents  []NodeID
+	IDPrefix string
 }
 
 const idMagic = "CSV1"
@@ -34,8 +35,12 @@ const idMagic = "CSV1"
 // ID is SHA-256("CSV1" | doc uuid[16] | uvarint(seq) | content_hash[32] |
 // uvarint(len(parents)) | parent_id[32]...).
 func (n Node) ID() NodeID {
-	b := make([]byte, 0, len(idMagic)+16+binary.MaxVarintLen64+32+1+32*len(n.Parents))
-	b = append(b, idMagic...)
+	magic := idMagic
+	if n.IDPrefix != "" {
+		magic = n.IDPrefix
+	}
+	b := make([]byte, 0, len(magic)+16+binary.MaxVarintLen64+32+1+32*len(n.Parents))
+	b = append(b, magic...)
 	b = append(b, n.Doc[:]...)
 	b = binary.AppendUvarint(b, n.Seq)
 	b = append(b, n.Content[:]...)

@@ -14,6 +14,7 @@ import (
 
 	permissionv1 "github.com/rowjay007/collab-sphere/gen/permission/v1"
 	"github.com/rowjay007/collab-sphere/pkg/auth"
+	permdocs "github.com/rowjay007/collab-sphere/services/permission-service/internal/docs"
 	permgrpc "github.com/rowjay007/collab-sphere/services/permission-service/internal/grpc"
 	"github.com/rowjay007/collab-sphere/services/permission-service/internal/perms"
 )
@@ -99,7 +100,15 @@ func main() {
 		os.Exit(1)
 	}
 
+	docsClient, err := permdocs.Dial(cfg.documentAddr, cfg.internal)
+	if err != nil {
+		slog.Error("dial document-service", "err", err)
+		os.Exit(1)
+	}
+	defer docsClient.Close()
+
 	svc := perms.New(pool, share)
+	svc.UseEpochs(docsClient)
 	server := grpc.NewServer(
 		grpc.UnaryInterceptor(auth.UnaryInterceptor(pub, cfg.internal, permgrpc.Methods())),
 		grpc.StreamInterceptor(auth.StreamInterceptor(pub, cfg.internal, permgrpc.Methods())),

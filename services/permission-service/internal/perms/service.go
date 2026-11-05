@@ -17,11 +17,16 @@ const (
 	maxLinkTTL = 30 * 24 * time.Hour
 )
 
+type Epochs interface {
+	SetEpoch(ctx context.Context, doc uuid.UUID, epoch uint32, state string) error
+}
+
 type Service struct {
 	db        *store
 	sharePriv ed25519.PrivateKey
 	sharePub  ed25519.PublicKey
 	now       func() time.Time
+	epochs    Epochs
 }
 
 func New(pool *pgxpool.Pool, sharePriv ed25519.PrivateKey) *Service {
@@ -33,11 +38,17 @@ func New(pool *pgxpool.Pool, sharePriv ed25519.PrivateKey) *Service {
 	}
 }
 
+func (s *Service) UseEpochs(epochs Epochs) { s.epochs = epochs }
+
 func (s *Service) EnsureOwner(ctx context.Context, doc uuid.UUID, user string) (Grant, error) {
+	return s.EnsureDocument(ctx, doc, user, false)
+}
+
+func (s *Service) EnsureDocument(ctx context.Context, doc uuid.UUID, user string, encrypted bool) (Grant, error) {
 	if !auth.ValidHandle(user) {
 		return Grant{}, fmt.Errorf("%w: user id", ErrInvalidArgument)
 	}
-	return s.db.insertOwner(ctx, doc, user)
+	return s.db.insertOwner(ctx, doc, user, encrypted)
 }
 
 func (s *Service) Grant(ctx context.Context, actor string, doc uuid.UUID, user string, role Role) (Grant, error) {
@@ -57,7 +68,27 @@ func (s *Service) Grant(ctx context.Context, actor string, doc uuid.UUID, user s
 	if err != nil && err != ErrNotFound {
 		return Grant{}, err
 	}
-	return s.db.upsertGrant(ctx, doc, user, role)
+	return s.db.grantMember(ctx, doc, user, role, nil)
+}
+
+func (s *Service) GrantWithWraps(ctx context.Context, actor string, doc uuid.UUID, user string, role Role, wraps []KeyWrap) (Grant, error) {
+	if err := s.requireOwner(ctx, actor, doc); err != nil {
+		return Grant{}, err
+	}
+	if !auth.ValidHandle(user) {
+		return Grant{}, fmt.Errorf("%w: user id", ErrInvalidArgument)
+	}
+	if role == RoleOwner || role.rank() == 0 {
+		return Grant{}, fmt.Errorf("%w: role", ErrInvalidArgument)
+	}
+	existing, err := s.db.grant(ctx, doc, user)
+	if err == nil && existing.Role == RoleOwner {
+		return Grant{}, ErrAlreadyExists
+	}
+	if err != nil && err != ErrNotFound {
+		return Grant{}, err
+	}
+	return s.db.grantMember(ctx, doc, user, role, wraps)
 }
 
 func (s *Service) Revoke(ctx context.Context, actor string, doc uuid.UUID, user string) error {
@@ -67,14 +98,17 @@ func (s *Service) Revoke(ctx context.Context, actor string, doc uuid.UUID, user 
 	if !auth.ValidHandle(user) {
 		return fmt.Errorf("%w: user id", ErrInvalidArgument)
 	}
-	existing, err := s.db.grant(ctx, doc, user)
+	rot, err := s.db.revokeMember(ctx, doc, user)
 	if err != nil {
+		if err == ErrNotFound {
+			s.repairEpoch(ctx, doc)
+		}
 		return err
 	}
-	if existing.Role == RoleOwner {
-		return ErrOwnerNotRevocable
+	if !rot.Rotated {
+		return nil
 	}
-	return s.db.deleteGrant(ctx, doc, user)
+	return s.pushEpoch(ctx, doc, rot.Epoch, rot.State)
 }
 
 func (s *Service) CreateLink(ctx context.Context, actor string, doc uuid.UUID, role Role, exp time.Time) (Link, string, error) {
@@ -142,6 +176,11 @@ func (s *Service) Redeem(ctx context.Context, actor string, token string) (Grant
 	}
 	if !s.now().Before(row.ExpiresAt) {
 		return Grant{}, ErrLinkExpired
+	}
+	if encrypted, err := s.db.hasEpoch(ctx, doc); err != nil {
+		return Grant{}, err
+	} else if encrypted {
+		return Grant{}, ErrEncrypted
 	}
 	return s.db.redeem(ctx, doc, actor, role, id)
 }

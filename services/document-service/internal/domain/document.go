@@ -17,6 +17,13 @@ const (
 
 const SnapshotEvery uint64 = 100
 
+const (
+	EncryptionPlain     = "plain"
+	EncryptionEncrypted = "encrypted"
+	EpochPending        = "pending"
+	EpochOpen           = "open"
+)
+
 type Document struct {
 	ID          uuid.UUID
 	Title       string
@@ -29,6 +36,9 @@ type Document struct {
 	ForkOf      *uuid.UUID
 	ForkSeq     uint64
 	ForkRoot    uuid.UUID
+	Encryption  string
+	WriteEpoch  uint32
+	EpochState  string
 }
 
 var (
@@ -40,6 +50,8 @@ var (
 	ErrReplicaOwned          = errors.New("document: replica owned")
 	ErrOutOfRange            = errors.New("document: out of range")
 	ErrAlreadyExists         = errors.New("document: already exists")
+	ErrEncrypted             = errors.New("document: encrypted")
+	ErrEpoch                 = errors.New("document: epoch")
 )
 
 // ConflictError names the op whose (client, clock) is already stored, or

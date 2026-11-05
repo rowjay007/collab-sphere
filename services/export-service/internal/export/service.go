@@ -1,7 +1,6 @@
 package export
 
 import (
-	"bytes"
 	"context"
 	"errors"
 	"fmt"
@@ -61,8 +60,12 @@ func (s *Service) Request(ctx context.Context, in Request) (Job, error) {
 	if err := s.perms.Require(ctx, in.DocID.String(), user, permissionv1.Role_ROLE_VIEWER); err != nil {
 		return Job{}, err
 	}
-	if _, err := s.docs.GetDocument(ctx, &documentv1.GetDocumentRequest{Id: in.DocID.String()}); err != nil {
+	doc, err := s.docs.GetDocument(ctx, &documentv1.GetDocumentRequest{Id: in.DocID.String()})
+	if err != nil {
 		return Job{}, err
+	}
+	if doc.GetEncryption() == "encrypted" {
+		return Job{}, ErrEncrypted
 	}
 	nodeID, hash, err := s.resolve(ctx, in)
 	if err != nil {
@@ -71,9 +74,6 @@ func (s *Service) Request(ctx context.Context, in Request) (Job, error) {
 	blob, err := s.blob(ctx, hash)
 	if err != nil {
 		return Job{}, err
-	}
-	if bytes.HasPrefix(blob, []byte("CSS2")) {
-		return Job{}, ErrEncrypted
 	}
 	if _, err := render.Text(blob); err != nil {
 		if errors.Is(err, crdt.ErrEncrypted) {

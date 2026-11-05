@@ -66,7 +66,11 @@ func (c *Client) LoadState(ctx context.Context, doc uuid.UUID) (*crdt.Doc, uint6
 	}
 	var state *crdt.Doc
 	if resp.GetSnapshot() == nil {
-		state = crdt.New()
+		if resp.GetDocument().GetEncryption() == "encrypted" {
+			state = crdt.NewEncrypted()
+		} else {
+			state = crdt.New()
+		}
 	} else if state, err = crdt.FromSnapshot(resp.GetSnapshot()); err != nil {
 		return nil, 0, fmt.Errorf("decode snapshot of %s: %w", doc, err)
 	}
@@ -132,7 +136,13 @@ func fromProto(d *documentv1.Document) (history.Document, error) {
 	if err != nil {
 		return history.Document{}, fmt.Errorf("document id %q: %w", d.GetId(), err)
 	}
-	out := history.Document{ID: id, OpSeq: d.GetOpSeq(), ForkSeq: d.GetForkSeq(), ForkRoot: id}
+	out := history.Document{
+		ID:        id,
+		OpSeq:     d.GetOpSeq(),
+		ForkSeq:   d.GetForkSeq(),
+		ForkRoot:  id,
+		Encrypted: d.GetEncryption() == "encrypted",
+	}
 	if d.GetForkOf() != "" {
 		src, err := uuid.Parse(d.GetForkOf())
 		if err != nil {

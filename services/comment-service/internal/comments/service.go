@@ -167,9 +167,13 @@ func resolutionOf(doc *crdt.Doc, a Anchor) (Resolution, error) {
 		return Resolution{}, err
 	}
 	if r.Detached {
-		return Resolution{State: Detached}, nil
+		return Resolution{State: Detached, TextOmitted: r.TextOmitted}, nil
 	}
-	return Resolution{State: Attached, First: r.First, Last: r.Last, Text: r.Text}, nil
+	text := r.Text
+	if r.TextOmitted {
+		text = ""
+	}
+	return Resolution{State: Attached, First: r.First, Last: r.Last, Text: text, TextOmitted: r.TextOmitted}, nil
 }
 
 func mentionNotes(mentions []string) []Notification {

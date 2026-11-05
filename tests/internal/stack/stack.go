@@ -218,6 +218,7 @@ type Stack struct {
 	pubB64      string
 	internal    string
 	sharePriv   string
+	moreDBs     []string
 }
 
 type Option func(*config)
@@ -545,6 +546,23 @@ func (s *Stack) fillInternal() grpc.UnaryClientInterceptor {
 		return invoker(ctx, method, req, reply, cc, opts...)
 	}
 }
+
+func (s *Stack) PostgresURLs() []string {
+	urls := []string{s.dbURL}
+	if s.Perm != nil {
+		urls = append(urls, s.Perm.dbURL)
+	}
+	if s.Versions != nil {
+		urls = append(urls, s.Versions.dbURL)
+	}
+	if s.Export != nil {
+		urls = append(urls, s.Export.dbURL)
+	}
+	urls = append(urls, s.moreDBs...)
+	return urls
+}
+
+func (s *Stack) RedisURL() string { return s.redisURL }
 
 func waitFor(t *testing.T, what string, ready func(ctx context.Context) error) {
 	t.Helper()

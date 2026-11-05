@@ -52,8 +52,10 @@ func commentBinary(t *testing.T) string {
 func StartCommentService(s *Stack, vs *VersionService) commentv1.CommentServiceClient {
 	s.t.Helper()
 	addr := freeAddr(s.t)
+	dbURL := freshDatabase(s.t)
+	s.moreDBs = append(s.moreDBs, dbURL)
 	env := append([]string{
-		"DATABASE_URL=" + freshDatabase(s.t),
+		"DATABASE_URL=" + dbURL,
 		"GRPC_ADDR=" + addr,
 		"DOCUMENT_ADDR=" + s.grpc,
 		"VERSION_ADDR=" + vs.addr,

@@ -17,14 +17,16 @@ var (
 	ErrOutOfRange         = errors.New("history: out of range")
 	ErrFailedPrecondition = errors.New("history: failed precondition")
 	ErrConflict           = errors.New("history: op conflict")
+	ErrEncrypted          = errors.New("history: encrypted")
 )
 
 type Document struct {
-	ID       uuid.UUID
-	OpSeq    uint64
-	ForkOf   *uuid.UUID
-	ForkSeq  uint64
-	ForkRoot uuid.UUID
+	ID        uuid.UUID
+	OpSeq     uint64
+	ForkOf    *uuid.UUID
+	ForkSeq   uint64
+	ForkRoot  uuid.UUID
+	Encrypted bool
 }
 
 type AppendResult struct {

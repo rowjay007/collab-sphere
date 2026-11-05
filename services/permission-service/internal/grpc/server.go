@@ -28,14 +28,18 @@ func New(svc *perms.Service) *Server {
 
 func Methods() map[string]auth.Class {
 	return map[string]auth.Class{
-		permissionv1.PermissionService_EnsureOwner_FullMethodName: auth.Internal,
-		permissionv1.PermissionService_Grant_FullMethodName:       auth.User,
-		permissionv1.PermissionService_Revoke_FullMethodName:      auth.User,
-		permissionv1.PermissionService_CreateLink_FullMethodName:  auth.User,
-		permissionv1.PermissionService_RevokeLink_FullMethodName:  auth.User,
-		permissionv1.PermissionService_Redeem_FullMethodName:      auth.User,
-		permissionv1.PermissionService_PolicyDump_FullMethodName:  auth.Internal,
-		permissionv1.PermissionService_CopyGrants_FullMethodName:  auth.Internal,
+		permissionv1.PermissionService_EnsureOwner_FullMethodName:  auth.Internal,
+		permissionv1.PermissionService_Grant_FullMethodName:        auth.User,
+		permissionv1.PermissionService_Revoke_FullMethodName:       auth.User,
+		permissionv1.PermissionService_CreateLink_FullMethodName:   auth.User,
+		permissionv1.PermissionService_RevokeLink_FullMethodName:   auth.User,
+		permissionv1.PermissionService_Redeem_FullMethodName:       auth.User,
+		permissionv1.PermissionService_PolicyDump_FullMethodName:   auth.Internal,
+		permissionv1.PermissionService_CopyGrants_FullMethodName:   auth.Internal,
+		permissionv1.PermissionService_PutKey_FullMethodName:       auth.User,
+		permissionv1.PermissionService_ListKeys_FullMethodName:     auth.User,
+		permissionv1.PermissionService_PublishWraps_FullMethodName: auth.User,
+		permissionv1.PermissionService_GetWraps_FullMethodName:     auth.User,
 	}
 }
 
@@ -44,7 +48,7 @@ func (s *Server) EnsureOwner(ctx context.Context, req *permissionv1.EnsureOwnerR
 	if err != nil {
 		return nil, err
 	}
-	g, err := s.svc.EnsureOwner(ctx, doc, req.GetUserId())
+	g, err := s.svc.EnsureDocument(ctx, doc, req.GetUserId(), req.GetEncrypted())
 	if err != nil {
 		return nil, mapError(err)
 	}
@@ -60,7 +64,7 @@ func (s *Server) Grant(ctx context.Context, req *permissionv1.GrantRequest) (*pe
 	if err != nil {
 		return nil, err
 	}
-	g, err := s.svc.Grant(ctx, auth.Subject(ctx), doc, req.GetUserId(), role)
+	g, err := s.svc.GrantWithWraps(ctx, auth.Subject(ctx), doc, req.GetUserId(), role, wrapsFromProto(req.GetWraps()))
 	if err != nil {
 		return nil, mapError(err)
 	}
@@ -157,6 +161,54 @@ func (s *Server) CopyGrants(ctx context.Context, req *permissionv1.CopyGrantsReq
 	return &permissionv1.CopyGrantsResponse{}, nil
 }
 
+func (s *Server) PutKey(ctx context.Context, req *permissionv1.PutKeyRequest) (*permissionv1.PublicKey, error) {
+	k, err := s.svc.PutKey(ctx, auth.Subject(ctx), req.GetPublicKey())
+	if err != nil {
+		return nil, mapError(err)
+	}
+	return keyToProto(k), nil
+}
+
+func (s *Server) ListKeys(ctx context.Context, req *permissionv1.ListKeysRequest) (*permissionv1.ListKeysResponse, error) {
+	keys, err := s.svc.ListKeys(ctx, req.GetUserId())
+	if err != nil {
+		return nil, mapError(err)
+	}
+	out := make([]*permissionv1.PublicKey, len(keys))
+	for i, k := range keys {
+		out[i] = keyToProto(k)
+	}
+	return &permissionv1.ListKeysResponse{Keys: out}, nil
+}
+
+func (s *Server) PublishWraps(ctx context.Context, req *permissionv1.PublishWrapsRequest) (*permissionv1.PublishWrapsResponse, error) {
+	doc, err := parseID(req.GetDocId(), "doc id")
+	if err != nil {
+		return nil, err
+	}
+	epoch, state, err := s.svc.PublishWraps(ctx, auth.Subject(ctx), doc, req.GetRequestId(), wrapsFromProto(req.GetWraps()))
+	if err != nil {
+		return nil, mapError(err)
+	}
+	return &permissionv1.PublishWrapsResponse{WriteEpoch: epoch, EpochState: state}, nil
+}
+
+func (s *Server) GetWraps(ctx context.Context, req *permissionv1.GetWrapsRequest) (*permissionv1.GetWrapsResponse, error) {
+	doc, err := parseID(req.GetDocId(), "doc id")
+	if err != nil {
+		return nil, err
+	}
+	wraps, err := s.svc.GetWraps(ctx, auth.Subject(ctx), doc)
+	if err != nil {
+		return nil, mapError(err)
+	}
+	out := make([]*permissionv1.KeyWrap, len(wraps))
+	for i, w := range wraps {
+		out[i] = wrapToProto(w)
+	}
+	return &permissionv1.GetWrapsResponse{Wraps: out}, nil
+}
+
 func parseID(raw, what string) (uuid.UUID, error) {
 	id, err := uuid.Parse(raw)
 	if err != nil {
@@ -195,6 +247,43 @@ func roleToProto(r perms.Role) permissionv1.Role {
 	}
 }
 
+func wrapsFromProto(in []*permissionv1.KeyWrap) []perms.KeyWrap {
+	out := make([]perms.KeyWrap, 0, len(in))
+	for _, w := range in {
+		if w == nil {
+			continue
+		}
+		id, err := uuid.Parse(w.GetKeyId())
+		if err != nil {
+			id = uuid.Nil
+		}
+		out = append(out, perms.KeyWrap{
+			Epoch:      w.GetEpoch(),
+			UserID:     w.GetUserId(),
+			KeyID:      id,
+			EphPub:     append([]byte(nil), w.GetEphPub()...),
+			Nonce:      append([]byte(nil), w.GetNonce()...),
+			Ciphertext: append([]byte(nil), w.GetCiphertext()...),
+		})
+	}
+	return out
+}
+
+func wrapToProto(w perms.KeyWrap) *permissionv1.KeyWrap {
+	return &permissionv1.KeyWrap{
+		Epoch:      w.Epoch,
+		UserId:     w.UserID,
+		KeyId:      w.KeyID.String(),
+		EphPub:     w.EphPub,
+		Nonce:      w.Nonce,
+		Ciphertext: w.Ciphertext,
+	}
+}
+
+func keyToProto(k perms.PublicKey) *permissionv1.PublicKey {
+	return &permissionv1.PublicKey{KeyId: k.ID.String(), UserId: k.UserID, PublicKey: k.Key}
+}
+
 func grantToProto(g perms.Grant) *permissionv1.GrantRecord {
 	return &permissionv1.GrantRecord{
 		DocId:  g.DocID.String(),
@@ -221,6 +310,8 @@ func mapError(err error) error {
 		return failedPrecondition(perms.ReasonLinkRevoked, err)
 	case errors.Is(err, perms.ErrLinkExpired):
 		return failedPrecondition(perms.ReasonLinkExpired, err)
+	case errors.Is(err, perms.ErrEncrypted):
+		return failedPrecondition(perms.ReasonEncrypted, err)
 	default:
 		return status.Error(codes.Internal, "internal error")
 	}

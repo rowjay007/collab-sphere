@@ -133,7 +133,7 @@ func (s *Store) finishCompaction(id uuid.UUID) {
 	s.compactionMu.Unlock()
 }
 
-const documentColumns = `id, title, owner_id, status, op_seq, snapshot_seq, created_at, updated_at, fork_of, fork_seq, fork_root`
+const documentColumns = `id, title, owner_id, status, op_seq, snapshot_seq, created_at, updated_at, fork_of, fork_seq, fork_root, encryption, write_epoch, epoch_state`
 
 const (
 	defaultChangedLimit = 500
@@ -141,15 +141,67 @@ const (
 )
 
 func (s *Store) Create(ctx context.Context, title, ownerID string) (domain.Document, error) {
+	return s.CreateWithEncryption(ctx, title, ownerID, false)
+}
+
+func (s *Store) CreateWithEncryption(ctx context.Context, title, ownerID string, encrypted bool) (domain.Document, error) {
 	if title == "" || ownerID == "" {
 		return domain.Document{}, fmt.Errorf("%w: title and owner_id are required", domain.ErrInvalidArgument)
 	}
+	encryption := domain.EncryptionPlain
+	var writeEpoch int
+	epochState := ""
+	if encrypted {
+		encryption = domain.EncryptionEncrypted
+		writeEpoch = 1
+		epochState = domain.EpochPending
+	}
 	id := uuid.New()
 	row := s.pool.QueryRow(ctx, `
-		INSERT INTO documents (id, title, owner_id, fork_root)
-		VALUES ($1, $2, $3, $1)
-		RETURNING `+documentColumns, id, title, ownerID)
+		INSERT INTO documents (id, title, owner_id, fork_root, encryption, write_epoch, epoch_state)
+		VALUES ($1, $2, $3, $1, $4, $5, $6)
+		RETURNING `+documentColumns, id, title, ownerID, encryption, writeEpoch, epochState)
 	return scanDocument(row)
+}
+
+func (s *Store) SetEpoch(ctx context.Context, id uuid.UUID, epoch uint32, state string) (domain.Document, error) {
+	if epoch == 0 || (state != domain.EpochPending && state != domain.EpochOpen) {
+		return domain.Document{}, fmt.Errorf("%w: epoch", domain.ErrInvalidArgument)
+	}
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
+		return domain.Document{}, fmt.Errorf("begin set epoch: %w", err)
+	}
+	defer tx.Rollback(ctx)
+	doc, err := lockDocument(ctx, tx, id)
+	if err != nil {
+		return domain.Document{}, err
+	}
+	if doc.Encryption != domain.EncryptionEncrypted {
+		return domain.Document{}, fmt.Errorf("%w: document is plain", domain.ErrInvalidArgument)
+	}
+	if doc.WriteEpoch == epoch && doc.EpochState == state {
+		if err := tx.Commit(ctx); err != nil {
+			return domain.Document{}, err
+		}
+		return doc, nil
+	}
+	if epoch < doc.WriteEpoch || (epoch == doc.WriteEpoch && !(doc.EpochState == domain.EpochPending && state == domain.EpochOpen)) {
+		return domain.Document{}, domain.ErrEpoch
+	}
+	row := tx.QueryRow(ctx, `
+		UPDATE documents
+		SET write_epoch = $2, epoch_state = $3, updated_at = now()
+		WHERE id = $1
+		RETURNING `+documentColumns, id, int(epoch), state)
+	doc, err = scanDocument(row)
+	if err != nil {
+		return domain.Document{}, err
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return domain.Document{}, fmt.Errorf("commit set epoch: %w", err)
+	}
+	return doc, nil
 }
 
 func (s *Store) Delete(ctx context.Context, id uuid.UUID) error {
@@ -249,6 +301,7 @@ func scanDocument(row pgx.Row) (domain.Document, error) {
 		opSeq, snapSeq int64
 		forkOf         *uuid.UUID
 		forkSeq        *int64
+		writeEpoch     int32
 	)
 	if err := row.Scan(
 		&doc.ID,
@@ -262,6 +315,9 @@ func scanDocument(row pgx.Row) (domain.Document, error) {
 		&forkOf,
 		&forkSeq,
 		&doc.ForkRoot,
+		&doc.Encryption,
+		&writeEpoch,
+		&doc.EpochState,
 	); err != nil {
 		return domain.Document{}, err
 	}
@@ -272,6 +328,7 @@ func scanDocument(row pgx.Row) (domain.Document, error) {
 	doc.Status = parsed
 	doc.OpSeq = uint64(opSeq)
 	doc.SnapshotSeq = uint64(snapSeq)
+	doc.WriteEpoch = uint32(writeEpoch)
 	doc.ForkOf = forkOf
 	if forkSeq != nil {
 		doc.ForkSeq = uint64(*forkSeq)

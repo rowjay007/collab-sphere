@@ -130,11 +130,14 @@ func (h *History) ensureStarted(ctx context.Context, doc Document) error {
 		labels    []string
 	)
 	if doc.ForkOf == nil {
-		empty, err := crdt.CanonicalBytes(crdt.New())
+		empty, err := emptyCanonical(doc.Encrypted)
 		if err != nil {
 			return err
 		}
 		start = dag.Node{Doc: doc.ID, Seq: 0, Content: dag.ContentHash(empty)}
+		if doc.Encrypted {
+			start.IDPrefix = "CSV2"
+		}
 		canonical, labels = empty, []string{LabelGenesis}
 	} else {
 		base, err := h.forkBase(ctx, *doc.ForkOf, doc.ForkSeq)
@@ -219,7 +222,7 @@ func (h *History) putNode(ctx context.Context, tx store.Tx, id uuid.UUID, seq ui
 			after++
 		}
 	}
-	canonical, err := crdt.CanonicalBytes(doc)
+	canonical, err := canonicalOf(doc)
 	if err != nil {
 		return store.Version{}, err
 	}
@@ -228,6 +231,9 @@ func (h *History) putNode(ctx context.Context, tx store.Tx, id uuid.UUID, seq ui
 		meta.Labels = labelsAt(seq, "")
 	}
 	node := dag.Node{Doc: id, Seq: seq, Content: dag.ContentHash(canonical), Parents: parents}
+	if doc.Mode() == crdt.Encrypted {
+		node.IDPrefix = "CSV2"
+	}
 	v, err := tx.PutNode(ctx, node, canonical, meta)
 	if err != nil {
 		return store.Version{}, err
@@ -247,6 +253,38 @@ func (h *History) stateOf(ctx context.Context, tx store.Tx, v store.Version, cac
 		return nil, err
 	}
 	return crdt.FromCanonical(b)
+}
+
+func emptyCanonical(encrypted bool) ([]byte, error) {
+	if encrypted {
+		return crdt.CanonicalCSS2(crdt.NewEncrypted())
+	}
+	return crdt.CanonicalBytes(crdt.New())
+}
+
+func canonicalOf(doc *crdt.Doc) ([]byte, error) {
+	if doc != nil && doc.Mode() == crdt.Encrypted {
+		return crdt.CanonicalCSS2(doc)
+	}
+	return crdt.CanonicalBytes(doc)
+}
+
+func (h *History) encryptionOf(ctx context.Context, ids ...uuid.UUID) (bool, error) {
+	var first error
+	enc := false
+	for _, id := range ids {
+		doc, err := h.docs.Get(ctx, id)
+		if err != nil {
+			if first == nil {
+				first = err
+			}
+			continue
+		}
+		if doc.Encrypted {
+			enc = true
+		}
+	}
+	return enc, first
 }
 
 func labelsAt(seq uint64, label string) []string {
@@ -307,6 +345,11 @@ func (h *History) Branch(ctx context.Context, vid dag.NodeID, title, requestID s
 	if err != nil {
 		return uuid.UUID{}, store.Version{}, err
 	}
+	if enc, lookupErr := h.encryptionOf(ctx, v.Node.Doc); enc {
+		return uuid.UUID{}, store.Version{}, ErrEncrypted
+	} else if lookupErr != nil {
+		return uuid.UUID{}, store.Version{}, lookupErr
+	}
 	fork, err := h.docs.Fork(ctx, v.Node.Doc, v.Node.Seq, title, requestID)
 	if err != nil {
 		return uuid.UUID{}, store.Version{}, err
@@ -330,6 +373,11 @@ func (h *History) Diff(ctx context.Context, a, b dag.NodeID) ([]crdt.Span, error
 	vb, err := h.version(ctx, b)
 	if err != nil {
 		return nil, err
+	}
+	if enc, lookupErr := h.encryptionOf(ctx, va.Node.Doc, vb.Node.Doc); enc {
+		return nil, ErrEncrypted
+	} else if lookupErr != nil {
+		return nil, lookupErr
 	}
 	if va.Node.Content == vb.Node.Content {
 		return nil, nil

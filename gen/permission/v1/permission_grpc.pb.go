@@ -19,14 +19,18 @@ import (
 const _ = grpc.SupportPackageIsVersion9
 
 const (
-	PermissionService_EnsureOwner_FullMethodName = "/permission.v1.PermissionService/EnsureOwner"
-	PermissionService_Grant_FullMethodName       = "/permission.v1.PermissionService/Grant"
-	PermissionService_Revoke_FullMethodName      = "/permission.v1.PermissionService/Revoke"
-	PermissionService_CreateLink_FullMethodName  = "/permission.v1.PermissionService/CreateLink"
-	PermissionService_RevokeLink_FullMethodName  = "/permission.v1.PermissionService/RevokeLink"
-	PermissionService_Redeem_FullMethodName      = "/permission.v1.PermissionService/Redeem"
-	PermissionService_PolicyDump_FullMethodName  = "/permission.v1.PermissionService/PolicyDump"
-	PermissionService_CopyGrants_FullMethodName  = "/permission.v1.PermissionService/CopyGrants"
+	PermissionService_EnsureOwner_FullMethodName  = "/permission.v1.PermissionService/EnsureOwner"
+	PermissionService_Grant_FullMethodName        = "/permission.v1.PermissionService/Grant"
+	PermissionService_Revoke_FullMethodName       = "/permission.v1.PermissionService/Revoke"
+	PermissionService_CreateLink_FullMethodName   = "/permission.v1.PermissionService/CreateLink"
+	PermissionService_RevokeLink_FullMethodName   = "/permission.v1.PermissionService/RevokeLink"
+	PermissionService_Redeem_FullMethodName       = "/permission.v1.PermissionService/Redeem"
+	PermissionService_PolicyDump_FullMethodName   = "/permission.v1.PermissionService/PolicyDump"
+	PermissionService_CopyGrants_FullMethodName   = "/permission.v1.PermissionService/CopyGrants"
+	PermissionService_PutKey_FullMethodName       = "/permission.v1.PermissionService/PutKey"
+	PermissionService_ListKeys_FullMethodName     = "/permission.v1.PermissionService/ListKeys"
+	PermissionService_PublishWraps_FullMethodName = "/permission.v1.PermissionService/PublishWraps"
+	PermissionService_GetWraps_FullMethodName     = "/permission.v1.PermissionService/GetWraps"
 )
 
 // PermissionServiceClient is the client API for PermissionService service.
@@ -41,6 +45,10 @@ type PermissionServiceClient interface {
 	Redeem(ctx context.Context, in *RedeemRequest, opts ...grpc.CallOption) (*GrantRecord, error)
 	PolicyDump(ctx context.Context, in *PolicyDumpRequest, opts ...grpc.CallOption) (*PolicyDumpResponse, error)
 	CopyGrants(ctx context.Context, in *CopyGrantsRequest, opts ...grpc.CallOption) (*CopyGrantsResponse, error)
+	PutKey(ctx context.Context, in *PutKeyRequest, opts ...grpc.CallOption) (*PublicKey, error)
+	ListKeys(ctx context.Context, in *ListKeysRequest, opts ...grpc.CallOption) (*ListKeysResponse, error)
+	PublishWraps(ctx context.Context, in *PublishWrapsRequest, opts ...grpc.CallOption) (*PublishWrapsResponse, error)
+	GetWraps(ctx context.Context, in *GetWrapsRequest, opts ...grpc.CallOption) (*GetWrapsResponse, error)
 }
 
 type permissionServiceClient struct {
@@ -131,6 +139,46 @@ func (c *permissionServiceClient) CopyGrants(ctx context.Context, in *CopyGrants
 	return out, nil
 }
 
+func (c *permissionServiceClient) PutKey(ctx context.Context, in *PutKeyRequest, opts ...grpc.CallOption) (*PublicKey, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(PublicKey)
+	err := c.cc.Invoke(ctx, PermissionService_PutKey_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *permissionServiceClient) ListKeys(ctx context.Context, in *ListKeysRequest, opts ...grpc.CallOption) (*ListKeysResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(ListKeysResponse)
+	err := c.cc.Invoke(ctx, PermissionService_ListKeys_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *permissionServiceClient) PublishWraps(ctx context.Context, in *PublishWrapsRequest, opts ...grpc.CallOption) (*PublishWrapsResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(PublishWrapsResponse)
+	err := c.cc.Invoke(ctx, PermissionService_PublishWraps_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *permissionServiceClient) GetWraps(ctx context.Context, in *GetWrapsRequest, opts ...grpc.CallOption) (*GetWrapsResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(GetWrapsResponse)
+	err := c.cc.Invoke(ctx, PermissionService_GetWraps_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 // PermissionServiceServer is the server API for PermissionService service.
 // All implementations must embed UnimplementedPermissionServiceServer
 // for forward compatibility.
@@ -143,6 +191,10 @@ type PermissionServiceServer interface {
 	Redeem(context.Context, *RedeemRequest) (*GrantRecord, error)
 	PolicyDump(context.Context, *PolicyDumpRequest) (*PolicyDumpResponse, error)
 	CopyGrants(context.Context, *CopyGrantsRequest) (*CopyGrantsResponse, error)
+	PutKey(context.Context, *PutKeyRequest) (*PublicKey, error)
+	ListKeys(context.Context, *ListKeysRequest) (*ListKeysResponse, error)
+	PublishWraps(context.Context, *PublishWrapsRequest) (*PublishWrapsResponse, error)
+	GetWraps(context.Context, *GetWrapsRequest) (*GetWrapsResponse, error)
 	mustEmbedUnimplementedPermissionServiceServer()
 }
 
@@ -176,6 +228,18 @@ func (UnimplementedPermissionServiceServer) PolicyDump(context.Context, *PolicyD
 }
 func (UnimplementedPermissionServiceServer) CopyGrants(context.Context, *CopyGrantsRequest) (*CopyGrantsResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method CopyGrants not implemented")
+}
+func (UnimplementedPermissionServiceServer) PutKey(context.Context, *PutKeyRequest) (*PublicKey, error) {
+	return nil, status.Error(codes.Unimplemented, "method PutKey not implemented")
+}
+func (UnimplementedPermissionServiceServer) ListKeys(context.Context, *ListKeysRequest) (*ListKeysResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method ListKeys not implemented")
+}
+func (UnimplementedPermissionServiceServer) PublishWraps(context.Context, *PublishWrapsRequest) (*PublishWrapsResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method PublishWraps not implemented")
+}
+func (UnimplementedPermissionServiceServer) GetWraps(context.Context, *GetWrapsRequest) (*GetWrapsResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method GetWraps not implemented")
 }
 func (UnimplementedPermissionServiceServer) mustEmbedUnimplementedPermissionServiceServer() {}
 func (UnimplementedPermissionServiceServer) testEmbeddedByValue()                           {}
@@ -342,6 +406,78 @@ func _PermissionService_CopyGrants_Handler(srv interface{}, ctx context.Context,
 	return interceptor(ctx, in, info, handler)
 }
 
+func _PermissionService_PutKey_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(PutKeyRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(PermissionServiceServer).PutKey(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: PermissionService_PutKey_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(PermissionServiceServer).PutKey(ctx, req.(*PutKeyRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _PermissionService_ListKeys_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(ListKeysRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(PermissionServiceServer).ListKeys(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: PermissionService_ListKeys_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(PermissionServiceServer).ListKeys(ctx, req.(*ListKeysRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _PermissionService_PublishWraps_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(PublishWrapsRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(PermissionServiceServer).PublishWraps(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: PermissionService_PublishWraps_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(PermissionServiceServer).PublishWraps(ctx, req.(*PublishWrapsRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _PermissionService_GetWraps_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(GetWrapsRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(PermissionServiceServer).GetWraps(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: PermissionService_GetWraps_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(PermissionServiceServer).GetWraps(ctx, req.(*GetWrapsRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 // PermissionService_ServiceDesc is the grpc.ServiceDesc for PermissionService service.
 // It's only intended for direct use with grpc.RegisterService,
 // and not to be introspected or modified (even as a copy)
@@ -380,6 +516,22 @@ var PermissionService_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "CopyGrants",
 			Handler:    _PermissionService_CopyGrants_Handler,
+		},
+		{
+			MethodName: "PutKey",
+			Handler:    _PermissionService_PutKey_Handler,
+		},
+		{
+			MethodName: "ListKeys",
+			Handler:    _PermissionService_ListKeys_Handler,
+		},
+		{
+			MethodName: "PublishWraps",
+			Handler:    _PermissionService_PublishWraps_Handler,
+		},
+		{
+			MethodName: "GetWraps",
+			Handler:    _PermissionService_GetWraps_Handler,
 		},
 	},
 	Streams:  []grpc.StreamDesc{},

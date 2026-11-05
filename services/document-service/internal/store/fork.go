@@ -42,6 +42,9 @@ func (s *Store) Fork(ctx context.Context, src uuid.UUID, seq uint64, title, requ
 	if err != nil {
 		return domain.Document{}, err
 	}
+	if source.Encryption == domain.EncryptionEncrypted {
+		return domain.Document{}, domain.ErrEncrypted
+	}
 	if seq > source.OpSeq {
 		return domain.Document{}, fmt.Errorf("%w: seq %d exceeds op_seq %d", domain.ErrOutOfRange, seq, source.OpSeq)
 	}

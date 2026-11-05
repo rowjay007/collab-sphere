@@ -51,8 +51,8 @@ func Rank(r permissionv1.Role) int {
 	}
 }
 
-func (c *Client) EnsureOwner(ctx context.Context, docID, userID string) error {
-	_, err := c.rpc.EnsureOwner(ctx, &permissionv1.EnsureOwnerRequest{DocId: docID, UserId: userID})
+func (c *Client) EnsureOwner(ctx context.Context, docID, userID string, encrypted bool) error {
+	_, err := c.rpc.EnsureOwner(ctx, &permissionv1.EnsureOwnerRequest{DocId: docID, UserId: userID, Encrypted: encrypted})
 	return err
 }
 

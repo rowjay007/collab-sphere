@@ -138,9 +138,11 @@ func (x *GrantRecord) GetRole() Role {
 }
 
 type EnsureOwnerRequest struct {
-	state         protoimpl.MessageState `protogen:"open.v1"`
-	DocId         string                 `protobuf:"bytes,1,opt,name=doc_id,json=docId,proto3" json:"doc_id,omitempty"`
-	UserId        string                 `protobuf:"bytes,2,opt,name=user_id,json=userId,proto3" json:"user_id,omitempty"`
+	state  protoimpl.MessageState `protogen:"open.v1"`
+	DocId  string                 `protobuf:"bytes,1,opt,name=doc_id,json=docId,proto3" json:"doc_id,omitempty"`
+	UserId string                 `protobuf:"bytes,2,opt,name=user_id,json=userId,proto3" json:"user_id,omitempty"`
+	// encrypted starts epoch 1 pending in the same transaction as the owner grant.
+	Encrypted     bool `protobuf:"varint,3,opt,name=encrypted,proto3" json:"encrypted,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -189,11 +191,21 @@ func (x *EnsureOwnerRequest) GetUserId() string {
 	return ""
 }
 
+func (x *EnsureOwnerRequest) GetEncrypted() bool {
+	if x != nil {
+		return x.Encrypted
+	}
+	return false
+}
+
 type GrantRequest struct {
-	state         protoimpl.MessageState `protogen:"open.v1"`
-	DocId         string                 `protobuf:"bytes,1,opt,name=doc_id,json=docId,proto3" json:"doc_id,omitempty"`
-	UserId        string                 `protobuf:"bytes,2,opt,name=user_id,json=userId,proto3" json:"user_id,omitempty"`
-	Role          Role                   `protobuf:"varint,3,opt,name=role,proto3,enum=permission.v1.Role" json:"role,omitempty"`
+	state  protoimpl.MessageState `protogen:"open.v1"`
+	DocId  string                 `protobuf:"bytes,1,opt,name=doc_id,json=docId,proto3" json:"doc_id,omitempty"`
+	UserId string                 `protobuf:"bytes,2,opt,name=user_id,json=userId,proto3" json:"user_id,omitempty"`
+	Role   Role                   `protobuf:"varint,3,opt,name=role,proto3,enum=permission.v1.Role" json:"role,omitempty"`
+	// wraps is one wrap per epoch from 1 through the current epoch, for user_id,
+	// when the document is encrypted. Empty on a plain document.
+	Wraps         []*KeyWrap `protobuf:"bytes,4,rep,name=wraps,proto3" json:"wraps,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -247,6 +259,13 @@ func (x *GrantRequest) GetRole() Role {
 		return x.Role
 	}
 	return Role_ROLE_UNSPECIFIED
+}
+
+func (x *GrantRequest) GetWraps() []*KeyWrap {
+	if x != nil {
+		return x.Wraps
+	}
+	return nil
 }
 
 type RevokeRequest struct {
@@ -789,6 +808,483 @@ func (*CopyGrantsResponse) Descriptor() ([]byte, []int) {
 	return file_permission_v1_permission_proto_rawDescGZIP(), []int{13}
 }
 
+type PublicKey struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	KeyId         string                 `protobuf:"bytes,1,opt,name=key_id,json=keyId,proto3" json:"key_id,omitempty"`
+	UserId        string                 `protobuf:"bytes,2,opt,name=user_id,json=userId,proto3" json:"user_id,omitempty"`
+	PublicKey     []byte                 `protobuf:"bytes,3,opt,name=public_key,json=publicKey,proto3" json:"public_key,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *PublicKey) Reset() {
+	*x = PublicKey{}
+	mi := &file_permission_v1_permission_proto_msgTypes[14]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *PublicKey) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*PublicKey) ProtoMessage() {}
+
+func (x *PublicKey) ProtoReflect() protoreflect.Message {
+	mi := &file_permission_v1_permission_proto_msgTypes[14]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use PublicKey.ProtoReflect.Descriptor instead.
+func (*PublicKey) Descriptor() ([]byte, []int) {
+	return file_permission_v1_permission_proto_rawDescGZIP(), []int{14}
+}
+
+func (x *PublicKey) GetKeyId() string {
+	if x != nil {
+		return x.KeyId
+	}
+	return ""
+}
+
+func (x *PublicKey) GetUserId() string {
+	if x != nil {
+		return x.UserId
+	}
+	return ""
+}
+
+func (x *PublicKey) GetPublicKey() []byte {
+	if x != nil {
+		return x.PublicKey
+	}
+	return nil
+}
+
+type PutKeyRequest struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	PublicKey     []byte                 `protobuf:"bytes,1,opt,name=public_key,json=publicKey,proto3" json:"public_key,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *PutKeyRequest) Reset() {
+	*x = PutKeyRequest{}
+	mi := &file_permission_v1_permission_proto_msgTypes[15]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *PutKeyRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*PutKeyRequest) ProtoMessage() {}
+
+func (x *PutKeyRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_permission_v1_permission_proto_msgTypes[15]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use PutKeyRequest.ProtoReflect.Descriptor instead.
+func (*PutKeyRequest) Descriptor() ([]byte, []int) {
+	return file_permission_v1_permission_proto_rawDescGZIP(), []int{15}
+}
+
+func (x *PutKeyRequest) GetPublicKey() []byte {
+	if x != nil {
+		return x.PublicKey
+	}
+	return nil
+}
+
+type ListKeysRequest struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	UserId        string                 `protobuf:"bytes,1,opt,name=user_id,json=userId,proto3" json:"user_id,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *ListKeysRequest) Reset() {
+	*x = ListKeysRequest{}
+	mi := &file_permission_v1_permission_proto_msgTypes[16]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *ListKeysRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*ListKeysRequest) ProtoMessage() {}
+
+func (x *ListKeysRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_permission_v1_permission_proto_msgTypes[16]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use ListKeysRequest.ProtoReflect.Descriptor instead.
+func (*ListKeysRequest) Descriptor() ([]byte, []int) {
+	return file_permission_v1_permission_proto_rawDescGZIP(), []int{16}
+}
+
+func (x *ListKeysRequest) GetUserId() string {
+	if x != nil {
+		return x.UserId
+	}
+	return ""
+}
+
+type ListKeysResponse struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Keys          []*PublicKey           `protobuf:"bytes,1,rep,name=keys,proto3" json:"keys,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *ListKeysResponse) Reset() {
+	*x = ListKeysResponse{}
+	mi := &file_permission_v1_permission_proto_msgTypes[17]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *ListKeysResponse) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*ListKeysResponse) ProtoMessage() {}
+
+func (x *ListKeysResponse) ProtoReflect() protoreflect.Message {
+	mi := &file_permission_v1_permission_proto_msgTypes[17]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use ListKeysResponse.ProtoReflect.Descriptor instead.
+func (*ListKeysResponse) Descriptor() ([]byte, []int) {
+	return file_permission_v1_permission_proto_rawDescGZIP(), []int{17}
+}
+
+func (x *ListKeysResponse) GetKeys() []*PublicKey {
+	if x != nil {
+		return x.Keys
+	}
+	return nil
+}
+
+// KeyWrap is a document key sealed to one member for one epoch.
+type KeyWrap struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Epoch         uint32                 `protobuf:"varint,1,opt,name=epoch,proto3" json:"epoch,omitempty"`
+	UserId        string                 `protobuf:"bytes,2,opt,name=user_id,json=userId,proto3" json:"user_id,omitempty"`
+	KeyId         string                 `protobuf:"bytes,3,opt,name=key_id,json=keyId,proto3" json:"key_id,omitempty"`
+	EphPub        []byte                 `protobuf:"bytes,4,opt,name=eph_pub,json=ephPub,proto3" json:"eph_pub,omitempty"`
+	Nonce         []byte                 `protobuf:"bytes,5,opt,name=nonce,proto3" json:"nonce,omitempty"`
+	Ciphertext    []byte                 `protobuf:"bytes,6,opt,name=ciphertext,proto3" json:"ciphertext,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *KeyWrap) Reset() {
+	*x = KeyWrap{}
+	mi := &file_permission_v1_permission_proto_msgTypes[18]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *KeyWrap) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*KeyWrap) ProtoMessage() {}
+
+func (x *KeyWrap) ProtoReflect() protoreflect.Message {
+	mi := &file_permission_v1_permission_proto_msgTypes[18]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use KeyWrap.ProtoReflect.Descriptor instead.
+func (*KeyWrap) Descriptor() ([]byte, []int) {
+	return file_permission_v1_permission_proto_rawDescGZIP(), []int{18}
+}
+
+func (x *KeyWrap) GetEpoch() uint32 {
+	if x != nil {
+		return x.Epoch
+	}
+	return 0
+}
+
+func (x *KeyWrap) GetUserId() string {
+	if x != nil {
+		return x.UserId
+	}
+	return ""
+}
+
+func (x *KeyWrap) GetKeyId() string {
+	if x != nil {
+		return x.KeyId
+	}
+	return ""
+}
+
+func (x *KeyWrap) GetEphPub() []byte {
+	if x != nil {
+		return x.EphPub
+	}
+	return nil
+}
+
+func (x *KeyWrap) GetNonce() []byte {
+	if x != nil {
+		return x.Nonce
+	}
+	return nil
+}
+
+func (x *KeyWrap) GetCiphertext() []byte {
+	if x != nil {
+		return x.Ciphertext
+	}
+	return nil
+}
+
+type PublishWrapsRequest struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	DocId         string                 `protobuf:"bytes,1,opt,name=doc_id,json=docId,proto3" json:"doc_id,omitempty"`
+	RequestId     string                 `protobuf:"bytes,2,opt,name=request_id,json=requestId,proto3" json:"request_id,omitempty"`
+	Wraps         []*KeyWrap             `protobuf:"bytes,3,rep,name=wraps,proto3" json:"wraps,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *PublishWrapsRequest) Reset() {
+	*x = PublishWrapsRequest{}
+	mi := &file_permission_v1_permission_proto_msgTypes[19]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *PublishWrapsRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*PublishWrapsRequest) ProtoMessage() {}
+
+func (x *PublishWrapsRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_permission_v1_permission_proto_msgTypes[19]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use PublishWrapsRequest.ProtoReflect.Descriptor instead.
+func (*PublishWrapsRequest) Descriptor() ([]byte, []int) {
+	return file_permission_v1_permission_proto_rawDescGZIP(), []int{19}
+}
+
+func (x *PublishWrapsRequest) GetDocId() string {
+	if x != nil {
+		return x.DocId
+	}
+	return ""
+}
+
+func (x *PublishWrapsRequest) GetRequestId() string {
+	if x != nil {
+		return x.RequestId
+	}
+	return ""
+}
+
+func (x *PublishWrapsRequest) GetWraps() []*KeyWrap {
+	if x != nil {
+		return x.Wraps
+	}
+	return nil
+}
+
+type PublishWrapsResponse struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	WriteEpoch    uint32                 `protobuf:"varint,1,opt,name=write_epoch,json=writeEpoch,proto3" json:"write_epoch,omitempty"`
+	EpochState    string                 `protobuf:"bytes,2,opt,name=epoch_state,json=epochState,proto3" json:"epoch_state,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *PublishWrapsResponse) Reset() {
+	*x = PublishWrapsResponse{}
+	mi := &file_permission_v1_permission_proto_msgTypes[20]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *PublishWrapsResponse) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*PublishWrapsResponse) ProtoMessage() {}
+
+func (x *PublishWrapsResponse) ProtoReflect() protoreflect.Message {
+	mi := &file_permission_v1_permission_proto_msgTypes[20]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use PublishWrapsResponse.ProtoReflect.Descriptor instead.
+func (*PublishWrapsResponse) Descriptor() ([]byte, []int) {
+	return file_permission_v1_permission_proto_rawDescGZIP(), []int{20}
+}
+
+func (x *PublishWrapsResponse) GetWriteEpoch() uint32 {
+	if x != nil {
+		return x.WriteEpoch
+	}
+	return 0
+}
+
+func (x *PublishWrapsResponse) GetEpochState() string {
+	if x != nil {
+		return x.EpochState
+	}
+	return ""
+}
+
+type GetWrapsRequest struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	DocId         string                 `protobuf:"bytes,1,opt,name=doc_id,json=docId,proto3" json:"doc_id,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *GetWrapsRequest) Reset() {
+	*x = GetWrapsRequest{}
+	mi := &file_permission_v1_permission_proto_msgTypes[21]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *GetWrapsRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*GetWrapsRequest) ProtoMessage() {}
+
+func (x *GetWrapsRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_permission_v1_permission_proto_msgTypes[21]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use GetWrapsRequest.ProtoReflect.Descriptor instead.
+func (*GetWrapsRequest) Descriptor() ([]byte, []int) {
+	return file_permission_v1_permission_proto_rawDescGZIP(), []int{21}
+}
+
+func (x *GetWrapsRequest) GetDocId() string {
+	if x != nil {
+		return x.DocId
+	}
+	return ""
+}
+
+type GetWrapsResponse struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Wraps         []*KeyWrap             `protobuf:"bytes,1,rep,name=wraps,proto3" json:"wraps,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *GetWrapsResponse) Reset() {
+	*x = GetWrapsResponse{}
+	mi := &file_permission_v1_permission_proto_msgTypes[22]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *GetWrapsResponse) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*GetWrapsResponse) ProtoMessage() {}
+
+func (x *GetWrapsResponse) ProtoReflect() protoreflect.Message {
+	mi := &file_permission_v1_permission_proto_msgTypes[22]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use GetWrapsResponse.ProtoReflect.Descriptor instead.
+func (*GetWrapsResponse) Descriptor() ([]byte, []int) {
+	return file_permission_v1_permission_proto_rawDescGZIP(), []int{22}
+}
+
+func (x *GetWrapsResponse) GetWraps() []*KeyWrap {
+	if x != nil {
+		return x.Wraps
+	}
+	return nil
+}
+
 var File_permission_v1_permission_proto protoreflect.FileDescriptor
 
 const file_permission_v1_permission_proto_rawDesc = "" +
@@ -797,14 +1293,16 @@ const file_permission_v1_permission_proto_rawDesc = "" +
 	"\vGrantRecord\x12\x15\n" +
 	"\x06doc_id\x18\x01 \x01(\tR\x05docId\x12\x17\n" +
 	"\auser_id\x18\x02 \x01(\tR\x06userId\x12'\n" +
-	"\x04role\x18\x03 \x01(\x0e2\x13.permission.v1.RoleR\x04role\"D\n" +
+	"\x04role\x18\x03 \x01(\x0e2\x13.permission.v1.RoleR\x04role\"b\n" +
 	"\x12EnsureOwnerRequest\x12\x15\n" +
 	"\x06doc_id\x18\x01 \x01(\tR\x05docId\x12\x17\n" +
-	"\auser_id\x18\x02 \x01(\tR\x06userId\"g\n" +
+	"\auser_id\x18\x02 \x01(\tR\x06userId\x12\x1c\n" +
+	"\tencrypted\x18\x03 \x01(\bR\tencrypted\"\x95\x01\n" +
 	"\fGrantRequest\x12\x15\n" +
 	"\x06doc_id\x18\x01 \x01(\tR\x05docId\x12\x17\n" +
 	"\auser_id\x18\x02 \x01(\tR\x06userId\x12'\n" +
-	"\x04role\x18\x03 \x01(\x0e2\x13.permission.v1.RoleR\x04role\"?\n" +
+	"\x04role\x18\x03 \x01(\x0e2\x13.permission.v1.RoleR\x04role\x12,\n" +
+	"\x05wraps\x18\x04 \x03(\v2\x16.permission.v1.KeyWrapR\x05wraps\"?\n" +
 	"\rRevokeRequest\x12\x15\n" +
 	"\x06doc_id\x18\x01 \x01(\tR\x05docId\x12\x17\n" +
 	"\auser_id\x18\x02 \x01(\tR\x06userId\"\x10\n" +
@@ -840,14 +1338,49 @@ const file_permission_v1_permission_proto_rawDesc = "" +
 	"\x11CopyGrantsRequest\x12\"\n" +
 	"\rsource_doc_id\x18\x01 \x01(\tR\vsourceDocId\x12\x1e\n" +
 	"\vdest_doc_id\x18\x02 \x01(\tR\tdestDocId\"\x14\n" +
-	"\x12CopyGrantsResponse*b\n" +
+	"\x12CopyGrantsResponse\"Z\n" +
+	"\tPublicKey\x12\x15\n" +
+	"\x06key_id\x18\x01 \x01(\tR\x05keyId\x12\x17\n" +
+	"\auser_id\x18\x02 \x01(\tR\x06userId\x12\x1d\n" +
+	"\n" +
+	"public_key\x18\x03 \x01(\fR\tpublicKey\".\n" +
+	"\rPutKeyRequest\x12\x1d\n" +
+	"\n" +
+	"public_key\x18\x01 \x01(\fR\tpublicKey\"*\n" +
+	"\x0fListKeysRequest\x12\x17\n" +
+	"\auser_id\x18\x01 \x01(\tR\x06userId\"@\n" +
+	"\x10ListKeysResponse\x12,\n" +
+	"\x04keys\x18\x01 \x03(\v2\x18.permission.v1.PublicKeyR\x04keys\"\x9e\x01\n" +
+	"\aKeyWrap\x12\x14\n" +
+	"\x05epoch\x18\x01 \x01(\rR\x05epoch\x12\x17\n" +
+	"\auser_id\x18\x02 \x01(\tR\x06userId\x12\x15\n" +
+	"\x06key_id\x18\x03 \x01(\tR\x05keyId\x12\x17\n" +
+	"\aeph_pub\x18\x04 \x01(\fR\x06ephPub\x12\x14\n" +
+	"\x05nonce\x18\x05 \x01(\fR\x05nonce\x12\x1e\n" +
+	"\n" +
+	"ciphertext\x18\x06 \x01(\fR\n" +
+	"ciphertext\"y\n" +
+	"\x13PublishWrapsRequest\x12\x15\n" +
+	"\x06doc_id\x18\x01 \x01(\tR\x05docId\x12\x1d\n" +
+	"\n" +
+	"request_id\x18\x02 \x01(\tR\trequestId\x12,\n" +
+	"\x05wraps\x18\x03 \x03(\v2\x16.permission.v1.KeyWrapR\x05wraps\"X\n" +
+	"\x14PublishWrapsResponse\x12\x1f\n" +
+	"\vwrite_epoch\x18\x01 \x01(\rR\n" +
+	"writeEpoch\x12\x1f\n" +
+	"\vepoch_state\x18\x02 \x01(\tR\n" +
+	"epochState\"(\n" +
+	"\x0fGetWrapsRequest\x12\x15\n" +
+	"\x06doc_id\x18\x01 \x01(\tR\x05docId\"@\n" +
+	"\x10GetWrapsResponse\x12,\n" +
+	"\x05wraps\x18\x01 \x03(\v2\x16.permission.v1.KeyWrapR\x05wraps*b\n" +
 	"\x04Role\x12\x14\n" +
 	"\x10ROLE_UNSPECIFIED\x10\x00\x12\x0e\n" +
 	"\n" +
 	"ROLE_OWNER\x10\x01\x12\x0f\n" +
 	"\vROLE_EDITOR\x10\x02\x12\x12\n" +
 	"\x0eROLE_COMMENTER\x10\x03\x12\x0f\n" +
-	"\vROLE_VIEWER\x10\x042\xf1\x04\n" +
+	"\vROLE_VIEWER\x10\x042\xa6\a\n" +
 	"\x11PermissionService\x12L\n" +
 	"\vEnsureOwner\x12!.permission.v1.EnsureOwnerRequest\x1a\x1a.permission.v1.GrantRecord\x12@\n" +
 	"\x05Grant\x12\x1b.permission.v1.GrantRequest\x1a\x1a.permission.v1.GrantRecord\x12E\n" +
@@ -860,7 +1393,11 @@ const file_permission_v1_permission_proto_rawDesc = "" +
 	"\n" +
 	"PolicyDump\x12 .permission.v1.PolicyDumpRequest\x1a!.permission.v1.PolicyDumpResponse\x12Q\n" +
 	"\n" +
-	"CopyGrants\x12 .permission.v1.CopyGrantsRequest\x1a!.permission.v1.CopyGrantsResponseBCZAgithub.com/rowjay007/collab-sphere/gen/permission/v1;permissionv1b\x06proto3"
+	"CopyGrants\x12 .permission.v1.CopyGrantsRequest\x1a!.permission.v1.CopyGrantsResponse\x12@\n" +
+	"\x06PutKey\x12\x1c.permission.v1.PutKeyRequest\x1a\x18.permission.v1.PublicKey\x12K\n" +
+	"\bListKeys\x12\x1e.permission.v1.ListKeysRequest\x1a\x1f.permission.v1.ListKeysResponse\x12W\n" +
+	"\fPublishWraps\x12\".permission.v1.PublishWrapsRequest\x1a#.permission.v1.PublishWrapsResponse\x12K\n" +
+	"\bGetWraps\x12\x1e.permission.v1.GetWrapsRequest\x1a\x1f.permission.v1.GetWrapsResponseBCZAgithub.com/rowjay007/collab-sphere/gen/permission/v1;permissionv1b\x06proto3"
 
 var (
 	file_permission_v1_permission_proto_rawDescOnce sync.Once
@@ -875,7 +1412,7 @@ func file_permission_v1_permission_proto_rawDescGZIP() []byte {
 }
 
 var file_permission_v1_permission_proto_enumTypes = make([]protoimpl.EnumInfo, 1)
-var file_permission_v1_permission_proto_msgTypes = make([]protoimpl.MessageInfo, 15)
+var file_permission_v1_permission_proto_msgTypes = make([]protoimpl.MessageInfo, 24)
 var file_permission_v1_permission_proto_goTypes = []any{
 	(Role)(0),                     // 0: permission.v1.Role
 	(*GrantRecord)(nil),           // 1: permission.v1.GrantRecord
@@ -892,39 +1429,60 @@ var file_permission_v1_permission_proto_goTypes = []any{
 	(*PolicyDumpResponse)(nil),    // 12: permission.v1.PolicyDumpResponse
 	(*CopyGrantsRequest)(nil),     // 13: permission.v1.CopyGrantsRequest
 	(*CopyGrantsResponse)(nil),    // 14: permission.v1.CopyGrantsResponse
-	nil,                           // 15: permission.v1.PolicyDumpResponse.MembersEntry
-	(*timestamppb.Timestamp)(nil), // 16: google.protobuf.Timestamp
+	(*PublicKey)(nil),             // 15: permission.v1.PublicKey
+	(*PutKeyRequest)(nil),         // 16: permission.v1.PutKeyRequest
+	(*ListKeysRequest)(nil),       // 17: permission.v1.ListKeysRequest
+	(*ListKeysResponse)(nil),      // 18: permission.v1.ListKeysResponse
+	(*KeyWrap)(nil),               // 19: permission.v1.KeyWrap
+	(*PublishWrapsRequest)(nil),   // 20: permission.v1.PublishWrapsRequest
+	(*PublishWrapsResponse)(nil),  // 21: permission.v1.PublishWrapsResponse
+	(*GetWrapsRequest)(nil),       // 22: permission.v1.GetWrapsRequest
+	(*GetWrapsResponse)(nil),      // 23: permission.v1.GetWrapsResponse
+	nil,                           // 24: permission.v1.PolicyDumpResponse.MembersEntry
+	(*timestamppb.Timestamp)(nil), // 25: google.protobuf.Timestamp
 }
 var file_permission_v1_permission_proto_depIdxs = []int32{
 	0,  // 0: permission.v1.GrantRecord.role:type_name -> permission.v1.Role
 	0,  // 1: permission.v1.GrantRequest.role:type_name -> permission.v1.Role
-	0,  // 2: permission.v1.CreateLinkRequest.role:type_name -> permission.v1.Role
-	16, // 3: permission.v1.CreateLinkRequest.expires_at:type_name -> google.protobuf.Timestamp
-	0,  // 4: permission.v1.ShareLink.role:type_name -> permission.v1.Role
-	16, // 5: permission.v1.ShareLink.expires_at:type_name -> google.protobuf.Timestamp
-	15, // 6: permission.v1.PolicyDumpResponse.members:type_name -> permission.v1.PolicyDumpResponse.MembersEntry
-	0,  // 7: permission.v1.PolicyDumpResponse.MembersEntry.value:type_name -> permission.v1.Role
-	2,  // 8: permission.v1.PermissionService.EnsureOwner:input_type -> permission.v1.EnsureOwnerRequest
-	3,  // 9: permission.v1.PermissionService.Grant:input_type -> permission.v1.GrantRequest
-	4,  // 10: permission.v1.PermissionService.Revoke:input_type -> permission.v1.RevokeRequest
-	6,  // 11: permission.v1.PermissionService.CreateLink:input_type -> permission.v1.CreateLinkRequest
-	8,  // 12: permission.v1.PermissionService.RevokeLink:input_type -> permission.v1.RevokeLinkRequest
-	10, // 13: permission.v1.PermissionService.Redeem:input_type -> permission.v1.RedeemRequest
-	11, // 14: permission.v1.PermissionService.PolicyDump:input_type -> permission.v1.PolicyDumpRequest
-	13, // 15: permission.v1.PermissionService.CopyGrants:input_type -> permission.v1.CopyGrantsRequest
-	1,  // 16: permission.v1.PermissionService.EnsureOwner:output_type -> permission.v1.GrantRecord
-	1,  // 17: permission.v1.PermissionService.Grant:output_type -> permission.v1.GrantRecord
-	5,  // 18: permission.v1.PermissionService.Revoke:output_type -> permission.v1.RevokeResponse
-	7,  // 19: permission.v1.PermissionService.CreateLink:output_type -> permission.v1.ShareLink
-	9,  // 20: permission.v1.PermissionService.RevokeLink:output_type -> permission.v1.RevokeLinkResponse
-	1,  // 21: permission.v1.PermissionService.Redeem:output_type -> permission.v1.GrantRecord
-	12, // 22: permission.v1.PermissionService.PolicyDump:output_type -> permission.v1.PolicyDumpResponse
-	14, // 23: permission.v1.PermissionService.CopyGrants:output_type -> permission.v1.CopyGrantsResponse
-	16, // [16:24] is the sub-list for method output_type
-	8,  // [8:16] is the sub-list for method input_type
-	8,  // [8:8] is the sub-list for extension type_name
-	8,  // [8:8] is the sub-list for extension extendee
-	0,  // [0:8] is the sub-list for field type_name
+	19, // 2: permission.v1.GrantRequest.wraps:type_name -> permission.v1.KeyWrap
+	0,  // 3: permission.v1.CreateLinkRequest.role:type_name -> permission.v1.Role
+	25, // 4: permission.v1.CreateLinkRequest.expires_at:type_name -> google.protobuf.Timestamp
+	0,  // 5: permission.v1.ShareLink.role:type_name -> permission.v1.Role
+	25, // 6: permission.v1.ShareLink.expires_at:type_name -> google.protobuf.Timestamp
+	24, // 7: permission.v1.PolicyDumpResponse.members:type_name -> permission.v1.PolicyDumpResponse.MembersEntry
+	15, // 8: permission.v1.ListKeysResponse.keys:type_name -> permission.v1.PublicKey
+	19, // 9: permission.v1.PublishWrapsRequest.wraps:type_name -> permission.v1.KeyWrap
+	19, // 10: permission.v1.GetWrapsResponse.wraps:type_name -> permission.v1.KeyWrap
+	0,  // 11: permission.v1.PolicyDumpResponse.MembersEntry.value:type_name -> permission.v1.Role
+	2,  // 12: permission.v1.PermissionService.EnsureOwner:input_type -> permission.v1.EnsureOwnerRequest
+	3,  // 13: permission.v1.PermissionService.Grant:input_type -> permission.v1.GrantRequest
+	4,  // 14: permission.v1.PermissionService.Revoke:input_type -> permission.v1.RevokeRequest
+	6,  // 15: permission.v1.PermissionService.CreateLink:input_type -> permission.v1.CreateLinkRequest
+	8,  // 16: permission.v1.PermissionService.RevokeLink:input_type -> permission.v1.RevokeLinkRequest
+	10, // 17: permission.v1.PermissionService.Redeem:input_type -> permission.v1.RedeemRequest
+	11, // 18: permission.v1.PermissionService.PolicyDump:input_type -> permission.v1.PolicyDumpRequest
+	13, // 19: permission.v1.PermissionService.CopyGrants:input_type -> permission.v1.CopyGrantsRequest
+	16, // 20: permission.v1.PermissionService.PutKey:input_type -> permission.v1.PutKeyRequest
+	17, // 21: permission.v1.PermissionService.ListKeys:input_type -> permission.v1.ListKeysRequest
+	20, // 22: permission.v1.PermissionService.PublishWraps:input_type -> permission.v1.PublishWrapsRequest
+	22, // 23: permission.v1.PermissionService.GetWraps:input_type -> permission.v1.GetWrapsRequest
+	1,  // 24: permission.v1.PermissionService.EnsureOwner:output_type -> permission.v1.GrantRecord
+	1,  // 25: permission.v1.PermissionService.Grant:output_type -> permission.v1.GrantRecord
+	5,  // 26: permission.v1.PermissionService.Revoke:output_type -> permission.v1.RevokeResponse
+	7,  // 27: permission.v1.PermissionService.CreateLink:output_type -> permission.v1.ShareLink
+	9,  // 28: permission.v1.PermissionService.RevokeLink:output_type -> permission.v1.RevokeLinkResponse
+	1,  // 29: permission.v1.PermissionService.Redeem:output_type -> permission.v1.GrantRecord
+	12, // 30: permission.v1.PermissionService.PolicyDump:output_type -> permission.v1.PolicyDumpResponse
+	14, // 31: permission.v1.PermissionService.CopyGrants:output_type -> permission.v1.CopyGrantsResponse
+	15, // 32: permission.v1.PermissionService.PutKey:output_type -> permission.v1.PublicKey
+	18, // 33: permission.v1.PermissionService.ListKeys:output_type -> permission.v1.ListKeysResponse
+	21, // 34: permission.v1.PermissionService.PublishWraps:output_type -> permission.v1.PublishWrapsResponse
+	23, // 35: permission.v1.PermissionService.GetWraps:output_type -> permission.v1.GetWrapsResponse
+	24, // [24:36] is the sub-list for method output_type
+	12, // [12:24] is the sub-list for method input_type
+	12, // [12:12] is the sub-list for extension type_name
+	12, // [12:12] is the sub-list for extension extendee
+	0,  // [0:12] is the sub-list for field type_name
 }
 
 func init() { file_permission_v1_permission_proto_init() }
@@ -938,7 +1496,7 @@ func file_permission_v1_permission_proto_init() {
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_permission_v1_permission_proto_rawDesc), len(file_permission_v1_permission_proto_rawDesc)),
 			NumEnums:      1,
-			NumMessages:   15,
+			NumMessages:   24,
 			NumExtensions: 0,
 			NumServices:   1,
 		},

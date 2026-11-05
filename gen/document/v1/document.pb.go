@@ -73,18 +73,23 @@ func (Document_Status) EnumDescriptor() ([]byte, []int) {
 }
 
 type Document struct {
-	state         protoimpl.MessageState `protogen:"open.v1"`
-	Id            string                 `protobuf:"bytes,1,opt,name=id,proto3" json:"id,omitempty"`
-	Title         string                 `protobuf:"bytes,2,opt,name=title,proto3" json:"title,omitempty"`
-	OwnerId       string                 `protobuf:"bytes,3,opt,name=owner_id,json=ownerId,proto3" json:"owner_id,omitempty"`
-	Status        Document_Status        `protobuf:"varint,4,opt,name=status,proto3,enum=document.v1.Document_Status" json:"status,omitempty"`
-	OpSeq         uint64                 `protobuf:"varint,5,opt,name=op_seq,json=opSeq,proto3" json:"op_seq,omitempty"`
-	SnapshotSeq   uint64                 `protobuf:"varint,6,opt,name=snapshot_seq,json=snapshotSeq,proto3" json:"snapshot_seq,omitempty"`
-	CreatedAt     *timestamppb.Timestamp `protobuf:"bytes,7,opt,name=created_at,json=createdAt,proto3" json:"created_at,omitempty"`
-	UpdatedAt     *timestamppb.Timestamp `protobuf:"bytes,8,opt,name=updated_at,json=updatedAt,proto3" json:"updated_at,omitempty"`
-	ForkOf        string                 `protobuf:"bytes,9,opt,name=fork_of,json=forkOf,proto3" json:"fork_of,omitempty"`
-	ForkSeq       uint64                 `protobuf:"varint,10,opt,name=fork_seq,json=forkSeq,proto3" json:"fork_seq,omitempty"`
-	ForkRoot      string                 `protobuf:"bytes,11,opt,name=fork_root,json=forkRoot,proto3" json:"fork_root,omitempty"`
+	state       protoimpl.MessageState `protogen:"open.v1"`
+	Id          string                 `protobuf:"bytes,1,opt,name=id,proto3" json:"id,omitempty"`
+	Title       string                 `protobuf:"bytes,2,opt,name=title,proto3" json:"title,omitempty"`
+	OwnerId     string                 `protobuf:"bytes,3,opt,name=owner_id,json=ownerId,proto3" json:"owner_id,omitempty"`
+	Status      Document_Status        `protobuf:"varint,4,opt,name=status,proto3,enum=document.v1.Document_Status" json:"status,omitempty"`
+	OpSeq       uint64                 `protobuf:"varint,5,opt,name=op_seq,json=opSeq,proto3" json:"op_seq,omitempty"`
+	SnapshotSeq uint64                 `protobuf:"varint,6,opt,name=snapshot_seq,json=snapshotSeq,proto3" json:"snapshot_seq,omitempty"`
+	CreatedAt   *timestamppb.Timestamp `protobuf:"bytes,7,opt,name=created_at,json=createdAt,proto3" json:"created_at,omitempty"`
+	UpdatedAt   *timestamppb.Timestamp `protobuf:"bytes,8,opt,name=updated_at,json=updatedAt,proto3" json:"updated_at,omitempty"`
+	ForkOf      string                 `protobuf:"bytes,9,opt,name=fork_of,json=forkOf,proto3" json:"fork_of,omitempty"`
+	ForkSeq     uint64                 `protobuf:"varint,10,opt,name=fork_seq,json=forkSeq,proto3" json:"fork_seq,omitempty"`
+	ForkRoot    string                 `protobuf:"bytes,11,opt,name=fork_root,json=forkRoot,proto3" json:"fork_root,omitempty"`
+	// encryption is "plain" or "encrypted" and never changes.
+	Encryption string `protobuf:"bytes,12,opt,name=encryption,proto3" json:"encryption,omitempty"`
+	WriteEpoch uint32 `protobuf:"varint,13,opt,name=write_epoch,json=writeEpoch,proto3" json:"write_epoch,omitempty"`
+	// epoch_state is "", "pending", or "open". Empty means a plain document.
+	EpochState    string `protobuf:"bytes,14,opt,name=epoch_state,json=epochState,proto3" json:"epoch_state,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -196,10 +201,32 @@ func (x *Document) GetForkRoot() string {
 	return ""
 }
 
+func (x *Document) GetEncryption() string {
+	if x != nil {
+		return x.Encryption
+	}
+	return ""
+}
+
+func (x *Document) GetWriteEpoch() uint32 {
+	if x != nil {
+		return x.WriteEpoch
+	}
+	return 0
+}
+
+func (x *Document) GetEpochState() string {
+	if x != nil {
+		return x.EpochState
+	}
+	return ""
+}
+
 type CreateDocumentRequest struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	Title         string                 `protobuf:"bytes,1,opt,name=title,proto3" json:"title,omitempty"`
 	OwnerId       string                 `protobuf:"bytes,2,opt,name=owner_id,json=ownerId,proto3" json:"owner_id,omitempty"`
+	Encrypted     bool                   `protobuf:"varint,3,opt,name=encrypted,proto3" json:"encrypted,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -248,6 +275,73 @@ func (x *CreateDocumentRequest) GetOwnerId() string {
 	return ""
 }
 
+func (x *CreateDocumentRequest) GetEncrypted() bool {
+	if x != nil {
+		return x.Encrypted
+	}
+	return false
+}
+
+type SetEpochRequest struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Id            string                 `protobuf:"bytes,1,opt,name=id,proto3" json:"id,omitempty"`
+	WriteEpoch    uint32                 `protobuf:"varint,2,opt,name=write_epoch,json=writeEpoch,proto3" json:"write_epoch,omitempty"`
+	EpochState    string                 `protobuf:"bytes,3,opt,name=epoch_state,json=epochState,proto3" json:"epoch_state,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *SetEpochRequest) Reset() {
+	*x = SetEpochRequest{}
+	mi := &file_document_v1_document_proto_msgTypes[2]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *SetEpochRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*SetEpochRequest) ProtoMessage() {}
+
+func (x *SetEpochRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_document_v1_document_proto_msgTypes[2]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use SetEpochRequest.ProtoReflect.Descriptor instead.
+func (*SetEpochRequest) Descriptor() ([]byte, []int) {
+	return file_document_v1_document_proto_rawDescGZIP(), []int{2}
+}
+
+func (x *SetEpochRequest) GetId() string {
+	if x != nil {
+		return x.Id
+	}
+	return ""
+}
+
+func (x *SetEpochRequest) GetWriteEpoch() uint32 {
+	if x != nil {
+		return x.WriteEpoch
+	}
+	return 0
+}
+
+func (x *SetEpochRequest) GetEpochState() string {
+	if x != nil {
+		return x.EpochState
+	}
+	return ""
+}
+
 type GetDocumentRequest struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	Id            string                 `protobuf:"bytes,1,opt,name=id,proto3" json:"id,omitempty"`
@@ -257,7 +351,7 @@ type GetDocumentRequest struct {
 
 func (x *GetDocumentRequest) Reset() {
 	*x = GetDocumentRequest{}
-	mi := &file_document_v1_document_proto_msgTypes[2]
+	mi := &file_document_v1_document_proto_msgTypes[3]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -269,7 +363,7 @@ func (x *GetDocumentRequest) String() string {
 func (*GetDocumentRequest) ProtoMessage() {}
 
 func (x *GetDocumentRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_document_v1_document_proto_msgTypes[2]
+	mi := &file_document_v1_document_proto_msgTypes[3]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -282,7 +376,7 @@ func (x *GetDocumentRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use GetDocumentRequest.ProtoReflect.Descriptor instead.
 func (*GetDocumentRequest) Descriptor() ([]byte, []int) {
-	return file_document_v1_document_proto_rawDescGZIP(), []int{2}
+	return file_document_v1_document_proto_rawDescGZIP(), []int{3}
 }
 
 func (x *GetDocumentRequest) GetId() string {
@@ -301,7 +395,7 @@ type ArchiveDocumentRequest struct {
 
 func (x *ArchiveDocumentRequest) Reset() {
 	*x = ArchiveDocumentRequest{}
-	mi := &file_document_v1_document_proto_msgTypes[3]
+	mi := &file_document_v1_document_proto_msgTypes[4]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -313,7 +407,7 @@ func (x *ArchiveDocumentRequest) String() string {
 func (*ArchiveDocumentRequest) ProtoMessage() {}
 
 func (x *ArchiveDocumentRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_document_v1_document_proto_msgTypes[3]
+	mi := &file_document_v1_document_proto_msgTypes[4]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -326,7 +420,7 @@ func (x *ArchiveDocumentRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ArchiveDocumentRequest.ProtoReflect.Descriptor instead.
 func (*ArchiveDocumentRequest) Descriptor() ([]byte, []int) {
-	return file_document_v1_document_proto_rawDescGZIP(), []int{3}
+	return file_document_v1_document_proto_rawDescGZIP(), []int{4}
 }
 
 func (x *ArchiveDocumentRequest) GetId() string {
@@ -345,7 +439,7 @@ type LoadStateRequest struct {
 
 func (x *LoadStateRequest) Reset() {
 	*x = LoadStateRequest{}
-	mi := &file_document_v1_document_proto_msgTypes[4]
+	mi := &file_document_v1_document_proto_msgTypes[5]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -357,7 +451,7 @@ func (x *LoadStateRequest) String() string {
 func (*LoadStateRequest) ProtoMessage() {}
 
 func (x *LoadStateRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_document_v1_document_proto_msgTypes[4]
+	mi := &file_document_v1_document_proto_msgTypes[5]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -370,7 +464,7 @@ func (x *LoadStateRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use LoadStateRequest.ProtoReflect.Descriptor instead.
 func (*LoadStateRequest) Descriptor() ([]byte, []int) {
-	return file_document_v1_document_proto_rawDescGZIP(), []int{4}
+	return file_document_v1_document_proto_rawDescGZIP(), []int{5}
 }
 
 func (x *LoadStateRequest) GetId() string {
@@ -391,7 +485,7 @@ type LoadStateResponse struct {
 
 func (x *LoadStateResponse) Reset() {
 	*x = LoadStateResponse{}
-	mi := &file_document_v1_document_proto_msgTypes[5]
+	mi := &file_document_v1_document_proto_msgTypes[6]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -403,7 +497,7 @@ func (x *LoadStateResponse) String() string {
 func (*LoadStateResponse) ProtoMessage() {}
 
 func (x *LoadStateResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_document_v1_document_proto_msgTypes[5]
+	mi := &file_document_v1_document_proto_msgTypes[6]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -416,7 +510,7 @@ func (x *LoadStateResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use LoadStateResponse.ProtoReflect.Descriptor instead.
 func (*LoadStateResponse) Descriptor() ([]byte, []int) {
-	return file_document_v1_document_proto_rawDescGZIP(), []int{5}
+	return file_document_v1_document_proto_rawDescGZIP(), []int{6}
 }
 
 func (x *LoadStateResponse) GetDocument() *Document {
@@ -450,7 +544,7 @@ type AppendOperationsRequest struct {
 
 func (x *AppendOperationsRequest) Reset() {
 	*x = AppendOperationsRequest{}
-	mi := &file_document_v1_document_proto_msgTypes[6]
+	mi := &file_document_v1_document_proto_msgTypes[7]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -462,7 +556,7 @@ func (x *AppendOperationsRequest) String() string {
 func (*AppendOperationsRequest) ProtoMessage() {}
 
 func (x *AppendOperationsRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_document_v1_document_proto_msgTypes[6]
+	mi := &file_document_v1_document_proto_msgTypes[7]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -475,7 +569,7 @@ func (x *AppendOperationsRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use AppendOperationsRequest.ProtoReflect.Descriptor instead.
 func (*AppendOperationsRequest) Descriptor() ([]byte, []int) {
-	return file_document_v1_document_proto_rawDescGZIP(), []int{6}
+	return file_document_v1_document_proto_rawDescGZIP(), []int{7}
 }
 
 func (x *AppendOperationsRequest) GetId() string {
@@ -507,7 +601,7 @@ type AppendOperationsResponse struct {
 
 func (x *AppendOperationsResponse) Reset() {
 	*x = AppendOperationsResponse{}
-	mi := &file_document_v1_document_proto_msgTypes[7]
+	mi := &file_document_v1_document_proto_msgTypes[8]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -519,7 +613,7 @@ func (x *AppendOperationsResponse) String() string {
 func (*AppendOperationsResponse) ProtoMessage() {}
 
 func (x *AppendOperationsResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_document_v1_document_proto_msgTypes[7]
+	mi := &file_document_v1_document_proto_msgTypes[8]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -532,7 +626,7 @@ func (x *AppendOperationsResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use AppendOperationsResponse.ProtoReflect.Descriptor instead.
 func (*AppendOperationsResponse) Descriptor() ([]byte, []int) {
-	return file_document_v1_document_proto_rawDescGZIP(), []int{7}
+	return file_document_v1_document_proto_rawDescGZIP(), []int{8}
 }
 
 func (x *AppendOperationsResponse) GetOpSeq() uint64 {
@@ -567,7 +661,7 @@ type ReadOperationsRequest struct {
 
 func (x *ReadOperationsRequest) Reset() {
 	*x = ReadOperationsRequest{}
-	mi := &file_document_v1_document_proto_msgTypes[8]
+	mi := &file_document_v1_document_proto_msgTypes[9]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -579,7 +673,7 @@ func (x *ReadOperationsRequest) String() string {
 func (*ReadOperationsRequest) ProtoMessage() {}
 
 func (x *ReadOperationsRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_document_v1_document_proto_msgTypes[8]
+	mi := &file_document_v1_document_proto_msgTypes[9]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -592,7 +686,7 @@ func (x *ReadOperationsRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ReadOperationsRequest.ProtoReflect.Descriptor instead.
 func (*ReadOperationsRequest) Descriptor() ([]byte, []int) {
-	return file_document_v1_document_proto_rawDescGZIP(), []int{8}
+	return file_document_v1_document_proto_rawDescGZIP(), []int{9}
 }
 
 func (x *ReadOperationsRequest) GetId() string {
@@ -629,7 +723,7 @@ type ReadOperationsResponse struct {
 
 func (x *ReadOperationsResponse) Reset() {
 	*x = ReadOperationsResponse{}
-	mi := &file_document_v1_document_proto_msgTypes[9]
+	mi := &file_document_v1_document_proto_msgTypes[10]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -641,7 +735,7 @@ func (x *ReadOperationsResponse) String() string {
 func (*ReadOperationsResponse) ProtoMessage() {}
 
 func (x *ReadOperationsResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_document_v1_document_proto_msgTypes[9]
+	mi := &file_document_v1_document_proto_msgTypes[10]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -654,7 +748,7 @@ func (x *ReadOperationsResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ReadOperationsResponse.ProtoReflect.Descriptor instead.
 func (*ReadOperationsResponse) Descriptor() ([]byte, []int) {
-	return file_document_v1_document_proto_rawDescGZIP(), []int{9}
+	return file_document_v1_document_proto_rawDescGZIP(), []int{10}
 }
 
 func (x *ReadOperationsResponse) GetFirstSeq() uint64 {
@@ -690,7 +784,7 @@ type ClaimReplicaRequest struct {
 
 func (x *ClaimReplicaRequest) Reset() {
 	*x = ClaimReplicaRequest{}
-	mi := &file_document_v1_document_proto_msgTypes[10]
+	mi := &file_document_v1_document_proto_msgTypes[11]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -702,7 +796,7 @@ func (x *ClaimReplicaRequest) String() string {
 func (*ClaimReplicaRequest) ProtoMessage() {}
 
 func (x *ClaimReplicaRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_document_v1_document_proto_msgTypes[10]
+	mi := &file_document_v1_document_proto_msgTypes[11]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -715,7 +809,7 @@ func (x *ClaimReplicaRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ClaimReplicaRequest.ProtoReflect.Descriptor instead.
 func (*ClaimReplicaRequest) Descriptor() ([]byte, []int) {
-	return file_document_v1_document_proto_rawDescGZIP(), []int{10}
+	return file_document_v1_document_proto_rawDescGZIP(), []int{11}
 }
 
 func (x *ClaimReplicaRequest) GetDocumentId() string {
@@ -755,7 +849,7 @@ type ClaimReplicaResponse struct {
 
 func (x *ClaimReplicaResponse) Reset() {
 	*x = ClaimReplicaResponse{}
-	mi := &file_document_v1_document_proto_msgTypes[11]
+	mi := &file_document_v1_document_proto_msgTypes[12]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -767,7 +861,7 @@ func (x *ClaimReplicaResponse) String() string {
 func (*ClaimReplicaResponse) ProtoMessage() {}
 
 func (x *ClaimReplicaResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_document_v1_document_proto_msgTypes[11]
+	mi := &file_document_v1_document_proto_msgTypes[12]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -780,7 +874,7 @@ func (x *ClaimReplicaResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ClaimReplicaResponse.ProtoReflect.Descriptor instead.
 func (*ClaimReplicaResponse) Descriptor() ([]byte, []int) {
-	return file_document_v1_document_proto_rawDescGZIP(), []int{11}
+	return file_document_v1_document_proto_rawDescGZIP(), []int{12}
 }
 
 func (x *ClaimReplicaResponse) GetClient() uint64 {
@@ -802,7 +896,7 @@ type ForkDocumentRequest struct {
 
 func (x *ForkDocumentRequest) Reset() {
 	*x = ForkDocumentRequest{}
-	mi := &file_document_v1_document_proto_msgTypes[12]
+	mi := &file_document_v1_document_proto_msgTypes[13]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -814,7 +908,7 @@ func (x *ForkDocumentRequest) String() string {
 func (*ForkDocumentRequest) ProtoMessage() {}
 
 func (x *ForkDocumentRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_document_v1_document_proto_msgTypes[12]
+	mi := &file_document_v1_document_proto_msgTypes[13]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -827,7 +921,7 @@ func (x *ForkDocumentRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ForkDocumentRequest.ProtoReflect.Descriptor instead.
 func (*ForkDocumentRequest) Descriptor() ([]byte, []int) {
-	return file_document_v1_document_proto_rawDescGZIP(), []int{12}
+	return file_document_v1_document_proto_rawDescGZIP(), []int{13}
 }
 
 func (x *ForkDocumentRequest) GetSourceId() string {
@@ -869,7 +963,7 @@ type ListChangedRequest struct {
 
 func (x *ListChangedRequest) Reset() {
 	*x = ListChangedRequest{}
-	mi := &file_document_v1_document_proto_msgTypes[13]
+	mi := &file_document_v1_document_proto_msgTypes[14]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -881,7 +975,7 @@ func (x *ListChangedRequest) String() string {
 func (*ListChangedRequest) ProtoMessage() {}
 
 func (x *ListChangedRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_document_v1_document_proto_msgTypes[13]
+	mi := &file_document_v1_document_proto_msgTypes[14]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -894,7 +988,7 @@ func (x *ListChangedRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ListChangedRequest.ProtoReflect.Descriptor instead.
 func (*ListChangedRequest) Descriptor() ([]byte, []int) {
-	return file_document_v1_document_proto_rawDescGZIP(), []int{13}
+	return file_document_v1_document_proto_rawDescGZIP(), []int{14}
 }
 
 func (x *ListChangedRequest) GetSince() *timestamppb.Timestamp {
@@ -929,7 +1023,7 @@ type ListChangedResponse struct {
 
 func (x *ListChangedResponse) Reset() {
 	*x = ListChangedResponse{}
-	mi := &file_document_v1_document_proto_msgTypes[14]
+	mi := &file_document_v1_document_proto_msgTypes[15]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -941,7 +1035,7 @@ func (x *ListChangedResponse) String() string {
 func (*ListChangedResponse) ProtoMessage() {}
 
 func (x *ListChangedResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_document_v1_document_proto_msgTypes[14]
+	mi := &file_document_v1_document_proto_msgTypes[15]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -954,7 +1048,7 @@ func (x *ListChangedResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ListChangedResponse.ProtoReflect.Descriptor instead.
 func (*ListChangedResponse) Descriptor() ([]byte, []int) {
-	return file_document_v1_document_proto_rawDescGZIP(), []int{14}
+	return file_document_v1_document_proto_rawDescGZIP(), []int{15}
 }
 
 func (x *ListChangedResponse) GetDocuments() []*Document {
@@ -982,7 +1076,7 @@ var File_document_v1_document_proto protoreflect.FileDescriptor
 
 const file_document_v1_document_proto_rawDesc = "" +
 	"\n" +
-	"\x1adocument/v1/document.proto\x12\vdocument.v1\x1a\x16crdt/v1/snapshot.proto\x1a\x1fgoogle/protobuf/timestamp.proto\"\xcc\x03\n" +
+	"\x1adocument/v1/document.proto\x12\vdocument.v1\x1a\x16crdt/v1/snapshot.proto\x1a\x1fgoogle/protobuf/timestamp.proto\"\xae\x04\n" +
 	"\bDocument\x12\x0e\n" +
 	"\x02id\x18\x01 \x01(\tR\x02id\x12\x14\n" +
 	"\x05title\x18\x02 \x01(\tR\x05title\x12\x19\n" +
@@ -997,14 +1091,28 @@ const file_document_v1_document_proto_rawDesc = "" +
 	"\afork_of\x18\t \x01(\tR\x06forkOf\x12\x19\n" +
 	"\bfork_seq\x18\n" +
 	" \x01(\x04R\aforkSeq\x12\x1b\n" +
-	"\tfork_root\x18\v \x01(\tR\bforkRoot\"H\n" +
+	"\tfork_root\x18\v \x01(\tR\bforkRoot\x12\x1e\n" +
+	"\n" +
+	"encryption\x18\f \x01(\tR\n" +
+	"encryption\x12\x1f\n" +
+	"\vwrite_epoch\x18\r \x01(\rR\n" +
+	"writeEpoch\x12\x1f\n" +
+	"\vepoch_state\x18\x0e \x01(\tR\n" +
+	"epochState\"H\n" +
 	"\x06Status\x12\x16\n" +
 	"\x12STATUS_UNSPECIFIED\x10\x00\x12\x11\n" +
 	"\rSTATUS_ACTIVE\x10\x01\x12\x13\n" +
-	"\x0fSTATUS_ARCHIVED\x10\x02\"H\n" +
+	"\x0fSTATUS_ARCHIVED\x10\x02\"f\n" +
 	"\x15CreateDocumentRequest\x12\x14\n" +
 	"\x05title\x18\x01 \x01(\tR\x05title\x12\x19\n" +
-	"\bowner_id\x18\x02 \x01(\tR\aownerId\"$\n" +
+	"\bowner_id\x18\x02 \x01(\tR\aownerId\x12\x1c\n" +
+	"\tencrypted\x18\x03 \x01(\bR\tencrypted\"c\n" +
+	"\x0fSetEpochRequest\x12\x0e\n" +
+	"\x02id\x18\x01 \x01(\tR\x02id\x12\x1f\n" +
+	"\vwrite_epoch\x18\x02 \x01(\rR\n" +
+	"writeEpoch\x12\x1f\n" +
+	"\vepoch_state\x18\x03 \x01(\tR\n" +
+	"epochState\"$\n" +
 	"\x12GetDocumentRequest\x12\x0e\n" +
 	"\x02id\x18\x01 \x01(\tR\x02id\"(\n" +
 	"\x16ArchiveDocumentRequest\x12\x0e\n" +
@@ -1058,7 +1166,7 @@ const file_document_v1_document_proto_rawDesc = "" +
 	"\tdocuments\x18\x01 \x03(\v2\x15.document.v1.DocumentR\tdocuments\x129\n" +
 	"\n" +
 	"next_since\x18\x02 \x01(\v2\x1a.google.protobuf.TimestampR\tnextSince\x12\"\n" +
-	"\rnext_after_id\x18\x03 \x01(\tR\vnextAfterId2\xf5\x05\n" +
+	"\rnext_after_id\x18\x03 \x01(\tR\vnextAfterId2\xb6\x06\n" +
 	"\x0fDocumentService\x12K\n" +
 	"\x0eCreateDocument\x12\".document.v1.CreateDocumentRequest\x1a\x15.document.v1.Document\x12E\n" +
 	"\vGetDocument\x12\x1f.document.v1.GetDocumentRequest\x1a\x15.document.v1.Document\x12M\n" +
@@ -1068,7 +1176,8 @@ const file_document_v1_document_proto_rawDesc = "" +
 	"\x0eReadOperations\x12\".document.v1.ReadOperationsRequest\x1a#.document.v1.ReadOperationsResponse\x12S\n" +
 	"\fClaimReplica\x12 .document.v1.ClaimReplicaRequest\x1a!.document.v1.ClaimReplicaResponse\x12G\n" +
 	"\fForkDocument\x12 .document.v1.ForkDocumentRequest\x1a\x15.document.v1.Document\x12Y\n" +
-	"\x14ListChangedDocuments\x12\x1f.document.v1.ListChangedRequest\x1a .document.v1.ListChangedResponseB?Z=github.com/rowjay007/collab-sphere/gen/document/v1;documentv1b\x06proto3"
+	"\x14ListChangedDocuments\x12\x1f.document.v1.ListChangedRequest\x1a .document.v1.ListChangedResponse\x12?\n" +
+	"\bSetEpoch\x12\x1c.document.v1.SetEpochRequest\x1a\x15.document.v1.DocumentB?Z=github.com/rowjay007/collab-sphere/gen/document/v1;documentv1b\x06proto3"
 
 var (
 	file_document_v1_document_proto_rawDescOnce sync.Once
@@ -1083,60 +1192,63 @@ func file_document_v1_document_proto_rawDescGZIP() []byte {
 }
 
 var file_document_v1_document_proto_enumTypes = make([]protoimpl.EnumInfo, 1)
-var file_document_v1_document_proto_msgTypes = make([]protoimpl.MessageInfo, 15)
+var file_document_v1_document_proto_msgTypes = make([]protoimpl.MessageInfo, 16)
 var file_document_v1_document_proto_goTypes = []any{
 	(Document_Status)(0),             // 0: document.v1.Document.Status
 	(*Document)(nil),                 // 1: document.v1.Document
 	(*CreateDocumentRequest)(nil),    // 2: document.v1.CreateDocumentRequest
-	(*GetDocumentRequest)(nil),       // 3: document.v1.GetDocumentRequest
-	(*ArchiveDocumentRequest)(nil),   // 4: document.v1.ArchiveDocumentRequest
-	(*LoadStateRequest)(nil),         // 5: document.v1.LoadStateRequest
-	(*LoadStateResponse)(nil),        // 6: document.v1.LoadStateResponse
-	(*AppendOperationsRequest)(nil),  // 7: document.v1.AppendOperationsRequest
-	(*AppendOperationsResponse)(nil), // 8: document.v1.AppendOperationsResponse
-	(*ReadOperationsRequest)(nil),    // 9: document.v1.ReadOperationsRequest
-	(*ReadOperationsResponse)(nil),   // 10: document.v1.ReadOperationsResponse
-	(*ClaimReplicaRequest)(nil),      // 11: document.v1.ClaimReplicaRequest
-	(*ClaimReplicaResponse)(nil),     // 12: document.v1.ClaimReplicaResponse
-	(*ForkDocumentRequest)(nil),      // 13: document.v1.ForkDocumentRequest
-	(*ListChangedRequest)(nil),       // 14: document.v1.ListChangedRequest
-	(*ListChangedResponse)(nil),      // 15: document.v1.ListChangedResponse
-	(*timestamppb.Timestamp)(nil),    // 16: google.protobuf.Timestamp
-	(*v1.Snapshot)(nil),              // 17: crdt.v1.Snapshot
-	(*v1.Operation)(nil),             // 18: crdt.v1.Operation
+	(*SetEpochRequest)(nil),          // 3: document.v1.SetEpochRequest
+	(*GetDocumentRequest)(nil),       // 4: document.v1.GetDocumentRequest
+	(*ArchiveDocumentRequest)(nil),   // 5: document.v1.ArchiveDocumentRequest
+	(*LoadStateRequest)(nil),         // 6: document.v1.LoadStateRequest
+	(*LoadStateResponse)(nil),        // 7: document.v1.LoadStateResponse
+	(*AppendOperationsRequest)(nil),  // 8: document.v1.AppendOperationsRequest
+	(*AppendOperationsResponse)(nil), // 9: document.v1.AppendOperationsResponse
+	(*ReadOperationsRequest)(nil),    // 10: document.v1.ReadOperationsRequest
+	(*ReadOperationsResponse)(nil),   // 11: document.v1.ReadOperationsResponse
+	(*ClaimReplicaRequest)(nil),      // 12: document.v1.ClaimReplicaRequest
+	(*ClaimReplicaResponse)(nil),     // 13: document.v1.ClaimReplicaResponse
+	(*ForkDocumentRequest)(nil),      // 14: document.v1.ForkDocumentRequest
+	(*ListChangedRequest)(nil),       // 15: document.v1.ListChangedRequest
+	(*ListChangedResponse)(nil),      // 16: document.v1.ListChangedResponse
+	(*timestamppb.Timestamp)(nil),    // 17: google.protobuf.Timestamp
+	(*v1.Snapshot)(nil),              // 18: crdt.v1.Snapshot
+	(*v1.Operation)(nil),             // 19: crdt.v1.Operation
 }
 var file_document_v1_document_proto_depIdxs = []int32{
 	0,  // 0: document.v1.Document.status:type_name -> document.v1.Document.Status
-	16, // 1: document.v1.Document.created_at:type_name -> google.protobuf.Timestamp
-	16, // 2: document.v1.Document.updated_at:type_name -> google.protobuf.Timestamp
+	17, // 1: document.v1.Document.created_at:type_name -> google.protobuf.Timestamp
+	17, // 2: document.v1.Document.updated_at:type_name -> google.protobuf.Timestamp
 	1,  // 3: document.v1.LoadStateResponse.document:type_name -> document.v1.Document
-	17, // 4: document.v1.LoadStateResponse.snapshot:type_name -> crdt.v1.Snapshot
-	18, // 5: document.v1.LoadStateResponse.operations:type_name -> crdt.v1.Operation
-	18, // 6: document.v1.AppendOperationsRequest.operations:type_name -> crdt.v1.Operation
-	18, // 7: document.v1.ReadOperationsResponse.operations:type_name -> crdt.v1.Operation
-	16, // 8: document.v1.ListChangedRequest.since:type_name -> google.protobuf.Timestamp
+	18, // 4: document.v1.LoadStateResponse.snapshot:type_name -> crdt.v1.Snapshot
+	19, // 5: document.v1.LoadStateResponse.operations:type_name -> crdt.v1.Operation
+	19, // 6: document.v1.AppendOperationsRequest.operations:type_name -> crdt.v1.Operation
+	19, // 7: document.v1.ReadOperationsResponse.operations:type_name -> crdt.v1.Operation
+	17, // 8: document.v1.ListChangedRequest.since:type_name -> google.protobuf.Timestamp
 	1,  // 9: document.v1.ListChangedResponse.documents:type_name -> document.v1.Document
-	16, // 10: document.v1.ListChangedResponse.next_since:type_name -> google.protobuf.Timestamp
+	17, // 10: document.v1.ListChangedResponse.next_since:type_name -> google.protobuf.Timestamp
 	2,  // 11: document.v1.DocumentService.CreateDocument:input_type -> document.v1.CreateDocumentRequest
-	3,  // 12: document.v1.DocumentService.GetDocument:input_type -> document.v1.GetDocumentRequest
-	4,  // 13: document.v1.DocumentService.ArchiveDocument:input_type -> document.v1.ArchiveDocumentRequest
-	5,  // 14: document.v1.DocumentService.LoadState:input_type -> document.v1.LoadStateRequest
-	7,  // 15: document.v1.DocumentService.AppendOperations:input_type -> document.v1.AppendOperationsRequest
-	9,  // 16: document.v1.DocumentService.ReadOperations:input_type -> document.v1.ReadOperationsRequest
-	11, // 17: document.v1.DocumentService.ClaimReplica:input_type -> document.v1.ClaimReplicaRequest
-	13, // 18: document.v1.DocumentService.ForkDocument:input_type -> document.v1.ForkDocumentRequest
-	14, // 19: document.v1.DocumentService.ListChangedDocuments:input_type -> document.v1.ListChangedRequest
-	1,  // 20: document.v1.DocumentService.CreateDocument:output_type -> document.v1.Document
-	1,  // 21: document.v1.DocumentService.GetDocument:output_type -> document.v1.Document
-	1,  // 22: document.v1.DocumentService.ArchiveDocument:output_type -> document.v1.Document
-	6,  // 23: document.v1.DocumentService.LoadState:output_type -> document.v1.LoadStateResponse
-	8,  // 24: document.v1.DocumentService.AppendOperations:output_type -> document.v1.AppendOperationsResponse
-	10, // 25: document.v1.DocumentService.ReadOperations:output_type -> document.v1.ReadOperationsResponse
-	12, // 26: document.v1.DocumentService.ClaimReplica:output_type -> document.v1.ClaimReplicaResponse
-	1,  // 27: document.v1.DocumentService.ForkDocument:output_type -> document.v1.Document
-	15, // 28: document.v1.DocumentService.ListChangedDocuments:output_type -> document.v1.ListChangedResponse
-	20, // [20:29] is the sub-list for method output_type
-	11, // [11:20] is the sub-list for method input_type
+	4,  // 12: document.v1.DocumentService.GetDocument:input_type -> document.v1.GetDocumentRequest
+	5,  // 13: document.v1.DocumentService.ArchiveDocument:input_type -> document.v1.ArchiveDocumentRequest
+	6,  // 14: document.v1.DocumentService.LoadState:input_type -> document.v1.LoadStateRequest
+	8,  // 15: document.v1.DocumentService.AppendOperations:input_type -> document.v1.AppendOperationsRequest
+	10, // 16: document.v1.DocumentService.ReadOperations:input_type -> document.v1.ReadOperationsRequest
+	12, // 17: document.v1.DocumentService.ClaimReplica:input_type -> document.v1.ClaimReplicaRequest
+	14, // 18: document.v1.DocumentService.ForkDocument:input_type -> document.v1.ForkDocumentRequest
+	15, // 19: document.v1.DocumentService.ListChangedDocuments:input_type -> document.v1.ListChangedRequest
+	3,  // 20: document.v1.DocumentService.SetEpoch:input_type -> document.v1.SetEpochRequest
+	1,  // 21: document.v1.DocumentService.CreateDocument:output_type -> document.v1.Document
+	1,  // 22: document.v1.DocumentService.GetDocument:output_type -> document.v1.Document
+	1,  // 23: document.v1.DocumentService.ArchiveDocument:output_type -> document.v1.Document
+	7,  // 24: document.v1.DocumentService.LoadState:output_type -> document.v1.LoadStateResponse
+	9,  // 25: document.v1.DocumentService.AppendOperations:output_type -> document.v1.AppendOperationsResponse
+	11, // 26: document.v1.DocumentService.ReadOperations:output_type -> document.v1.ReadOperationsResponse
+	13, // 27: document.v1.DocumentService.ClaimReplica:output_type -> document.v1.ClaimReplicaResponse
+	1,  // 28: document.v1.DocumentService.ForkDocument:output_type -> document.v1.Document
+	16, // 29: document.v1.DocumentService.ListChangedDocuments:output_type -> document.v1.ListChangedResponse
+	1,  // 30: document.v1.DocumentService.SetEpoch:output_type -> document.v1.Document
+	21, // [21:31] is the sub-list for method output_type
+	11, // [11:21] is the sub-list for method input_type
 	11, // [11:11] is the sub-list for extension type_name
 	11, // [11:11] is the sub-list for extension extendee
 	0,  // [0:11] is the sub-list for field type_name
@@ -1153,7 +1265,7 @@ func file_document_v1_document_proto_init() {
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_document_v1_document_proto_rawDesc), len(file_document_v1_document_proto_rawDesc)),
 			NumEnums:      1,
-			NumMessages:   15,
+			NumMessages:   16,
 			NumExtensions: 0,
 			NumServices:   1,
 		},

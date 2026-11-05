@@ -58,6 +58,9 @@ func (s *Store) Append(ctx context.Context, id uuid.UUID, ops []*crdtv1.Operatio
 	if err != nil {
 		return AppendResult{}, err
 	}
+	if err := opsMatchDocument(doc, ops); err != nil {
+		return AppendResult{}, err
+	}
 
 	pending, err := classifyOps(ctx, tx, id, ops)
 	if err != nil {
@@ -259,6 +262,32 @@ func lockDocument(ctx context.Context, tx pgx.Tx, id uuid.UUID) (domain.Document
 	return doc, nil
 }
 
+func opsMatchDocument(doc domain.Document, ops []*crdtv1.Operation) error {
+	for _, raw := range ops {
+		op, err := crdt.OpFromProto(raw)
+		if err != nil {
+			return fmt.Errorf("%w: %v", domain.ErrInvalidArgument, err)
+		}
+		ins, ok := op.(crdt.Insert)
+		if !ok {
+			continue
+		}
+		if doc.Encryption == domain.EncryptionEncrypted {
+			if ins.Cipher == nil || ins.Value != 0 {
+				return fmt.Errorf("%w: operation does not match document mode", domain.ErrInvalidArgument)
+			}
+			if !ins.Copy && (doc.EpochState != domain.EpochOpen || ins.Cipher.Epoch != doc.WriteEpoch) {
+				return fmt.Errorf("%w: epoch is not the open write epoch", domain.ErrInvalidArgument)
+			}
+			continue
+		}
+		if ins.Cipher != nil {
+			return fmt.Errorf("%w: operation does not match document mode", domain.ErrInvalidArgument)
+		}
+	}
+	return nil
+}
+
 func classifyOps(ctx context.Context, tx pgx.Tx, id uuid.UUID, ops []*crdtv1.Operation) ([]pendingOp, error) {
 	pending := make([]pendingOp, 0, len(ops))
 	seen := make(map[opKey][]byte, len(ops))
@@ -419,6 +448,13 @@ func loadOpsRange(ctx context.Context, tx pgx.Tx, id uuid.UUID, after, through u
 
 func loadSnapshot(ctx context.Context, tx pgx.Tx, id uuid.UUID, seq uint64) (*crdtv1.Snapshot, error) {
 	if seq == 0 {
+		var encryption string
+		if err := tx.QueryRow(ctx, `SELECT encryption FROM documents WHERE id = $1`, id).Scan(&encryption); err != nil {
+			return nil, fmt.Errorf("load encryption: %w", err)
+		}
+		if encryption == domain.EncryptionEncrypted {
+			return crdt.NewEncrypted().Snapshot(), nil
+		}
 		return crdt.New().Snapshot(), nil
 	}
 	var raw []byte

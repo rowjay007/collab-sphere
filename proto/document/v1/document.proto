@@ -19,6 +19,9 @@ service DocumentService {
   rpc ClaimReplica(ClaimReplicaRequest) returns (ClaimReplicaResponse);
   rpc ForkDocument(ForkDocumentRequest) returns (Document);
   rpc ListChangedDocuments(ListChangedRequest) returns (ListChangedResponse);
+  // SetEpoch moves the open write epoch. The same pair is a no-op. An older
+  // epoch is rejected. Internal callers only.
+  rpc SetEpoch(SetEpochRequest) returns (Document);
 }
 
 message Document {
@@ -38,11 +41,23 @@ message Document {
   string fork_of = 9;
   uint64 fork_seq = 10;
   string fork_root = 11;
+  // encryption is "plain" or "encrypted" and never changes.
+  string encryption = 12;
+  uint32 write_epoch = 13;
+  // epoch_state is "", "pending", or "open". Empty means a plain document.
+  string epoch_state = 14;
 }
 
 message CreateDocumentRequest {
   string title = 1;
   string owner_id = 2;
+  bool encrypted = 3;
+}
+
+message SetEpochRequest {
+  string id = 1;
+  uint32 write_epoch = 2;
+  string epoch_state = 3;
 }
 
 message GetDocumentRequest {

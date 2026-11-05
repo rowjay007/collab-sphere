@@ -18,11 +18,13 @@ import (
 	"time"
 
 	"github.com/coder/websocket"
+	"github.com/google/uuid"
 	"google.golang.org/protobuf/proto"
 
 	collabv1 "github.com/rowjay007/collab-sphere/gen/collab/v1"
 	crdtv1 "github.com/rowjay007/collab-sphere/gen/crdt/v1"
 	"github.com/rowjay007/collab-sphere/pkg/crdt"
+	"github.com/rowjay007/collab-sphere/pkg/docrypt"
 )
 
 const (
@@ -69,6 +71,12 @@ type Options struct {
 	Client crdt.ClientID
 	// Token is sent as Authorization: Bearer on every dial when set.
 	Token string
+	// DocID is the document the seals belong to. The dial id is used when this is nil.
+	DocID uuid.UUID
+	// Key opens and seals runes. Nil keeps the plain path.
+	Key func(epoch uint32) ([]byte, error)
+	// WriteEpoch is the open epoch a sealed insert uses.
+	WriteEpoch func() uint32
 }
 
 type state int
@@ -160,9 +168,13 @@ func DialWith(ctx context.Context, docID string, opts Options) (*Client, error) 
 		return nil, errors.New("collabclient: no hub URLs")
 	}
 	life, stop := context.WithCancel(context.Background())
+	client := opts.Client
+	if opts.Key != nil {
+		client = 0
+	}
 	c := &Client{
 		docID:     docID,
-		id:        opts.Client,
+		id:        client,
 		opts:      opts,
 		life:      life,
 		stop:      stop,
@@ -205,10 +217,61 @@ func (c *Client) Edit(fn func(r *crdt.Replica) ([]crdt.Op, error)) error {
 }
 
 func (c *Client) InsertAt(index int, v rune) error {
+	if c.opts.Key == nil {
+		return c.Edit(func(r *crdt.Replica) ([]crdt.Op, error) {
+			op, err := r.InsertAt(index, v)
+			return []crdt.Op{op}, err
+		})
+	}
 	return c.Edit(func(r *crdt.Replica) ([]crdt.Op, error) {
-		op, err := r.InsertAt(index, v)
-		return []crdt.Op{op}, err
+		op, err := c.sealInsert(r, index, v)
+		if err != nil {
+			return nil, err
+		}
+		return []crdt.Op{op}, nil
 	})
+}
+
+func (c *Client) sealInsert(r *crdt.Replica, index int, v rune) (crdt.Insert, error) {
+	if r == nil || r.Doc == nil || index < 0 || index > r.Len() {
+		return crdt.Insert{}, crdt.ErrIndex
+	}
+	if c.opts.WriteEpoch == nil {
+		return crdt.Insert{}, errors.New("collabclient: write epoch is required")
+	}
+	epoch := c.opts.WriteEpoch()
+	key, err := c.opts.Key(epoch)
+	if err != nil {
+		return crdt.Insert{}, err
+	}
+	parent := crdt.Root
+	if index > 0 {
+		parent, err = r.IDAt(index - 1)
+		if err != nil {
+			return crdt.Insert{}, err
+		}
+	}
+	id := crdt.ID{Client: r.Client(), Clock: r.Clock() + 1}
+	docID, err := c.sealDoc()
+	if err != nil {
+		return crdt.Insert{}, err
+	}
+	sealed, err := docrypt.Seal(key, docID, epoch, id, id, v)
+	if err != nil {
+		return crdt.Insert{}, err
+	}
+	op := crdt.Insert{ID: id, Parent: parent, Cipher: &crdt.Ciphertext{Epoch: epoch, Bytes: sealed}}
+	if _, err := r.Apply(op); err != nil {
+		return crdt.Insert{}, err
+	}
+	return op, nil
+}
+
+func (c *Client) sealDoc() (uuid.UUID, error) {
+	if c.opts.DocID != uuid.Nil {
+		return c.opts.DocID, nil
+	}
+	return uuid.Parse(c.docID)
 }
 
 func (c *Client) DeleteAt(index int) error {
@@ -436,11 +499,33 @@ func (c *Client) ResolveAnchor(start, end crdt.ID) (crdt.Range, error) {
 func (c *Client) Text() string {
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	text, err := c.replica.Text()
+	if c.replica == nil {
+		return ""
+	}
+	if c.opts.Key == nil {
+		text, err := c.replica.Text()
+		if err != nil {
+			return ""
+		}
+		return text
+	}
+	docID, err := c.sealDoc()
 	if err != nil {
 		return ""
 	}
-	return text
+	var b []byte
+	for _, seal := range c.replica.VisibleSeals() {
+		key, err := c.opts.Key(seal.Epoch)
+		if err != nil {
+			return ""
+		}
+		r, err := docrypt.Open(key, docID, seal.Epoch, seal.Root, seal.Bytes)
+		if err != nil {
+			return ""
+		}
+		b = append(b, string(r)...)
+	}
+	return string(b)
 }
 
 // Seq returns the highest seq of the hub's op stream this client has applied.
@@ -693,7 +778,7 @@ func (c *Client) joinURL(base string) (string, error) {
 	u = u.JoinPath("ws", c.docID)
 	c.epoch = max(c.epoch+1, uint64(time.Now().UnixMilli()))
 	q := url.Values{"conn": {strconv.FormatUint(c.epoch, 10)}}
-	if c.id != 0 {
+	if c.id != 0 && !(c.opts.Key != nil && c.replica == nil) {
 		q.Set("client", strconv.FormatUint(uint64(c.id), 10))
 	}
 	if c.replica != nil {

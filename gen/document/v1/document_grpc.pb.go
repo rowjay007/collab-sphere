@@ -28,6 +28,7 @@ const (
 	DocumentService_ClaimReplica_FullMethodName         = "/document.v1.DocumentService/ClaimReplica"
 	DocumentService_ForkDocument_FullMethodName         = "/document.v1.DocumentService/ForkDocument"
 	DocumentService_ListChangedDocuments_FullMethodName = "/document.v1.DocumentService/ListChangedDocuments"
+	DocumentService_SetEpoch_FullMethodName             = "/document.v1.DocumentService/SetEpoch"
 )
 
 // DocumentServiceClient is the client API for DocumentService service.
@@ -45,6 +46,9 @@ type DocumentServiceClient interface {
 	ClaimReplica(ctx context.Context, in *ClaimReplicaRequest, opts ...grpc.CallOption) (*ClaimReplicaResponse, error)
 	ForkDocument(ctx context.Context, in *ForkDocumentRequest, opts ...grpc.CallOption) (*Document, error)
 	ListChangedDocuments(ctx context.Context, in *ListChangedRequest, opts ...grpc.CallOption) (*ListChangedResponse, error)
+	// SetEpoch moves the open write epoch. The same pair is a no-op. An older
+	// epoch is rejected. Internal callers only.
+	SetEpoch(ctx context.Context, in *SetEpochRequest, opts ...grpc.CallOption) (*Document, error)
 }
 
 type documentServiceClient struct {
@@ -145,6 +149,16 @@ func (c *documentServiceClient) ListChangedDocuments(ctx context.Context, in *Li
 	return out, nil
 }
 
+func (c *documentServiceClient) SetEpoch(ctx context.Context, in *SetEpochRequest, opts ...grpc.CallOption) (*Document, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(Document)
+	err := c.cc.Invoke(ctx, DocumentService_SetEpoch_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 // DocumentServiceServer is the server API for DocumentService service.
 // All implementations must embed UnimplementedDocumentServiceServer
 // for forward compatibility.
@@ -160,6 +174,9 @@ type DocumentServiceServer interface {
 	ClaimReplica(context.Context, *ClaimReplicaRequest) (*ClaimReplicaResponse, error)
 	ForkDocument(context.Context, *ForkDocumentRequest) (*Document, error)
 	ListChangedDocuments(context.Context, *ListChangedRequest) (*ListChangedResponse, error)
+	// SetEpoch moves the open write epoch. The same pair is a no-op. An older
+	// epoch is rejected. Internal callers only.
+	SetEpoch(context.Context, *SetEpochRequest) (*Document, error)
 	mustEmbedUnimplementedDocumentServiceServer()
 }
 
@@ -196,6 +213,9 @@ func (UnimplementedDocumentServiceServer) ForkDocument(context.Context, *ForkDoc
 }
 func (UnimplementedDocumentServiceServer) ListChangedDocuments(context.Context, *ListChangedRequest) (*ListChangedResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method ListChangedDocuments not implemented")
+}
+func (UnimplementedDocumentServiceServer) SetEpoch(context.Context, *SetEpochRequest) (*Document, error) {
+	return nil, status.Error(codes.Unimplemented, "method SetEpoch not implemented")
 }
 func (UnimplementedDocumentServiceServer) mustEmbedUnimplementedDocumentServiceServer() {}
 func (UnimplementedDocumentServiceServer) testEmbeddedByValue()                         {}
@@ -380,6 +400,24 @@ func _DocumentService_ListChangedDocuments_Handler(srv interface{}, ctx context.
 	return interceptor(ctx, in, info, handler)
 }
 
+func _DocumentService_SetEpoch_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(SetEpochRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(DocumentServiceServer).SetEpoch(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: DocumentService_SetEpoch_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(DocumentServiceServer).SetEpoch(ctx, req.(*SetEpochRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 // DocumentService_ServiceDesc is the grpc.ServiceDesc for DocumentService service.
 // It's only intended for direct use with grpc.RegisterService,
 // and not to be introspected or modified (even as a copy)
@@ -422,6 +460,10 @@ var DocumentService_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "ListChangedDocuments",
 			Handler:    _DocumentService_ListChangedDocuments_Handler,
+		},
+		{
+			MethodName: "SetEpoch",
+			Handler:    _DocumentService_SetEpoch_Handler,
 		},
 	},
 	Streams:  []grpc.StreamDesc{},

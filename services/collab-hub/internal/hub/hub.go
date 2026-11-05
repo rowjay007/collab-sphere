@@ -589,11 +589,12 @@ func (h *Hub) handleOpsGroup(first opsEvent) (event, bool) {
 	return nil, h.persist(accepted)
 }
 
-func cipherProblem(mode crdt.Mode, op crdt.Op) string {
+func (h *Hub) opProblem(op crdt.Op) string {
 	ins, ok := asInsert(op)
 	if !ok {
 		return ""
 	}
+	mode := h.doc.Mode()
 	if ins.Cipher != nil && ins.Value != 0 {
 		return "operation does not match document mode"
 	}
@@ -601,9 +602,15 @@ func cipherProblem(mode crdt.Mode, op crdt.Op) string {
 		if ins.Cipher == nil {
 			return "operation does not match document mode"
 		}
+		if h.registry.Policy() != nil && !ins.Copy && ins.Cipher.Epoch != h.writeEpoch {
+			return "epoch is not the open write epoch"
+		}
 		n := len(ins.Cipher.Bytes)
 		if n < 17 || n > 20 {
 			return "cipher length out of range"
+		}
+		if ins.Copy && !h.doc.CopyConsistent(ins) {
+			return "copy value differs from its parent"
 		}
 		return ""
 	}
@@ -638,9 +645,13 @@ func (h *Hub) applyOps(ev opsEvent) []crdt.Op {
 	if !h.gateWrite(p) {
 		return nil
 	}
+	if h.registry.Policy() != nil && h.doc.Mode() == crdt.Encrypted && h.epochState != "open" {
+		p.TrySend(EncodeError(collabv1.ErrorMessage_CODE_KEY_ROTATION, "key rotation"))
+		return nil
+	}
 	accepted := make([]crdt.Op, 0, len(ev.ops))
 	for _, op := range ev.ops {
-		if msg := cipherProblem(h.doc.Mode(), op); msg != "" {
+		if msg := h.opProblem(op); msg != "" {
 			h.rejectOperation(p, collabv1.ErrorMessage_CODE_INVALID_OPERATION, msg)
 			break
 		}

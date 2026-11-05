@@ -24,7 +24,7 @@ type failOwner struct {
 	docID string
 }
 
-func (f *failOwner) EnsureOwner(_ context.Context, docID, _ string) error {
+func (f *failOwner) EnsureOwner(_ context.Context, docID, _ string, _ bool) error {
 	f.docID = docID
 	return status.Error(codes.Unavailable, "ensure failed")
 }

@@ -20,7 +20,7 @@ import (
 )
 
 type permissions interface {
-	EnsureOwner(ctx context.Context, docID, userID string) error
+	EnsureOwner(ctx context.Context, docID, userID string, encrypted bool) error
 	Require(ctx context.Context, docID, userID string, min permissionv1.Role) error
 	CopyGrants(ctx context.Context, src, dst string) error
 }
@@ -48,6 +48,7 @@ func Methods() map[string]auth.Class {
 		documentv1.DocumentService_ClaimReplica_FullMethodName:         auth.Internal,
 		documentv1.DocumentService_ForkDocument_FullMethodName:         auth.Internal,
 		documentv1.DocumentService_ListChangedDocuments_FullMethodName: auth.Internal,
+		documentv1.DocumentService_SetEpoch_FullMethodName:             auth.Internal,
 	}
 }
 
@@ -62,7 +63,7 @@ func (s *Server) CreateDocument(ctx context.Context, req *documentv1.CreateDocum
 	} else if !auth.IsInternal(ctx) {
 		return nil, status.Error(codes.Unauthenticated, "unauthenticated")
 	}
-	doc, err := s.store.Create(ctx, req.GetTitle(), owner)
+	doc, err := s.store.CreateWithEncryption(ctx, req.GetTitle(), owner, req.GetEncrypted())
 	if err != nil {
 		return nil, mapError(err)
 	}
@@ -73,7 +74,7 @@ func (s *Server) CreateDocument(ctx context.Context, req *documentv1.CreateDocum
 		_ = s.store.Delete(ctx, doc.ID)
 		return nil, status.Error(codes.Unavailable, "permission service unavailable")
 	}
-	if err := s.perm.EnsureOwner(ctx, doc.ID.String(), owner); err != nil {
+	if err := s.perm.EnsureOwner(ctx, doc.ID.String(), owner, req.GetEncrypted()); err != nil {
 		_ = s.store.Delete(ctx, doc.ID)
 		return nil, err
 	}
@@ -168,6 +169,18 @@ func (s *Server) ClaimReplica(ctx context.Context, req *documentv1.ClaimReplicaR
 		return nil, mapError(err)
 	}
 	return &documentv1.ClaimReplicaResponse{Client: client}, nil
+}
+
+func (s *Server) SetEpoch(ctx context.Context, req *documentv1.SetEpochRequest) (*documentv1.Document, error) {
+	id, err := parseID(req.GetId())
+	if err != nil {
+		return nil, err
+	}
+	doc, err := s.store.SetEpoch(ctx, id, req.GetWriteEpoch(), req.GetEpochState())
+	if err != nil {
+		return nil, mapError(err)
+	}
+	return toProto(doc), nil
 }
 
 func (s *Server) ForkDocument(ctx context.Context, req *documentv1.ForkDocumentRequest) (*documentv1.Document, error) {
@@ -278,6 +291,10 @@ func mapError(err error) error {
 		return status.Error(codes.OutOfRange, err.Error())
 	case errors.Is(err, domain.ErrAlreadyExists):
 		return status.Error(codes.AlreadyExists, err.Error())
+	case errors.Is(err, domain.ErrEncrypted):
+		return failedPrecondition(err, "ENCRYPTED")
+	case errors.Is(err, domain.ErrEpoch):
+		return status.Error(codes.FailedPrecondition, err.Error())
 	default:
 		return status.Error(codes.Internal, "internal error")
 	}
@@ -310,6 +327,9 @@ func toProto(doc domain.Document) *documentv1.Document {
 		UpdatedAt:   timestamppb.New(doc.UpdatedAt),
 		ForkSeq:     doc.ForkSeq,
 		ForkRoot:    doc.ForkRoot.String(),
+		Encryption:  doc.Encryption,
+		WriteEpoch:  doc.WriteEpoch,
+		EpochState:  doc.EpochState,
 	}
 	if doc.ForkOf != nil {
 		out.ForkOf = doc.ForkOf.String()

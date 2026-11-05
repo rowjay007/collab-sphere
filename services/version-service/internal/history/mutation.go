@@ -56,8 +56,12 @@ func (h *History) Merge(ctx context.Context, src, dst uuid.UUID, requestID strin
 	if requestID == "" {
 		return MergeResult{}, fmt.Errorf("%w: request_id is required", ErrInvalidArgument)
 	}
-	if src == dst {
+	if enc, lookupErr := h.encryptionOf(ctx, src, dst); enc {
+		return MergeResult{}, ErrEncrypted
+	} else if src == dst {
 		return MergeResult{}, fmt.Errorf("%w: source and target are the same document", ErrInvalidArgument)
+	} else if lookupErr != nil {
+		return MergeResult{}, lookupErr
 	}
 	if err := h.startChain(ctx, src); err != nil {
 		return MergeResult{}, err

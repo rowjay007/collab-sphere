@@ -23,6 +23,7 @@ type Resolution struct {
 	State       ResolutionState
 	First, Last crdt.ID
 	Text        string
+	TextOmitted bool
 }
 
 type Comment struct {

@@ -259,7 +259,11 @@ func resolutionToProto(r comments.Resolution) *commentv1.Resolution {
 	if r.State == 0 {
 		return nil
 	}
-	out := &commentv1.Resolution{Text: r.Text}
+	text := r.Text
+	if r.TextOmitted {
+		text = ""
+	}
+	out := &commentv1.Resolution{Text: text, TextOmitted: r.TextOmitted}
 	switch r.State {
 	case comments.Attached:
 		out.State = commentv1.Resolution_STATE_ATTACHED

@@ -11,10 +11,12 @@ var (
 	ErrLinkBad           = errors.New("LINK_BAD")
 	ErrLinkRevoked       = errors.New("LINK_REVOKED")
 	ErrLinkExpired       = errors.New("LINK_EXPIRED")
+	ErrEncrypted         = errors.New("permission: encrypted")
 )
 
 const (
 	ReasonLinkBad     = "LINK_BAD"
 	ReasonLinkRevoked = "LINK_REVOKED"
 	ReasonLinkExpired = "LINK_EXPIRED"
+	ReasonEncrypted   = "ENCRYPTED"
 )

@@ -185,6 +185,7 @@ type Resolution struct {
 	First         *v1.OpID               `protobuf:"bytes,2,opt,name=first,proto3" json:"first,omitempty"`
 	Last          *v1.OpID               `protobuf:"bytes,3,opt,name=last,proto3" json:"last,omitempty"`
 	Text          string                 `protobuf:"bytes,4,opt,name=text,proto3" json:"text,omitempty"`
+	TextOmitted   bool                   `protobuf:"varint,5,opt,name=text_omitted,json=textOmitted,proto3" json:"text_omitted,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -245,6 +246,13 @@ func (x *Resolution) GetText() string {
 		return x.Text
 	}
 	return ""
+}
+
+func (x *Resolution) GetTextOmitted() bool {
+	if x != nil {
+		return x.TextOmitted
+	}
+	return false
 }
 
 type Comment struct {
@@ -935,13 +943,14 @@ const file_comment_v1_comment_proto_rawDesc = "" +
 	"comment.v1\x1a\x16crdt/v1/snapshot.proto\x1a\x1fgoogle/protobuf/timestamp.proto\"N\n" +
 	"\x06Anchor\x12#\n" +
 	"\x05start\x18\x01 \x01(\v2\r.crdt.v1.OpIDR\x05start\x12\x1f\n" +
-	"\x03end\x18\x02 \x01(\v2\r.crdt.v1.OpIDR\x03end\"\xe4\x01\n" +
+	"\x03end\x18\x02 \x01(\v2\r.crdt.v1.OpIDR\x03end\"\x87\x02\n" +
 	"\n" +
 	"Resolution\x122\n" +
 	"\x05state\x18\x01 \x01(\x0e2\x1c.comment.v1.Resolution.StateR\x05state\x12#\n" +
 	"\x05first\x18\x02 \x01(\v2\r.crdt.v1.OpIDR\x05first\x12!\n" +
 	"\x04last\x18\x03 \x01(\v2\r.crdt.v1.OpIDR\x04last\x12\x12\n" +
-	"\x04text\x18\x04 \x01(\tR\x04text\"F\n" +
+	"\x04text\x18\x04 \x01(\tR\x04text\x12!\n" +
+	"\ftext_omitted\x18\x05 \x01(\bR\vtextOmitted\"F\n" +
 	"\x05State\x12\x15\n" +
 	"\x11STATE_UNSPECIFIED\x10\x00\x12\x12\n" +
 	"\x0eSTATE_ATTACHED\x10\x01\x12\x12\n" +

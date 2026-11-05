@@ -31,7 +31,11 @@ func (c *Client) LoadState(ctx context.Context, docID uuid.UUID) (*crdt.Doc, uin
 	}
 	var doc *crdt.Doc
 	if resp.GetSnapshot() == nil {
-		doc = crdt.New()
+		if resp.GetDocument().GetEncryption() == "encrypted" {
+			doc = crdt.NewEncrypted()
+		} else {
+			doc = crdt.New()
+		}
 	} else {
 		doc, err = crdt.FromSnapshot(resp.GetSnapshot())
 		if err != nil {

@@ -339,6 +339,51 @@ func (d *Doc) Text() (string, error) {
 	return text.String(), nil
 }
 
+// CopyConsistent reports whether a copy insert repeats its parent. A parent
+// that is not integrated yet is treated as consistent so the dependency
+// check can reject it.
+func (d *Doc) CopyConsistent(op Insert) bool {
+	if d == nil || !op.Copy {
+		return true
+	}
+	parent, ok := d.nodes[op.Parent]
+	if !ok {
+		return true
+	}
+	return copyMatches(parent, op)
+}
+
+// Seal is one visible encrypted character and the lineage root it opens under.
+type Seal struct {
+	Root  ID
+	Epoch uint32
+	Bytes []byte
+}
+
+// VisibleSeals walks visible encrypted characters in document order.
+func (d *Doc) VisibleSeals() []Seal {
+	if d == nil || d.mode != Encrypted {
+		return nil
+	}
+	var out []Seal
+	stack := make([]ID, 0, len(d.nodes))
+	pushReverse(&stack, d.rootChildren)
+	for len(stack) > 0 {
+		id := stack[len(stack)-1]
+		stack = stack[:len(stack)-1]
+		n := d.nodes[id]
+		if len(n.deletedBy) == 0 && n.cipher != nil {
+			out = append(out, Seal{
+				Root:  d.lineageRoot(id),
+				Epoch: n.cipher.Epoch,
+				Bytes: append([]byte(nil), n.cipher.Bytes...),
+			})
+		}
+		pushReverse(&stack, n.children)
+	}
+	return out
+}
+
 // Len returns the number of visible runes.
 func (d *Doc) Len() int {
 	if d == nil {

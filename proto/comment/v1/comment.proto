@@ -30,6 +30,7 @@ message Resolution {
   crdt.v1.OpID first = 2;
   crdt.v1.OpID last = 3;
   string text = 4;
+  bool text_omitted = 5;
 }
 
 message Comment {

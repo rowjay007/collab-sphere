@@ -64,3 +64,5 @@ The empty encrypted state is the eight bytes `43 53 53 32 00 00 00`. A version n
 ## Consequences
 
 The hub rejects a cipher whose length is outside 17..20, and an operation whose shape does not match the document mode, with `CODE_INVALID_OPERATION`. The check that the epoch is the open write epoch arrives with the service wiring. Clients seal and open. The server stores the bytes.
+
+A share link cannot carry a key wrap. Redeem on an encrypted document returns `FailedPrecondition` with reason `ENCRYPTED`. The member has to be granted with a wrap for every epoch.

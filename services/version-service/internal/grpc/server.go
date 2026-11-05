@@ -7,6 +7,7 @@ import (
 	"strconv"
 
 	"github.com/google/uuid"
+	"google.golang.org/genproto/googleapis/rpc/errdetails"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 	"google.golang.org/protobuf/types/known/timestamppb"
@@ -346,6 +347,16 @@ func parseNodeID(raw []byte) (dag.NodeID, error) {
 }
 
 func mapError(err error) error {
+	if errors.Is(err, history.ErrEncrypted) {
+		st, detailErr := status.New(codes.FailedPrecondition, err.Error()).WithDetails(&errdetails.ErrorInfo{
+			Reason: "ENCRYPTED",
+			Domain: "version-service",
+		})
+		if detailErr != nil {
+			return status.Error(codes.Internal, "internal error")
+		}
+		return st.Err()
+	}
 	for sentinel, code := range map[error]codes.Code{
 		history.ErrNotFound:           codes.NotFound,
 		history.ErrAlreadyExists:      codes.AlreadyExists,

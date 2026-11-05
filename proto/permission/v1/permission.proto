@@ -15,6 +15,10 @@ service PermissionService {
   rpc Redeem(RedeemRequest) returns (GrantRecord);
   rpc PolicyDump(PolicyDumpRequest) returns (PolicyDumpResponse);
   rpc CopyGrants(CopyGrantsRequest) returns (CopyGrantsResponse);
+  rpc PutKey(PutKeyRequest) returns (PublicKey);
+  rpc ListKeys(ListKeysRequest) returns (ListKeysResponse);
+  rpc PublishWraps(PublishWrapsRequest) returns (PublishWrapsResponse);
+  rpc GetWraps(GetWrapsRequest) returns (GetWrapsResponse);
 }
 
 enum Role {
@@ -34,12 +38,17 @@ message GrantRecord {
 message EnsureOwnerRequest {
   string doc_id = 1;
   string user_id = 2;
+  // encrypted starts epoch 1 pending in the same transaction as the owner grant.
+  bool encrypted = 3;
 }
 
 message GrantRequest {
   string doc_id = 1;
   string user_id = 2;
   Role role = 3;
+  // wraps is one wrap per epoch from 1 through the current epoch, for user_id,
+  // when the document is encrypted. Empty on a plain document.
+  repeated KeyWrap wraps = 4;
 }
 
 message RevokeRequest {
@@ -89,3 +98,50 @@ message CopyGrantsRequest {
 }
 
 message CopyGrantsResponse {}
+
+message PublicKey {
+  string key_id = 1;
+  string user_id = 2;
+  bytes public_key = 3;
+}
+
+message PutKeyRequest {
+  bytes public_key = 1;
+}
+
+message ListKeysRequest {
+  string user_id = 1;
+}
+
+message ListKeysResponse {
+  repeated PublicKey keys = 1;
+}
+
+// KeyWrap is a document key sealed to one member for one epoch.
+message KeyWrap {
+  uint32 epoch = 1;
+  string user_id = 2;
+  string key_id = 3;
+  bytes eph_pub = 4;
+  bytes nonce = 5;
+  bytes ciphertext = 6;
+}
+
+message PublishWrapsRequest {
+  string doc_id = 1;
+  string request_id = 2;
+  repeated KeyWrap wraps = 3;
+}
+
+message PublishWrapsResponse {
+  uint32 write_epoch = 1;
+  string epoch_state = 2;
+}
+
+message GetWrapsRequest {
+  string doc_id = 1;
+}
+
+message GetWrapsResponse {
+  repeated KeyWrap wraps = 1;
+}

@@ -59,7 +59,7 @@ func (s *store) grant(ctx context.Context, doc uuid.UUID, user string) (Grant, e
 	return Grant{DocID: doc, UserID: user, Role: r}, nil
 }
 
-func (s *store) insertOwner(ctx context.Context, doc uuid.UUID, user string) (Grant, error) {
+func (s *store) insertOwner(ctx context.Context, doc uuid.UUID, user string, encrypted bool) (Grant, error) {
 	tx, err := s.pool.Begin(ctx)
 	if err != nil {
 		return Grant{}, err
@@ -70,6 +70,11 @@ func (s *store) insertOwner(ctx context.Context, doc uuid.UUID, user string) (Gr
 	err = tx.QueryRow(ctx, `SELECT user_id FROM grants WHERE doc_id = $1 AND role = 'owner'`, doc).Scan(&existing)
 	switch {
 	case err == nil && existing == user:
+		if encrypted {
+			if err := ensureEpochPending(ctx, tx, doc); err != nil {
+				return Grant{}, err
+			}
+		}
 		if err := tx.Commit(ctx); err != nil {
 			return Grant{}, err
 		}
@@ -87,10 +92,20 @@ func (s *store) insertOwner(ctx context.Context, doc uuid.UUID, user string) (Gr
 	if err != nil {
 		return Grant{}, err
 	}
+	if encrypted {
+		if err := ensureEpochPending(ctx, tx, doc); err != nil {
+			return Grant{}, err
+		}
+	}
 	if err := tx.Commit(ctx); err != nil {
 		return Grant{}, err
 	}
 	return Grant{DocID: doc, UserID: user, Role: RoleOwner}, nil
+}
+
+func ensureEpochPending(ctx context.Context, tx pgx.Tx, doc uuid.UUID) error {
+	_, err := tx.Exec(ctx, `INSERT INTO doc_epochs (doc_id, epoch, state) VALUES ($1, 1, 'pending') ON CONFLICT DO NOTHING`, doc)
+	return err
 }
 
 func (s *store) upsertGrant(ctx context.Context, doc uuid.UUID, user string, role Role) (Grant, error) {
@@ -233,5 +248,14 @@ func (s *store) policy(ctx context.Context, doc uuid.UUID) (Policy, error) {
 	if err := rows.Err(); err != nil {
 		return Policy{}, err
 	}
-	return Policy{Members: members, WriteEpoch: 0, EpochState: ""}, nil
+	var epoch int32
+	var state string
+	err = s.pool.QueryRow(ctx, `SELECT epoch, state FROM doc_epochs WHERE doc_id = $1 ORDER BY epoch DESC LIMIT 1`, doc).Scan(&epoch, &state)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return Policy{Members: members}, nil
+	}
+	if err != nil {
+		return Policy{}, err
+	}
+	return Policy{Members: members, WriteEpoch: uint32(epoch), EpochState: state}, nil
 }
