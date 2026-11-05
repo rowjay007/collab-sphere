@@ -1,0 +1,83 @@
+syntax = "proto3";
+
+package permission.v1;
+
+import "google/protobuf/timestamp.proto";
+
+option go_package = "github.com/rowjay007/collab-sphere/gen/permission/v1;permissionv1";
+
+service PermissionService {
+  rpc EnsureOwner(EnsureOwnerRequest) returns (GrantRecord);
+  rpc Grant(GrantRequest) returns (GrantRecord);
+  rpc Revoke(RevokeRequest) returns (RevokeResponse);
+  rpc CreateLink(CreateLinkRequest) returns (ShareLink);
+  rpc RevokeLink(RevokeLinkRequest) returns (RevokeLinkResponse);
+  rpc Redeem(RedeemRequest) returns (GrantRecord);
+  rpc PolicyDump(PolicyDumpRequest) returns (PolicyDumpResponse);
+}
+
+enum Role {
+  ROLE_UNSPECIFIED = 0;
+  ROLE_OWNER = 1;
+  ROLE_EDITOR = 2;
+  ROLE_COMMENTER = 3;
+  ROLE_VIEWER = 4;
+}
+
+message GrantRecord {
+  string doc_id = 1;
+  string user_id = 2;
+  Role role = 3;
+}
+
+message EnsureOwnerRequest {
+  string doc_id = 1;
+  string user_id = 2;
+}
+
+message GrantRequest {
+  string doc_id = 1;
+  string user_id = 2;
+  Role role = 3;
+}
+
+message RevokeRequest {
+  string doc_id = 1;
+  string user_id = 2;
+}
+
+message RevokeResponse {}
+
+message CreateLinkRequest {
+  string doc_id = 1;
+  Role role = 2;
+  google.protobuf.Timestamp expires_at = 3;
+}
+
+message ShareLink {
+  string id = 1;
+  string doc_id = 2;
+  Role role = 3;
+  google.protobuf.Timestamp expires_at = 4;
+  string token = 5;
+}
+
+message RevokeLinkRequest {
+  string id = 1;
+}
+
+message RevokeLinkResponse {}
+
+message RedeemRequest {
+  string token = 1;
+}
+
+message PolicyDumpRequest {
+  string doc_id = 1;
+}
+
+message PolicyDumpResponse {
+  map<string, Role> members = 1;
+  uint32 write_epoch = 2;
+  string epoch_state = 3;
+}
