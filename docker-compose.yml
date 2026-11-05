@@ -37,7 +37,8 @@ services:
   permission-service:
     build:
       context: .
-      dockerfile: services/permission-service/Dockerfile
+      args:
+        SERVICE: permission-service
     environment:
       DATABASE_URL: postgres://permission:permission@permission-db:5432/permission?sslmode=disable
       GRPC_ADDR: ":9094"
@@ -81,7 +82,8 @@ services:
   export-service:
     build:
       context: .
-      dockerfile: services/export-service/Dockerfile
+      args:
+        SERVICE: export-service
     environment:
       DATABASE_URL: postgres://export:export@export-db:5432/export?sslmode=disable
       GRPC_ADDR: ":9095"

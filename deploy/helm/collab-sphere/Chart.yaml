@@ -1,0 +1,6 @@
+apiVersion: v2
+name: collab-sphere
+description: CollabSphere document, presence, comment, version, permission, export, and hub
+type: application
+version: 0.1.0
+appVersion: "0.1.0"

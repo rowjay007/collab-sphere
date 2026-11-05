@@ -1,0 +1,122 @@
+fullnameOverride: ""
+nameOverride: ""
+
+# Dev-only secrets. Match docker-compose.yml. Override on a real cluster.
+secrets:
+  authPublicKey: wBiwn96X59Q0XaGgZIFY1UDnR55L2agldgCbneQFQvM=
+  sharePrivateKey: 1/Phydme/tVCmEdnYd3iDBlvCBEtVvanqFUW10vwMg0=
+  internalToken: 99555b306395f2318808fdf9d3c6e1262e809d072790eeb91871cdc6c7214ee8
+
+images:
+  document:
+    repository: collab-sphere/document-service
+    tag: latest
+    pullPolicy: IfNotPresent
+  presence:
+    repository: collab-sphere/presence-service
+    tag: latest
+    pullPolicy: IfNotPresent
+  comment:
+    repository: collab-sphere/comment-service
+    tag: latest
+    pullPolicy: IfNotPresent
+  version:
+    repository: collab-sphere/version-service
+    tag: latest
+    pullPolicy: IfNotPresent
+  permission:
+    repository: collab-sphere/permission-service
+    tag: latest
+    pullPolicy: IfNotPresent
+  export:
+    repository: collab-sphere/export-service
+    tag: latest
+    pullPolicy: IfNotPresent
+  hub:
+    repository: collab-sphere/collab-hub
+    tag: latest
+    pullPolicy: IfNotPresent
+
+resources:
+  requests:
+    cpu: 50m
+    memory: 64Mi
+
+gc:
+  interval: 30s
+  restoreHorizon: 720h
+  replicaReportTTL: 336h
+
+# Dev-only database users. Match docker-compose.yml where that file already names them.
+postgresql:
+  enabled: true
+  host: ""
+  port: 5432
+  image:
+    repository: postgres
+    tag: 17-alpine
+    pullPolicy: IfNotPresent
+  persistence:
+    size: 8Gi
+  resources:
+    requests:
+      cpu: 100m
+      memory: 256Mi
+  auth:
+    username: collab
+    password: collab
+    database: collab
+  databases:
+    document:
+      name: collab
+      user: collab
+      password: collab
+    comment:
+      name: comment
+      user: comment
+      password: comment
+    version:
+      name: version
+      user: version
+      password: version
+    permission:
+      name: permission
+      user: permission
+      password: permission
+    export:
+      name: export
+      user: export
+      password: export
+
+redis:
+  enabled: true
+  url: ""
+  image:
+    repository: redis
+    tag: 7-alpine
+    pullPolicy: IfNotPresent
+  persistence:
+    size: 1Gi
+  resources:
+    requests:
+      cpu: 50m
+      memory: 64Mi
+
+# Dev-only MinIO keys. Match docker-compose.yml.
+minio:
+  enabled: true
+  endpoint: ""
+  image:
+    repository: minio/minio
+    tag: latest
+    pullPolicy: IfNotPresent
+  rootUser: collab
+  rootPassword: collabsecret
+  bucket: exports
+  region: us-east-1
+  persistence:
+    size: 8Gi
+  resources:
+    requests:
+      cpu: 50m
+      memory: 128Mi

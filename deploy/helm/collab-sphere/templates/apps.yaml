@@ -1,0 +1,510 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "collab-sphere.fullname" . }}-document-service
+  labels:
+    {{- include "collab-sphere.labels" . | nindent 4 }}
+    app.kubernetes.io/component: document-service
+spec:
+  ports:
+    - name: grpc
+      port: 9090
+      targetPort: grpc
+    - name: metrics
+      port: 9190
+      targetPort: metrics
+  selector:
+    {{- include "collab-sphere.selectorLabels" . | nindent 4 }}
+    app.kubernetes.io/component: document-service
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "collab-sphere.fullname" . }}-document-service
+  labels:
+    {{- include "collab-sphere.labels" . | nindent 4 }}
+    app.kubernetes.io/component: document-service
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      {{- include "collab-sphere.selectorLabels" . | nindent 6 }}
+      app.kubernetes.io/component: document-service
+  template:
+    metadata:
+      labels:
+        {{- include "collab-sphere.selectorLabels" . | nindent 8 }}
+        app.kubernetes.io/component: document-service
+    spec:
+      containers:
+        - name: document-service
+          image: "{{ .Values.images.document.repository }}:{{ .Values.images.document.tag }}"
+          imagePullPolicy: {{ .Values.images.document.pullPolicy }}
+          ports:
+            - name: grpc
+              containerPort: 9090
+            - name: metrics
+              containerPort: 9190
+          env:
+            {{- include "collab-sphere.secretEnv" (dict "root" . "name" "DATABASE_URL" "key" "DATABASE_URL_DOCUMENT") | nindent 12 }}
+            - name: GRPC_ADDR
+              value: ":9090"
+            {{- include "collab-sphere.secretEnv" (dict "root" . "name" "AUTH_PUBLIC_KEY" "key" "AUTH_PUBLIC_KEY") | nindent 12 }}
+            {{- include "collab-sphere.secretEnv" (dict "root" . "name" "INTERNAL_TOKEN" "key" "INTERNAL_TOKEN") | nindent 12 }}
+            - name: PERMISSION_ADDR
+              value: {{ include "collab-sphere.addr" (list . "permission-service" 9094) | quote }}
+            {{- include "collab-sphere.extraEnv" (dict "root" . "metrics" ":9190") | nindent 12 }}
+          livenessProbe:
+            tcpSocket:
+              port: grpc
+            initialDelaySeconds: 10
+            periodSeconds: 10
+          readinessProbe:
+            tcpSocket:
+              port: grpc
+            initialDelaySeconds: 5
+            periodSeconds: 5
+          {{- include "collab-sphere.appResources" . | nindent 10 }}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "collab-sphere.fullname" . }}-presence-service
+  labels:
+    {{- include "collab-sphere.labels" . | nindent 4 }}
+    app.kubernetes.io/component: presence-service
+spec:
+  ports:
+    - name: grpc
+      port: 9091
+      targetPort: grpc
+    - name: metrics
+      port: 9191
+      targetPort: metrics
+  selector:
+    {{- include "collab-sphere.selectorLabels" . | nindent 4 }}
+    app.kubernetes.io/component: presence-service
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "collab-sphere.fullname" . }}-presence-service
+  labels:
+    {{- include "collab-sphere.labels" . | nindent 4 }}
+    app.kubernetes.io/component: presence-service
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      {{- include "collab-sphere.selectorLabels" . | nindent 6 }}
+      app.kubernetes.io/component: presence-service
+  template:
+    metadata:
+      labels:
+        {{- include "collab-sphere.selectorLabels" . | nindent 8 }}
+        app.kubernetes.io/component: presence-service
+    spec:
+      containers:
+        - name: presence-service
+          image: "{{ .Values.images.presence.repository }}:{{ .Values.images.presence.tag }}"
+          imagePullPolicy: {{ .Values.images.presence.pullPolicy }}
+          ports:
+            - name: grpc
+              containerPort: 9091
+            - name: metrics
+              containerPort: 9191
+          env:
+            - name: REDIS_URL
+              value: {{ include "collab-sphere.redisURL" . | quote }}
+            - name: GRPC_ADDR
+              value: ":9091"
+            {{- include "collab-sphere.secretEnv" (dict "root" . "name" "AUTH_PUBLIC_KEY" "key" "AUTH_PUBLIC_KEY") | nindent 12 }}
+            {{- include "collab-sphere.secretEnv" (dict "root" . "name" "INTERNAL_TOKEN" "key" "INTERNAL_TOKEN") | nindent 12 }}
+            - name: PRESENCE_TTL
+              value: "30s"
+            - name: PRESENCE_SWEEP
+              value: "1s"
+            {{- include "collab-sphere.extraEnv" (dict "root" . "metrics" ":9191") | nindent 12 }}
+          livenessProbe:
+            tcpSocket:
+              port: grpc
+            initialDelaySeconds: 10
+            periodSeconds: 10
+          readinessProbe:
+            tcpSocket:
+              port: grpc
+            initialDelaySeconds: 5
+            periodSeconds: 5
+          {{- include "collab-sphere.appResources" . | nindent 10 }}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "collab-sphere.fullname" . }}-comment-service
+  labels:
+    {{- include "collab-sphere.labels" . | nindent 4 }}
+    app.kubernetes.io/component: comment-service
+spec:
+  ports:
+    - name: grpc
+      port: 9092
+      targetPort: grpc
+    - name: metrics
+      port: 9192
+      targetPort: metrics
+  selector:
+    {{- include "collab-sphere.selectorLabels" . | nindent 4 }}
+    app.kubernetes.io/component: comment-service
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "collab-sphere.fullname" . }}-comment-service
+  labels:
+    {{- include "collab-sphere.labels" . | nindent 4 }}
+    app.kubernetes.io/component: comment-service
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      {{- include "collab-sphere.selectorLabels" . | nindent 6 }}
+      app.kubernetes.io/component: comment-service
+  template:
+    metadata:
+      labels:
+        {{- include "collab-sphere.selectorLabels" . | nindent 8 }}
+        app.kubernetes.io/component: comment-service
+    spec:
+      containers:
+        - name: comment-service
+          image: "{{ .Values.images.comment.repository }}:{{ .Values.images.comment.tag }}"
+          imagePullPolicy: {{ .Values.images.comment.pullPolicy }}
+          ports:
+            - name: grpc
+              containerPort: 9092
+            - name: metrics
+              containerPort: 9192
+          env:
+            {{- include "collab-sphere.secretEnv" (dict "root" . "name" "DATABASE_URL" "key" "DATABASE_URL_COMMENT") | nindent 12 }}
+            - name: GRPC_ADDR
+              value: ":9092"
+            - name: DOCUMENT_ADDR
+              value: {{ include "collab-sphere.addr" (list . "document-service" 9090) | quote }}
+            - name: VERSION_ADDR
+              value: {{ include "collab-sphere.addr" (list . "version-service" 9093) | quote }}
+            {{- include "collab-sphere.secretEnv" (dict "root" . "name" "AUTH_PUBLIC_KEY" "key" "AUTH_PUBLIC_KEY") | nindent 12 }}
+            {{- include "collab-sphere.secretEnv" (dict "root" . "name" "INTERNAL_TOKEN" "key" "INTERNAL_TOKEN") | nindent 12 }}
+            - name: PERMISSION_ADDR
+              value: {{ include "collab-sphere.addr" (list . "permission-service" 9094) | quote }}
+            {{- include "collab-sphere.extraEnv" (dict "root" . "metrics" ":9192") | nindent 12 }}
+          livenessProbe:
+            tcpSocket:
+              port: grpc
+            initialDelaySeconds: 10
+            periodSeconds: 10
+          readinessProbe:
+            tcpSocket:
+              port: grpc
+            initialDelaySeconds: 5
+            periodSeconds: 5
+          {{- include "collab-sphere.appResources" . | nindent 10 }}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "collab-sphere.fullname" . }}-version-service
+  labels:
+    {{- include "collab-sphere.labels" . | nindent 4 }}
+    app.kubernetes.io/component: version-service
+spec:
+  ports:
+    - name: grpc
+      port: 9093
+      targetPort: grpc
+    - name: metrics
+      port: 9193
+      targetPort: metrics
+  selector:
+    {{- include "collab-sphere.selectorLabels" . | nindent 4 }}
+    app.kubernetes.io/component: version-service
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "collab-sphere.fullname" . }}-version-service
+  labels:
+    {{- include "collab-sphere.labels" . | nindent 4 }}
+    app.kubernetes.io/component: version-service
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      {{- include "collab-sphere.selectorLabels" . | nindent 6 }}
+      app.kubernetes.io/component: version-service
+  template:
+    metadata:
+      labels:
+        {{- include "collab-sphere.selectorLabels" . | nindent 8 }}
+        app.kubernetes.io/component: version-service
+    spec:
+      containers:
+        - name: version-service
+          image: "{{ .Values.images.version.repository }}:{{ .Values.images.version.tag }}"
+          imagePullPolicy: {{ .Values.images.version.pullPolicy }}
+          ports:
+            - name: grpc
+              containerPort: 9093
+            - name: metrics
+              containerPort: 9193
+          env:
+            {{- include "collab-sphere.secretEnv" (dict "root" . "name" "DATABASE_URL" "key" "DATABASE_URL_VERSION") | nindent 12 }}
+            - name: GRPC_ADDR
+              value: ":9093"
+            - name: DOCUMENT_ADDR
+              value: {{ include "collab-sphere.addr" (list . "document-service" 9090) | quote }}
+            {{- include "collab-sphere.secretEnv" (dict "root" . "name" "AUTH_PUBLIC_KEY" "key" "AUTH_PUBLIC_KEY") | nindent 12 }}
+            {{- include "collab-sphere.secretEnv" (dict "root" . "name" "INTERNAL_TOKEN" "key" "INTERNAL_TOKEN") | nindent 12 }}
+            - name: PERMISSION_ADDR
+              value: {{ include "collab-sphere.addr" (list . "permission-service" 9094) | quote }}
+            {{- include "collab-sphere.extraEnv" (dict "root" . "metrics" ":9193") | nindent 12 }}
+          livenessProbe:
+            tcpSocket:
+              port: grpc
+            initialDelaySeconds: 10
+            periodSeconds: 10
+          readinessProbe:
+            tcpSocket:
+              port: grpc
+            initialDelaySeconds: 5
+            periodSeconds: 5
+          {{- include "collab-sphere.appResources" . | nindent 10 }}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "collab-sphere.fullname" . }}-permission-service
+  labels:
+    {{- include "collab-sphere.labels" . | nindent 4 }}
+    app.kubernetes.io/component: permission-service
+spec:
+  ports:
+    - name: grpc
+      port: 9094
+      targetPort: grpc
+    - name: metrics
+      port: 9194
+      targetPort: metrics
+  selector:
+    {{- include "collab-sphere.selectorLabels" . | nindent 4 }}
+    app.kubernetes.io/component: permission-service
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "collab-sphere.fullname" . }}-permission-service
+  labels:
+    {{- include "collab-sphere.labels" . | nindent 4 }}
+    app.kubernetes.io/component: permission-service
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      {{- include "collab-sphere.selectorLabels" . | nindent 6 }}
+      app.kubernetes.io/component: permission-service
+  template:
+    metadata:
+      labels:
+        {{- include "collab-sphere.selectorLabels" . | nindent 8 }}
+        app.kubernetes.io/component: permission-service
+    spec:
+      containers:
+        - name: permission-service
+          image: "{{ .Values.images.permission.repository }}:{{ .Values.images.permission.tag }}"
+          imagePullPolicy: {{ .Values.images.permission.pullPolicy }}
+          ports:
+            - name: grpc
+              containerPort: 9094
+            - name: metrics
+              containerPort: 9194
+          env:
+            {{- include "collab-sphere.secretEnv" (dict "root" . "name" "DATABASE_URL" "key" "DATABASE_URL_PERMISSION") | nindent 12 }}
+            - name: GRPC_ADDR
+              value: ":9094"
+            {{- include "collab-sphere.secretEnv" (dict "root" . "name" "AUTH_PUBLIC_KEY" "key" "AUTH_PUBLIC_KEY") | nindent 12 }}
+            {{- include "collab-sphere.secretEnv" (dict "root" . "name" "SHARE_PRIVATE_KEY" "key" "SHARE_PRIVATE_KEY") | nindent 12 }}
+            {{- include "collab-sphere.secretEnv" (dict "root" . "name" "INTERNAL_TOKEN" "key" "INTERNAL_TOKEN") | nindent 12 }}
+            - name: DOCUMENT_ADDR
+              value: {{ include "collab-sphere.addr" (list . "document-service" 9090) | quote }}
+            {{- include "collab-sphere.extraEnv" (dict "root" . "metrics" ":9194") | nindent 12 }}
+          livenessProbe:
+            tcpSocket:
+              port: grpc
+            initialDelaySeconds: 10
+            periodSeconds: 10
+          readinessProbe:
+            tcpSocket:
+              port: grpc
+            initialDelaySeconds: 5
+            periodSeconds: 5
+          {{- include "collab-sphere.appResources" . | nindent 10 }}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "collab-sphere.fullname" . }}-export-service
+  labels:
+    {{- include "collab-sphere.labels" . | nindent 4 }}
+    app.kubernetes.io/component: export-service
+spec:
+  ports:
+    - name: grpc
+      port: 9095
+      targetPort: grpc
+    - name: metrics
+      port: 9195
+      targetPort: metrics
+  selector:
+    {{- include "collab-sphere.selectorLabels" . | nindent 4 }}
+    app.kubernetes.io/component: export-service
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "collab-sphere.fullname" . }}-export-service
+  labels:
+    {{- include "collab-sphere.labels" . | nindent 4 }}
+    app.kubernetes.io/component: export-service
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      {{- include "collab-sphere.selectorLabels" . | nindent 6 }}
+      app.kubernetes.io/component: export-service
+  template:
+    metadata:
+      labels:
+        {{- include "collab-sphere.selectorLabels" . | nindent 8 }}
+        app.kubernetes.io/component: export-service
+    spec:
+      containers:
+        - name: export-service
+          image: "{{ .Values.images.export.repository }}:{{ .Values.images.export.tag }}"
+          imagePullPolicy: {{ .Values.images.export.pullPolicy }}
+          ports:
+            - name: grpc
+              containerPort: 9095
+            - name: metrics
+              containerPort: 9195
+          env:
+            {{- include "collab-sphere.secretEnv" (dict "root" . "name" "DATABASE_URL" "key" "DATABASE_URL_EXPORT") | nindent 12 }}
+            - name: GRPC_ADDR
+              value: ":9095"
+            {{- include "collab-sphere.secretEnv" (dict "root" . "name" "AUTH_PUBLIC_KEY" "key" "AUTH_PUBLIC_KEY") | nindent 12 }}
+            {{- include "collab-sphere.secretEnv" (dict "root" . "name" "INTERNAL_TOKEN" "key" "INTERNAL_TOKEN") | nindent 12 }}
+            - name: DOCUMENT_ADDR
+              value: {{ include "collab-sphere.addr" (list . "document-service" 9090) | quote }}
+            - name: VERSION_ADDR
+              value: {{ include "collab-sphere.addr" (list . "version-service" 9093) | quote }}
+            - name: PERMISSION_ADDR
+              value: {{ include "collab-sphere.addr" (list . "permission-service" 9094) | quote }}
+            - name: S3_ENDPOINT
+              value: {{ include "collab-sphere.minioEndpoint" . | quote }}
+            - name: S3_BUCKET
+              value: {{ .Values.minio.bucket | quote }}
+            {{- include "collab-sphere.secretEnv" (dict "root" . "name" "S3_ACCESS_KEY" "key" "S3_ACCESS_KEY") | nindent 12 }}
+            {{- include "collab-sphere.secretEnv" (dict "root" . "name" "S3_SECRET_KEY" "key" "S3_SECRET_KEY") | nindent 12 }}
+            - name: S3_REGION
+              value: {{ .Values.minio.region | quote }}
+            {{- include "collab-sphere.extraEnv" (dict "root" . "metrics" ":9195") | nindent 12 }}
+          livenessProbe:
+            tcpSocket:
+              port: grpc
+            initialDelaySeconds: 10
+            periodSeconds: 10
+          readinessProbe:
+            tcpSocket:
+              port: grpc
+            initialDelaySeconds: 5
+            periodSeconds: 5
+          {{- include "collab-sphere.appResources" . | nindent 10 }}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "collab-sphere.fullname" . }}-collab-hub
+  labels:
+    {{- include "collab-sphere.labels" . | nindent 4 }}
+    app.kubernetes.io/component: collab-hub
+spec:
+  ports:
+    - name: http
+      port: 8080
+      targetPort: http
+    - name: metrics
+      port: 9196
+      targetPort: metrics
+  selector:
+    {{- include "collab-sphere.selectorLabels" . | nindent 4 }}
+    app.kubernetes.io/component: collab-hub
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "collab-sphere.fullname" . }}-collab-hub
+  labels:
+    {{- include "collab-sphere.labels" . | nindent 4 }}
+    app.kubernetes.io/component: collab-hub
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      {{- include "collab-sphere.selectorLabels" . | nindent 6 }}
+      app.kubernetes.io/component: collab-hub
+  template:
+    metadata:
+      labels:
+        {{- include "collab-sphere.selectorLabels" . | nindent 8 }}
+        app.kubernetes.io/component: collab-hub
+    spec:
+      containers:
+        - name: collab-hub
+          image: "{{ .Values.images.hub.repository }}:{{ .Values.images.hub.tag }}"
+          imagePullPolicy: {{ .Values.images.hub.pullPolicy }}
+          ports:
+            - name: http
+              containerPort: 8080
+            - name: metrics
+              containerPort: 9196
+          env:
+            - name: HTTP_ADDR
+              value: ":8080"
+            - name: DOCUMENT_SERVICE_ADDR
+              value: {{ include "collab-sphere.addr" (list . "document-service" 9090) | quote }}
+            {{- include "collab-sphere.secretEnv" (dict "root" . "name" "AUTH_PUBLIC_KEY" "key" "AUTH_PUBLIC_KEY") | nindent 12 }}
+            {{- include "collab-sphere.secretEnv" (dict "root" . "name" "INTERNAL_TOKEN" "key" "INTERNAL_TOKEN") | nindent 12 }}
+            - name: PERMISSION_ADDR
+              value: {{ include "collab-sphere.addr" (list . "permission-service" 9094) | quote }}
+            - name: REDIS_URL
+              value: {{ include "collab-sphere.redisURL" . | quote }}
+            - name: PRESENCE_SERVICE_ADDR
+              value: {{ include "collab-sphere.addr" (list . "presence-service" 9091) | quote }}
+            - name: PRESENCE_HEARTBEAT
+              value: "10s"
+            - name: HUB_ID
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.name
+            {{- include "collab-sphere.extraEnv" (dict "root" . "metrics" ":9196") | nindent 12 }}
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: http
+            initialDelaySeconds: 10
+            periodSeconds: 10
+          readinessProbe:
+            httpGet:
+              path: /healthz
+              port: http
+            initialDelaySeconds: 3
+            periodSeconds: 5
+          {{- include "collab-sphere.appResources" . | nindent 10 }}

@@ -2,7 +2,7 @@ PROTO_FILES := $(shell find proto -name '*.proto')
 TEST_DATABASE_URL ?= postgres://collab:collab@localhost:55432/collab?sslmode=disable
 TEST_REDIS_URL ?= redis://localhost:56379/0
 
-.PHONY: proto test test-integration up down run-docsvc run-hub run-presence run-permission run-export
+.PHONY: proto test test-integration up down run-docsvc run-hub run-presence run-permission run-export helm-check images
 
 DEV_AUTH_PUBLIC_KEY ?= wBiwn96X59Q0XaGgZIFY1UDnR55L2agldgCbneQFQvM=
 DEV_SHARE_PRIVATE_KEY ?= 1/Phydme/tVCmEdnYd3iDBlvCBEtVvanqFUW10vwMg0=
@@ -58,3 +58,23 @@ run-export:
 	S3_SECRET_KEY=collabsecret \
 	S3_REGION=us-east-1 \
 	go run ./services/export-service/cmd/export-service
+
+helm-check:
+	@command -v kubeconform >/dev/null 2>&1 || go install github.com/yannh/kubeconform/cmd/kubeconform@latest
+	helm lint deploy/helm/collab-sphere
+	helm template collab deploy/helm/collab-sphere > /tmp/collab-helm-incluster.yaml
+	helm template collab deploy/helm/collab-sphere \
+		--set postgresql.enabled=false \
+		--set redis.enabled=false \
+		--set minio.enabled=false \
+		--set postgresql.host=postgres.example \
+		--set redis.url=redis://redis.example:6379/0 \
+		--set minio.endpoint=http://minio.example:9000 \
+		> /tmp/collab-helm-external.yaml
+	PATH="$(PATH):$(shell go env GOPATH)/bin" kubeconform -strict -kubernetes-version 1.31.0 -summary /tmp/collab-helm-incluster.yaml /tmp/collab-helm-external.yaml
+
+SERVICES := document-service presence-service comment-service version-service permission-service export-service collab-hub
+IMAGE_TAG ?= latest
+
+images:
+	@for s in $(SERVICES); do docker build --build-arg SERVICE=$$s -t collab-sphere/$$s:$(IMAGE_TAG) . || exit 1; done

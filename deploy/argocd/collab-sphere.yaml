@@ -1,0 +1,14 @@
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: collab-sphere
+  namespace: argocd
+spec:
+  project: default
+  source:
+    repoURL: https://github.com/rowjay007/collab-sphere.git
+    targetRevision: HEAD
+    path: deploy/helm/collab-sphere
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: collab

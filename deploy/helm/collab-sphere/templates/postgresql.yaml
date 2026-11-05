@@ -1,0 +1,107 @@
+{{- if .Values.postgresql.enabled }}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "collab-sphere.fullname" . }}-postgresql-init
+  labels:
+    {{- include "collab-sphere.labels" . | nindent 4 }}
+    app.kubernetes.io/component: postgresql
+data:
+  init.sql: |
+    {{- range $key, $db := .Values.postgresql.databases }}
+    {{- if ne $db.name $.Values.postgresql.auth.database }}
+    CREATE USER {{ $db.user }} WITH PASSWORD '{{ $db.password }}';
+    CREATE DATABASE {{ $db.name }} OWNER {{ $db.user }};
+    {{- end }}
+    {{- end }}
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: {{ include "collab-sphere.fullname" . }}-postgresql
+  labels:
+    {{- include "collab-sphere.labels" . | nindent 4 }}
+    app.kubernetes.io/component: postgresql
+spec:
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: {{ .Values.postgresql.persistence.size }}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "collab-sphere.fullname" . }}-postgresql
+  labels:
+    {{- include "collab-sphere.labels" . | nindent 4 }}
+    app.kubernetes.io/component: postgresql
+spec:
+  ports:
+    - name: postgres
+      port: 5432
+      targetPort: postgres
+  selector:
+    {{- include "collab-sphere.selectorLabels" . | nindent 4 }}
+    app.kubernetes.io/component: postgresql
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "collab-sphere.fullname" . }}-postgresql
+  labels:
+    {{- include "collab-sphere.labels" . | nindent 4 }}
+    app.kubernetes.io/component: postgresql
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      {{- include "collab-sphere.selectorLabels" . | nindent 6 }}
+      app.kubernetes.io/component: postgresql
+  template:
+    metadata:
+      labels:
+        {{- include "collab-sphere.selectorLabels" . | nindent 8 }}
+        app.kubernetes.io/component: postgresql
+    spec:
+      containers:
+        - name: postgresql
+          image: "{{ .Values.postgresql.image.repository }}:{{ .Values.postgresql.image.tag }}"
+          imagePullPolicy: {{ .Values.postgresql.image.pullPolicy }}
+          ports:
+            - name: postgres
+              containerPort: 5432
+          env:
+            - name: POSTGRES_USER
+              value: {{ .Values.postgresql.auth.username | quote }}
+            - name: POSTGRES_PASSWORD
+              value: {{ .Values.postgresql.auth.password | quote }}
+            - name: POSTGRES_DB
+              value: {{ .Values.postgresql.auth.database | quote }}
+          volumeMounts:
+            - name: data
+              mountPath: /var/lib/postgresql/data
+            - name: init
+              mountPath: /docker-entrypoint-initdb.d
+          livenessProbe:
+            exec:
+              command: ["pg_isready", "-U", {{ .Values.postgresql.auth.username | quote }}]
+            initialDelaySeconds: 15
+            periodSeconds: 10
+          readinessProbe:
+            exec:
+              command: ["pg_isready", "-U", {{ .Values.postgresql.auth.username | quote }}]
+            initialDelaySeconds: 5
+            periodSeconds: 5
+          resources:
+            requests:
+              cpu: {{ .Values.postgresql.resources.requests.cpu }}
+              memory: {{ .Values.postgresql.resources.requests.memory }}
+      volumes:
+        - name: data
+          persistentVolumeClaim:
+            claimName: {{ include "collab-sphere.fullname" . }}-postgresql
+        - name: init
+          configMap:
+            name: {{ include "collab-sphere.fullname" . }}-postgresql-init
+{{- end }}
