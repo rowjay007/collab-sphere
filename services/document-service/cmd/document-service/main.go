@@ -66,6 +66,11 @@ func main() {
 		slog.Error("migrate", "err", err)
 		os.Exit(1)
 	}
+	st := store.New(pool)
+	if err := st.BackfillReports(ctx); err != nil {
+		slog.Error("backfill reports", "err", err)
+		os.Exit(1)
+	}
 
 	lis, err := net.Listen("tcp", addr)
 	if err != nil {
@@ -88,7 +93,6 @@ func main() {
 		),
 		grpc.StreamInterceptor(auth.StreamInterceptor(pub, internal, docgrpc.Methods())),
 	)
-	st := store.New(pool)
 	doc := docgrpc.New(st)
 	doc.UsePermissions(perms)
 	doc.UseAppend(docMetrics.Append)

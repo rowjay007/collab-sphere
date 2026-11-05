@@ -22,6 +22,14 @@ service DocumentService {
   // SetEpoch moves the open write epoch. The same pair is a no-op. An older
   // epoch is rejected. Internal callers only.
   rpc SetEpoch(SetEpochRequest) returns (Document);
+  // ReportVector stores one replica's version vector on the document's fork
+  // tree. A vector below the stored report on any client is rejected and the
+  // old row stands. Internal callers only.
+  rpc ReportVector(ReportVectorRequest) returns (ReportVectorResponse);
+  // ListReports returns every report for the fork tree, including released replicas.
+  rpc ListReports(ListReportsRequest) returns (ListReportsResponse);
+  // ReleaseReplica sets released_at. The row stays. Internal callers only.
+  rpc ReleaseReplica(ReleaseReplicaRequest) returns (ReleaseReplicaResponse);
 }
 
 message Document {
@@ -136,3 +144,35 @@ message ListChangedResponse {
   google.protobuf.Timestamp next_since = 2;
   string next_after_id = 3;
 }
+
+message ReportVectorRequest {
+  string document_id = 1;
+  uint64 replica_id = 2;
+  repeated crdt.v1.VectorEntry vector = 3;
+  uint64 home_seq = 4;
+}
+
+message ReportVectorResponse {}
+
+message ListReportsRequest {
+  string fork_root = 1;
+}
+
+message ReplicaReport {
+  uint64 replica_id = 1;
+  repeated crdt.v1.VectorEntry vector = 2;
+  uint64 home_seq = 3;
+  google.protobuf.Timestamp reported_at = 4;
+  google.protobuf.Timestamp released_at = 5;
+}
+
+message ListReportsResponse {
+  repeated ReplicaReport reports = 1;
+}
+
+message ReleaseReplicaRequest {
+  string document_id = 1;
+  uint64 replica_id = 2;
+}
+
+message ReleaseReplicaResponse {}

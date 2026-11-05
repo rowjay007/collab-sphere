@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"strconv"
+	"time"
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
@@ -53,10 +54,23 @@ func (s *Store) ClaimReplica(ctx context.Context, documentID uuid.UUID, requeste
 	if err != nil {
 		return 0, err
 	}
+	if system {
+		if err := writeSystemReport(ctx, tx, documentID, forkRoot, client); err != nil {
+			return 0, err
+		}
+	}
 	if err := tx.Commit(ctx); err != nil {
 		return 0, fmt.Errorf("commit replica claim: %w", err)
 	}
 	return client, nil
+}
+
+func writeSystemReport(ctx context.Context, tx pgx.Tx, documentID, forkRoot uuid.UUID, replica uint64) error {
+	vector, seq, err := loadDocumentVector(ctx, tx, documentID, true)
+	if err != nil {
+		return err
+	}
+	return upsertReportTx(ctx, tx, forkRoot, replica, vector, seq, time.Now())
 }
 
 func replicaKind(system bool) string {

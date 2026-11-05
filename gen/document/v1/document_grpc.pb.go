@@ -29,6 +29,9 @@ const (
 	DocumentService_ForkDocument_FullMethodName         = "/document.v1.DocumentService/ForkDocument"
 	DocumentService_ListChangedDocuments_FullMethodName = "/document.v1.DocumentService/ListChangedDocuments"
 	DocumentService_SetEpoch_FullMethodName             = "/document.v1.DocumentService/SetEpoch"
+	DocumentService_ReportVector_FullMethodName         = "/document.v1.DocumentService/ReportVector"
+	DocumentService_ListReports_FullMethodName          = "/document.v1.DocumentService/ListReports"
+	DocumentService_ReleaseReplica_FullMethodName       = "/document.v1.DocumentService/ReleaseReplica"
 )
 
 // DocumentServiceClient is the client API for DocumentService service.
@@ -49,6 +52,14 @@ type DocumentServiceClient interface {
 	// SetEpoch moves the open write epoch. The same pair is a no-op. An older
 	// epoch is rejected. Internal callers only.
 	SetEpoch(ctx context.Context, in *SetEpochRequest, opts ...grpc.CallOption) (*Document, error)
+	// ReportVector stores one replica's version vector on the document's fork
+	// tree. A vector below the stored report on any client is rejected and the
+	// old row stands. Internal callers only.
+	ReportVector(ctx context.Context, in *ReportVectorRequest, opts ...grpc.CallOption) (*ReportVectorResponse, error)
+	// ListReports returns every report for the fork tree, including released replicas.
+	ListReports(ctx context.Context, in *ListReportsRequest, opts ...grpc.CallOption) (*ListReportsResponse, error)
+	// ReleaseReplica sets released_at. The row stays. Internal callers only.
+	ReleaseReplica(ctx context.Context, in *ReleaseReplicaRequest, opts ...grpc.CallOption) (*ReleaseReplicaResponse, error)
 }
 
 type documentServiceClient struct {
@@ -159,6 +170,36 @@ func (c *documentServiceClient) SetEpoch(ctx context.Context, in *SetEpochReques
 	return out, nil
 }
 
+func (c *documentServiceClient) ReportVector(ctx context.Context, in *ReportVectorRequest, opts ...grpc.CallOption) (*ReportVectorResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(ReportVectorResponse)
+	err := c.cc.Invoke(ctx, DocumentService_ReportVector_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *documentServiceClient) ListReports(ctx context.Context, in *ListReportsRequest, opts ...grpc.CallOption) (*ListReportsResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(ListReportsResponse)
+	err := c.cc.Invoke(ctx, DocumentService_ListReports_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *documentServiceClient) ReleaseReplica(ctx context.Context, in *ReleaseReplicaRequest, opts ...grpc.CallOption) (*ReleaseReplicaResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(ReleaseReplicaResponse)
+	err := c.cc.Invoke(ctx, DocumentService_ReleaseReplica_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 // DocumentServiceServer is the server API for DocumentService service.
 // All implementations must embed UnimplementedDocumentServiceServer
 // for forward compatibility.
@@ -177,6 +218,14 @@ type DocumentServiceServer interface {
 	// SetEpoch moves the open write epoch. The same pair is a no-op. An older
 	// epoch is rejected. Internal callers only.
 	SetEpoch(context.Context, *SetEpochRequest) (*Document, error)
+	// ReportVector stores one replica's version vector on the document's fork
+	// tree. A vector below the stored report on any client is rejected and the
+	// old row stands. Internal callers only.
+	ReportVector(context.Context, *ReportVectorRequest) (*ReportVectorResponse, error)
+	// ListReports returns every report for the fork tree, including released replicas.
+	ListReports(context.Context, *ListReportsRequest) (*ListReportsResponse, error)
+	// ReleaseReplica sets released_at. The row stays. Internal callers only.
+	ReleaseReplica(context.Context, *ReleaseReplicaRequest) (*ReleaseReplicaResponse, error)
 	mustEmbedUnimplementedDocumentServiceServer()
 }
 
@@ -216,6 +265,15 @@ func (UnimplementedDocumentServiceServer) ListChangedDocuments(context.Context, 
 }
 func (UnimplementedDocumentServiceServer) SetEpoch(context.Context, *SetEpochRequest) (*Document, error) {
 	return nil, status.Error(codes.Unimplemented, "method SetEpoch not implemented")
+}
+func (UnimplementedDocumentServiceServer) ReportVector(context.Context, *ReportVectorRequest) (*ReportVectorResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method ReportVector not implemented")
+}
+func (UnimplementedDocumentServiceServer) ListReports(context.Context, *ListReportsRequest) (*ListReportsResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method ListReports not implemented")
+}
+func (UnimplementedDocumentServiceServer) ReleaseReplica(context.Context, *ReleaseReplicaRequest) (*ReleaseReplicaResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method ReleaseReplica not implemented")
 }
 func (UnimplementedDocumentServiceServer) mustEmbedUnimplementedDocumentServiceServer() {}
 func (UnimplementedDocumentServiceServer) testEmbeddedByValue()                         {}
@@ -418,6 +476,60 @@ func _DocumentService_SetEpoch_Handler(srv interface{}, ctx context.Context, dec
 	return interceptor(ctx, in, info, handler)
 }
 
+func _DocumentService_ReportVector_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(ReportVectorRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(DocumentServiceServer).ReportVector(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: DocumentService_ReportVector_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(DocumentServiceServer).ReportVector(ctx, req.(*ReportVectorRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _DocumentService_ListReports_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(ListReportsRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(DocumentServiceServer).ListReports(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: DocumentService_ListReports_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(DocumentServiceServer).ListReports(ctx, req.(*ListReportsRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _DocumentService_ReleaseReplica_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(ReleaseReplicaRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(DocumentServiceServer).ReleaseReplica(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: DocumentService_ReleaseReplica_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(DocumentServiceServer).ReleaseReplica(ctx, req.(*ReleaseReplicaRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 // DocumentService_ServiceDesc is the grpc.ServiceDesc for DocumentService service.
 // It's only intended for direct use with grpc.RegisterService,
 // and not to be introspected or modified (even as a copy)
@@ -464,6 +576,18 @@ var DocumentService_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "SetEpoch",
 			Handler:    _DocumentService_SetEpoch_Handler,
+		},
+		{
+			MethodName: "ReportVector",
+			Handler:    _DocumentService_ReportVector_Handler,
+		},
+		{
+			MethodName: "ListReports",
+			Handler:    _DocumentService_ListReports_Handler,
+		},
+		{
+			MethodName: "ReleaseReplica",
+			Handler:    _DocumentService_ReleaseReplica_Handler,
 		},
 	},
 	Streams:  []grpc.StreamDesc{},

@@ -91,30 +91,24 @@ func (s *Store) Append(ctx context.Context, id uuid.UUID, ops []*crdtv1.Operatio
 		result.FirstNewSeq = doc.OpSeq + 1
 	}
 
-	if next == doc.OpSeq {
-		if err := tx.Commit(ctx); err != nil {
-			return AppendResult{}, fmt.Errorf("commit append: %w", err)
+	if next > doc.OpSeq {
+		if _, err := tx.Exec(ctx, `
+			INSERT INTO operations (document_id, seq, op_client, op_clock, op)
+			SELECT $1, seq, op_client, op_clock, op
+			FROM unnest($2::bigint[], $3::numeric[], $4::numeric[], $5::bytea[])
+				AS pending(seq, op_client, op_clock, op)`,
+			id, insertSeqs, clients, clocks, rawOps); err != nil {
+			return AppendResult{}, fmt.Errorf("insert ops: %w", err)
 		}
-		if doc.OpSeq-doc.SnapshotSeq >= domain.SnapshotEvery {
-			s.triggerCompaction(id, doc.SnapshotSeq)
+		if _, err := tx.Exec(ctx, `
+			UPDATE documents
+			SET op_seq = $2, updated_at = now()
+			WHERE id = $1`, id, int64(next)); err != nil {
+			return AppendResult{}, fmt.Errorf("bump seq: %w", err)
 		}
-		return result, nil
 	}
-
-	if _, err := tx.Exec(ctx, `
-		INSERT INTO operations (document_id, seq, op_client, op_clock, op)
-		SELECT $1, seq, op_client, op_clock, op
-		FROM unnest($2::bigint[], $3::numeric[], $4::numeric[], $5::bytea[])
-			AS pending(seq, op_client, op_clock, op)`,
-		id, insertSeqs, clients, clocks, rawOps); err != nil {
-		return AppendResult{}, fmt.Errorf("insert ops: %w", err)
-	}
-
-	if _, err := tx.Exec(ctx, `
-		UPDATE documents
-		SET op_seq = $2, updated_at = now()
-		WHERE id = $1`, id, int64(next)); err != nil {
-		return AppendResult{}, fmt.Errorf("bump seq: %w", err)
+	if err := stampVector(ctx, tx, id, doc.SnapshotSeq, pending); err != nil {
+		return AppendResult{}, err
 	}
 	if err := tx.Commit(ctx); err != nil {
 		return AppendResult{}, fmt.Errorf("commit append: %w", err)

@@ -3,6 +3,7 @@ package docgrpc
 import (
 	"context"
 	"errors"
+	"sort"
 	"strconv"
 	"time"
 
@@ -12,9 +13,11 @@ import (
 	"google.golang.org/grpc/status"
 	"google.golang.org/protobuf/types/known/timestamppb"
 
+	crdtv1 "github.com/rowjay007/collab-sphere/gen/crdt/v1"
 	documentv1 "github.com/rowjay007/collab-sphere/gen/document/v1"
 	permissionv1 "github.com/rowjay007/collab-sphere/gen/permission/v1"
 	"github.com/rowjay007/collab-sphere/pkg/auth"
+	"github.com/rowjay007/collab-sphere/pkg/crdt"
 	"github.com/rowjay007/collab-sphere/pkg/metrics"
 	"github.com/rowjay007/collab-sphere/services/document-service/internal/domain"
 	"github.com/rowjay007/collab-sphere/services/document-service/internal/store"
@@ -53,6 +56,9 @@ func Methods() map[string]auth.Class {
 		documentv1.DocumentService_ForkDocument_FullMethodName:         auth.Internal,
 		documentv1.DocumentService_ListChangedDocuments_FullMethodName: auth.Internal,
 		documentv1.DocumentService_SetEpoch_FullMethodName:             auth.Internal,
+		documentv1.DocumentService_ReportVector_FullMethodName:         auth.Internal,
+		documentv1.DocumentService_ListReports_FullMethodName:          auth.Internal,
+		documentv1.DocumentService_ReleaseReplica_FullMethodName:       auth.Internal,
 	}
 }
 
@@ -182,6 +188,67 @@ func (s *Server) ClaimReplica(ctx context.Context, req *documentv1.ClaimReplicaR
 	return &documentv1.ClaimReplicaResponse{Client: client}, nil
 }
 
+func (s *Server) ReportVector(ctx context.Context, req *documentv1.ReportVectorRequest) (*documentv1.ReportVectorResponse, error) {
+	id, err := parseID(req.GetDocumentId())
+	if err != nil {
+		return nil, err
+	}
+	if req.GetReplicaId() == 0 {
+		return nil, status.Error(codes.InvalidArgument, "invalid replica id")
+	}
+	vector, err := vectorFromEntries(req.GetVector())
+	if err != nil {
+		return nil, status.Error(codes.InvalidArgument, "invalid vector")
+	}
+	doc, err := s.store.Get(ctx, id)
+	if err != nil {
+		return nil, mapError(err)
+	}
+	if err := s.store.UpsertReport(ctx, doc.ForkRoot, req.GetReplicaId(), vector, req.GetHomeSeq(), time.Now()); err != nil {
+		return nil, mapError(err)
+	}
+	return &documentv1.ReportVectorResponse{}, nil
+}
+
+func (s *Server) ListReports(ctx context.Context, req *documentv1.ListReportsRequest) (*documentv1.ListReportsResponse, error) {
+	root, err := parseID(req.GetForkRoot())
+	if err != nil {
+		return nil, err
+	}
+	rows, err := s.store.ListReports(ctx, root)
+	if err != nil {
+		return nil, mapError(err)
+	}
+	out := make([]*documentv1.ReplicaReport, len(rows))
+	for i, row := range rows {
+		report := &documentv1.ReplicaReport{
+			ReplicaId:  row.Replica,
+			Vector:     entriesFromVector(row.Vector),
+			HomeSeq:    row.HomeSeq,
+			ReportedAt: timestamppb.New(row.ReportedAt),
+		}
+		if row.ReleasedAt != nil {
+			report.ReleasedAt = timestamppb.New(*row.ReleasedAt)
+		}
+		out[i] = report
+	}
+	return &documentv1.ListReportsResponse{Reports: out}, nil
+}
+
+func (s *Server) ReleaseReplica(ctx context.Context, req *documentv1.ReleaseReplicaRequest) (*documentv1.ReleaseReplicaResponse, error) {
+	id, err := parseID(req.GetDocumentId())
+	if err != nil {
+		return nil, err
+	}
+	if req.GetReplicaId() == 0 {
+		return nil, status.Error(codes.InvalidArgument, "invalid replica id")
+	}
+	if err := s.store.ReleaseReplica(ctx, id, req.GetReplicaId()); err != nil {
+		return nil, mapError(err)
+	}
+	return &documentv1.ReleaseReplicaResponse{}, nil
+}
+
 func (s *Server) SetEpoch(ctx context.Context, req *documentv1.SetEpochRequest) (*documentv1.Document, error) {
 	id, err := parseID(req.GetId())
 	if err != nil {
@@ -308,6 +375,8 @@ func mapError(err error) error {
 		return status.Error(codes.FailedPrecondition, err.Error())
 	case errors.Is(err, domain.ErrKeyRotation):
 		return failedPrecondition(err, "KEY_ROTATION")
+	case errors.Is(err, domain.ErrStaleReport):
+		return failedPrecondition(err, "STALE_REPORT")
 	default:
 		return status.Error(codes.Internal, "internal error")
 	}
@@ -322,6 +391,40 @@ func failedPrecondition(err error, reason string) error {
 		return status.Error(codes.Internal, "internal error")
 	}
 	return st.Err()
+}
+
+func vectorFromEntries(entries []*crdtv1.VectorEntry) (crdt.VersionVector, error) {
+	sorted := make([]*crdtv1.VectorEntry, len(entries))
+	copy(sorted, entries)
+	sort.Slice(sorted, func(i, j int) bool {
+		if sorted[i] == nil {
+			return false
+		}
+		if sorted[j] == nil {
+			return true
+		}
+		return sorted[i].Client < sorted[j].Client
+	})
+	doc, err := crdt.FromSnapshot(&crdtv1.Snapshot{Vector: sorted})
+	if err != nil {
+		return nil, err
+	}
+	return doc.Vector(), nil
+}
+
+func entriesFromVector(v crdt.VersionVector) []*crdtv1.VectorEntry {
+	clients := make([]crdt.ClientID, 0, len(v))
+	for client, clock := range v {
+		if client != 0 && clock != 0 {
+			clients = append(clients, client)
+		}
+	}
+	sort.Slice(clients, func(i, j int) bool { return clients[i] < clients[j] })
+	out := make([]*crdtv1.VectorEntry, 0, len(clients))
+	for _, client := range clients {
+		out = append(out, &crdtv1.VectorEntry{Client: uint64(client), Clock: v[client]})
+	}
+	return out
 }
 
 func toProto(doc domain.Document) *documentv1.Document {

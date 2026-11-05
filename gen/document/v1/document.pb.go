@@ -1072,6 +1072,362 @@ func (x *ListChangedResponse) GetNextAfterId() string {
 	return ""
 }
 
+type ReportVectorRequest struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	DocumentId    string                 `protobuf:"bytes,1,opt,name=document_id,json=documentId,proto3" json:"document_id,omitempty"`
+	ReplicaId     uint64                 `protobuf:"varint,2,opt,name=replica_id,json=replicaId,proto3" json:"replica_id,omitempty"`
+	Vector        []*v1.VectorEntry      `protobuf:"bytes,3,rep,name=vector,proto3" json:"vector,omitempty"`
+	HomeSeq       uint64                 `protobuf:"varint,4,opt,name=home_seq,json=homeSeq,proto3" json:"home_seq,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *ReportVectorRequest) Reset() {
+	*x = ReportVectorRequest{}
+	mi := &file_document_v1_document_proto_msgTypes[16]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *ReportVectorRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*ReportVectorRequest) ProtoMessage() {}
+
+func (x *ReportVectorRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_document_v1_document_proto_msgTypes[16]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use ReportVectorRequest.ProtoReflect.Descriptor instead.
+func (*ReportVectorRequest) Descriptor() ([]byte, []int) {
+	return file_document_v1_document_proto_rawDescGZIP(), []int{16}
+}
+
+func (x *ReportVectorRequest) GetDocumentId() string {
+	if x != nil {
+		return x.DocumentId
+	}
+	return ""
+}
+
+func (x *ReportVectorRequest) GetReplicaId() uint64 {
+	if x != nil {
+		return x.ReplicaId
+	}
+	return 0
+}
+
+func (x *ReportVectorRequest) GetVector() []*v1.VectorEntry {
+	if x != nil {
+		return x.Vector
+	}
+	return nil
+}
+
+func (x *ReportVectorRequest) GetHomeSeq() uint64 {
+	if x != nil {
+		return x.HomeSeq
+	}
+	return 0
+}
+
+type ReportVectorResponse struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *ReportVectorResponse) Reset() {
+	*x = ReportVectorResponse{}
+	mi := &file_document_v1_document_proto_msgTypes[17]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *ReportVectorResponse) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*ReportVectorResponse) ProtoMessage() {}
+
+func (x *ReportVectorResponse) ProtoReflect() protoreflect.Message {
+	mi := &file_document_v1_document_proto_msgTypes[17]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use ReportVectorResponse.ProtoReflect.Descriptor instead.
+func (*ReportVectorResponse) Descriptor() ([]byte, []int) {
+	return file_document_v1_document_proto_rawDescGZIP(), []int{17}
+}
+
+type ListReportsRequest struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	ForkRoot      string                 `protobuf:"bytes,1,opt,name=fork_root,json=forkRoot,proto3" json:"fork_root,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *ListReportsRequest) Reset() {
+	*x = ListReportsRequest{}
+	mi := &file_document_v1_document_proto_msgTypes[18]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *ListReportsRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*ListReportsRequest) ProtoMessage() {}
+
+func (x *ListReportsRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_document_v1_document_proto_msgTypes[18]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use ListReportsRequest.ProtoReflect.Descriptor instead.
+func (*ListReportsRequest) Descriptor() ([]byte, []int) {
+	return file_document_v1_document_proto_rawDescGZIP(), []int{18}
+}
+
+func (x *ListReportsRequest) GetForkRoot() string {
+	if x != nil {
+		return x.ForkRoot
+	}
+	return ""
+}
+
+type ReplicaReport struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	ReplicaId     uint64                 `protobuf:"varint,1,opt,name=replica_id,json=replicaId,proto3" json:"replica_id,omitempty"`
+	Vector        []*v1.VectorEntry      `protobuf:"bytes,2,rep,name=vector,proto3" json:"vector,omitempty"`
+	HomeSeq       uint64                 `protobuf:"varint,3,opt,name=home_seq,json=homeSeq,proto3" json:"home_seq,omitempty"`
+	ReportedAt    *timestamppb.Timestamp `protobuf:"bytes,4,opt,name=reported_at,json=reportedAt,proto3" json:"reported_at,omitempty"`
+	ReleasedAt    *timestamppb.Timestamp `protobuf:"bytes,5,opt,name=released_at,json=releasedAt,proto3" json:"released_at,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *ReplicaReport) Reset() {
+	*x = ReplicaReport{}
+	mi := &file_document_v1_document_proto_msgTypes[19]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *ReplicaReport) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*ReplicaReport) ProtoMessage() {}
+
+func (x *ReplicaReport) ProtoReflect() protoreflect.Message {
+	mi := &file_document_v1_document_proto_msgTypes[19]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use ReplicaReport.ProtoReflect.Descriptor instead.
+func (*ReplicaReport) Descriptor() ([]byte, []int) {
+	return file_document_v1_document_proto_rawDescGZIP(), []int{19}
+}
+
+func (x *ReplicaReport) GetReplicaId() uint64 {
+	if x != nil {
+		return x.ReplicaId
+	}
+	return 0
+}
+
+func (x *ReplicaReport) GetVector() []*v1.VectorEntry {
+	if x != nil {
+		return x.Vector
+	}
+	return nil
+}
+
+func (x *ReplicaReport) GetHomeSeq() uint64 {
+	if x != nil {
+		return x.HomeSeq
+	}
+	return 0
+}
+
+func (x *ReplicaReport) GetReportedAt() *timestamppb.Timestamp {
+	if x != nil {
+		return x.ReportedAt
+	}
+	return nil
+}
+
+func (x *ReplicaReport) GetReleasedAt() *timestamppb.Timestamp {
+	if x != nil {
+		return x.ReleasedAt
+	}
+	return nil
+}
+
+type ListReportsResponse struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Reports       []*ReplicaReport       `protobuf:"bytes,1,rep,name=reports,proto3" json:"reports,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *ListReportsResponse) Reset() {
+	*x = ListReportsResponse{}
+	mi := &file_document_v1_document_proto_msgTypes[20]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *ListReportsResponse) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*ListReportsResponse) ProtoMessage() {}
+
+func (x *ListReportsResponse) ProtoReflect() protoreflect.Message {
+	mi := &file_document_v1_document_proto_msgTypes[20]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use ListReportsResponse.ProtoReflect.Descriptor instead.
+func (*ListReportsResponse) Descriptor() ([]byte, []int) {
+	return file_document_v1_document_proto_rawDescGZIP(), []int{20}
+}
+
+func (x *ListReportsResponse) GetReports() []*ReplicaReport {
+	if x != nil {
+		return x.Reports
+	}
+	return nil
+}
+
+type ReleaseReplicaRequest struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	DocumentId    string                 `protobuf:"bytes,1,opt,name=document_id,json=documentId,proto3" json:"document_id,omitempty"`
+	ReplicaId     uint64                 `protobuf:"varint,2,opt,name=replica_id,json=replicaId,proto3" json:"replica_id,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *ReleaseReplicaRequest) Reset() {
+	*x = ReleaseReplicaRequest{}
+	mi := &file_document_v1_document_proto_msgTypes[21]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *ReleaseReplicaRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*ReleaseReplicaRequest) ProtoMessage() {}
+
+func (x *ReleaseReplicaRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_document_v1_document_proto_msgTypes[21]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use ReleaseReplicaRequest.ProtoReflect.Descriptor instead.
+func (*ReleaseReplicaRequest) Descriptor() ([]byte, []int) {
+	return file_document_v1_document_proto_rawDescGZIP(), []int{21}
+}
+
+func (x *ReleaseReplicaRequest) GetDocumentId() string {
+	if x != nil {
+		return x.DocumentId
+	}
+	return ""
+}
+
+func (x *ReleaseReplicaRequest) GetReplicaId() uint64 {
+	if x != nil {
+		return x.ReplicaId
+	}
+	return 0
+}
+
+type ReleaseReplicaResponse struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *ReleaseReplicaResponse) Reset() {
+	*x = ReleaseReplicaResponse{}
+	mi := &file_document_v1_document_proto_msgTypes[22]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *ReleaseReplicaResponse) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*ReleaseReplicaResponse) ProtoMessage() {}
+
+func (x *ReleaseReplicaResponse) ProtoReflect() protoreflect.Message {
+	mi := &file_document_v1_document_proto_msgTypes[22]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use ReleaseReplicaResponse.ProtoReflect.Descriptor instead.
+func (*ReleaseReplicaResponse) Descriptor() ([]byte, []int) {
+	return file_document_v1_document_proto_rawDescGZIP(), []int{22}
+}
+
 var File_document_v1_document_proto protoreflect.FileDescriptor
 
 const file_document_v1_document_proto_rawDesc = "" +
@@ -1166,7 +1522,34 @@ const file_document_v1_document_proto_rawDesc = "" +
 	"\tdocuments\x18\x01 \x03(\v2\x15.document.v1.DocumentR\tdocuments\x129\n" +
 	"\n" +
 	"next_since\x18\x02 \x01(\v2\x1a.google.protobuf.TimestampR\tnextSince\x12\"\n" +
-	"\rnext_after_id\x18\x03 \x01(\tR\vnextAfterId2\xb6\x06\n" +
+	"\rnext_after_id\x18\x03 \x01(\tR\vnextAfterId\"\x9e\x01\n" +
+	"\x13ReportVectorRequest\x12\x1f\n" +
+	"\vdocument_id\x18\x01 \x01(\tR\n" +
+	"documentId\x12\x1d\n" +
+	"\n" +
+	"replica_id\x18\x02 \x01(\x04R\treplicaId\x12,\n" +
+	"\x06vector\x18\x03 \x03(\v2\x14.crdt.v1.VectorEntryR\x06vector\x12\x19\n" +
+	"\bhome_seq\x18\x04 \x01(\x04R\ahomeSeq\"\x16\n" +
+	"\x14ReportVectorResponse\"1\n" +
+	"\x12ListReportsRequest\x12\x1b\n" +
+	"\tfork_root\x18\x01 \x01(\tR\bforkRoot\"\xf1\x01\n" +
+	"\rReplicaReport\x12\x1d\n" +
+	"\n" +
+	"replica_id\x18\x01 \x01(\x04R\treplicaId\x12,\n" +
+	"\x06vector\x18\x02 \x03(\v2\x14.crdt.v1.VectorEntryR\x06vector\x12\x19\n" +
+	"\bhome_seq\x18\x03 \x01(\x04R\ahomeSeq\x12;\n" +
+	"\vreported_at\x18\x04 \x01(\v2\x1a.google.protobuf.TimestampR\n" +
+	"reportedAt\x12;\n" +
+	"\vreleased_at\x18\x05 \x01(\v2\x1a.google.protobuf.TimestampR\n" +
+	"releasedAt\"K\n" +
+	"\x13ListReportsResponse\x124\n" +
+	"\areports\x18\x01 \x03(\v2\x1a.document.v1.ReplicaReportR\areports\"W\n" +
+	"\x15ReleaseReplicaRequest\x12\x1f\n" +
+	"\vdocument_id\x18\x01 \x01(\tR\n" +
+	"documentId\x12\x1d\n" +
+	"\n" +
+	"replica_id\x18\x02 \x01(\x04R\treplicaId\"\x18\n" +
+	"\x16ReleaseReplicaResponse2\xb8\b\n" +
 	"\x0fDocumentService\x12K\n" +
 	"\x0eCreateDocument\x12\".document.v1.CreateDocumentRequest\x1a\x15.document.v1.Document\x12E\n" +
 	"\vGetDocument\x12\x1f.document.v1.GetDocumentRequest\x1a\x15.document.v1.Document\x12M\n" +
@@ -1177,7 +1560,10 @@ const file_document_v1_document_proto_rawDesc = "" +
 	"\fClaimReplica\x12 .document.v1.ClaimReplicaRequest\x1a!.document.v1.ClaimReplicaResponse\x12G\n" +
 	"\fForkDocument\x12 .document.v1.ForkDocumentRequest\x1a\x15.document.v1.Document\x12Y\n" +
 	"\x14ListChangedDocuments\x12\x1f.document.v1.ListChangedRequest\x1a .document.v1.ListChangedResponse\x12?\n" +
-	"\bSetEpoch\x12\x1c.document.v1.SetEpochRequest\x1a\x15.document.v1.DocumentB?Z=github.com/rowjay007/collab-sphere/gen/document/v1;documentv1b\x06proto3"
+	"\bSetEpoch\x12\x1c.document.v1.SetEpochRequest\x1a\x15.document.v1.Document\x12S\n" +
+	"\fReportVector\x12 .document.v1.ReportVectorRequest\x1a!.document.v1.ReportVectorResponse\x12P\n" +
+	"\vListReports\x12\x1f.document.v1.ListReportsRequest\x1a .document.v1.ListReportsResponse\x12Y\n" +
+	"\x0eReleaseReplica\x12\".document.v1.ReleaseReplicaRequest\x1a#.document.v1.ReleaseReplicaResponseB?Z=github.com/rowjay007/collab-sphere/gen/document/v1;documentv1b\x06proto3"
 
 var (
 	file_document_v1_document_proto_rawDescOnce sync.Once
@@ -1192,7 +1578,7 @@ func file_document_v1_document_proto_rawDescGZIP() []byte {
 }
 
 var file_document_v1_document_proto_enumTypes = make([]protoimpl.EnumInfo, 1)
-var file_document_v1_document_proto_msgTypes = make([]protoimpl.MessageInfo, 16)
+var file_document_v1_document_proto_msgTypes = make([]protoimpl.MessageInfo, 23)
 var file_document_v1_document_proto_goTypes = []any{
 	(Document_Status)(0),             // 0: document.v1.Document.Status
 	(*Document)(nil),                 // 1: document.v1.Document
@@ -1211,47 +1597,66 @@ var file_document_v1_document_proto_goTypes = []any{
 	(*ForkDocumentRequest)(nil),      // 14: document.v1.ForkDocumentRequest
 	(*ListChangedRequest)(nil),       // 15: document.v1.ListChangedRequest
 	(*ListChangedResponse)(nil),      // 16: document.v1.ListChangedResponse
-	(*timestamppb.Timestamp)(nil),    // 17: google.protobuf.Timestamp
-	(*v1.Snapshot)(nil),              // 18: crdt.v1.Snapshot
-	(*v1.Operation)(nil),             // 19: crdt.v1.Operation
+	(*ReportVectorRequest)(nil),      // 17: document.v1.ReportVectorRequest
+	(*ReportVectorResponse)(nil),     // 18: document.v1.ReportVectorResponse
+	(*ListReportsRequest)(nil),       // 19: document.v1.ListReportsRequest
+	(*ReplicaReport)(nil),            // 20: document.v1.ReplicaReport
+	(*ListReportsResponse)(nil),      // 21: document.v1.ListReportsResponse
+	(*ReleaseReplicaRequest)(nil),    // 22: document.v1.ReleaseReplicaRequest
+	(*ReleaseReplicaResponse)(nil),   // 23: document.v1.ReleaseReplicaResponse
+	(*timestamppb.Timestamp)(nil),    // 24: google.protobuf.Timestamp
+	(*v1.Snapshot)(nil),              // 25: crdt.v1.Snapshot
+	(*v1.Operation)(nil),             // 26: crdt.v1.Operation
+	(*v1.VectorEntry)(nil),           // 27: crdt.v1.VectorEntry
 }
 var file_document_v1_document_proto_depIdxs = []int32{
 	0,  // 0: document.v1.Document.status:type_name -> document.v1.Document.Status
-	17, // 1: document.v1.Document.created_at:type_name -> google.protobuf.Timestamp
-	17, // 2: document.v1.Document.updated_at:type_name -> google.protobuf.Timestamp
+	24, // 1: document.v1.Document.created_at:type_name -> google.protobuf.Timestamp
+	24, // 2: document.v1.Document.updated_at:type_name -> google.protobuf.Timestamp
 	1,  // 3: document.v1.LoadStateResponse.document:type_name -> document.v1.Document
-	18, // 4: document.v1.LoadStateResponse.snapshot:type_name -> crdt.v1.Snapshot
-	19, // 5: document.v1.LoadStateResponse.operations:type_name -> crdt.v1.Operation
-	19, // 6: document.v1.AppendOperationsRequest.operations:type_name -> crdt.v1.Operation
-	19, // 7: document.v1.ReadOperationsResponse.operations:type_name -> crdt.v1.Operation
-	17, // 8: document.v1.ListChangedRequest.since:type_name -> google.protobuf.Timestamp
+	25, // 4: document.v1.LoadStateResponse.snapshot:type_name -> crdt.v1.Snapshot
+	26, // 5: document.v1.LoadStateResponse.operations:type_name -> crdt.v1.Operation
+	26, // 6: document.v1.AppendOperationsRequest.operations:type_name -> crdt.v1.Operation
+	26, // 7: document.v1.ReadOperationsResponse.operations:type_name -> crdt.v1.Operation
+	24, // 8: document.v1.ListChangedRequest.since:type_name -> google.protobuf.Timestamp
 	1,  // 9: document.v1.ListChangedResponse.documents:type_name -> document.v1.Document
-	17, // 10: document.v1.ListChangedResponse.next_since:type_name -> google.protobuf.Timestamp
-	2,  // 11: document.v1.DocumentService.CreateDocument:input_type -> document.v1.CreateDocumentRequest
-	4,  // 12: document.v1.DocumentService.GetDocument:input_type -> document.v1.GetDocumentRequest
-	5,  // 13: document.v1.DocumentService.ArchiveDocument:input_type -> document.v1.ArchiveDocumentRequest
-	6,  // 14: document.v1.DocumentService.LoadState:input_type -> document.v1.LoadStateRequest
-	8,  // 15: document.v1.DocumentService.AppendOperations:input_type -> document.v1.AppendOperationsRequest
-	10, // 16: document.v1.DocumentService.ReadOperations:input_type -> document.v1.ReadOperationsRequest
-	12, // 17: document.v1.DocumentService.ClaimReplica:input_type -> document.v1.ClaimReplicaRequest
-	14, // 18: document.v1.DocumentService.ForkDocument:input_type -> document.v1.ForkDocumentRequest
-	15, // 19: document.v1.DocumentService.ListChangedDocuments:input_type -> document.v1.ListChangedRequest
-	3,  // 20: document.v1.DocumentService.SetEpoch:input_type -> document.v1.SetEpochRequest
-	1,  // 21: document.v1.DocumentService.CreateDocument:output_type -> document.v1.Document
-	1,  // 22: document.v1.DocumentService.GetDocument:output_type -> document.v1.Document
-	1,  // 23: document.v1.DocumentService.ArchiveDocument:output_type -> document.v1.Document
-	7,  // 24: document.v1.DocumentService.LoadState:output_type -> document.v1.LoadStateResponse
-	9,  // 25: document.v1.DocumentService.AppendOperations:output_type -> document.v1.AppendOperationsResponse
-	11, // 26: document.v1.DocumentService.ReadOperations:output_type -> document.v1.ReadOperationsResponse
-	13, // 27: document.v1.DocumentService.ClaimReplica:output_type -> document.v1.ClaimReplicaResponse
-	1,  // 28: document.v1.DocumentService.ForkDocument:output_type -> document.v1.Document
-	16, // 29: document.v1.DocumentService.ListChangedDocuments:output_type -> document.v1.ListChangedResponse
-	1,  // 30: document.v1.DocumentService.SetEpoch:output_type -> document.v1.Document
-	21, // [21:31] is the sub-list for method output_type
-	11, // [11:21] is the sub-list for method input_type
-	11, // [11:11] is the sub-list for extension type_name
-	11, // [11:11] is the sub-list for extension extendee
-	0,  // [0:11] is the sub-list for field type_name
+	24, // 10: document.v1.ListChangedResponse.next_since:type_name -> google.protobuf.Timestamp
+	27, // 11: document.v1.ReportVectorRequest.vector:type_name -> crdt.v1.VectorEntry
+	27, // 12: document.v1.ReplicaReport.vector:type_name -> crdt.v1.VectorEntry
+	24, // 13: document.v1.ReplicaReport.reported_at:type_name -> google.protobuf.Timestamp
+	24, // 14: document.v1.ReplicaReport.released_at:type_name -> google.protobuf.Timestamp
+	20, // 15: document.v1.ListReportsResponse.reports:type_name -> document.v1.ReplicaReport
+	2,  // 16: document.v1.DocumentService.CreateDocument:input_type -> document.v1.CreateDocumentRequest
+	4,  // 17: document.v1.DocumentService.GetDocument:input_type -> document.v1.GetDocumentRequest
+	5,  // 18: document.v1.DocumentService.ArchiveDocument:input_type -> document.v1.ArchiveDocumentRequest
+	6,  // 19: document.v1.DocumentService.LoadState:input_type -> document.v1.LoadStateRequest
+	8,  // 20: document.v1.DocumentService.AppendOperations:input_type -> document.v1.AppendOperationsRequest
+	10, // 21: document.v1.DocumentService.ReadOperations:input_type -> document.v1.ReadOperationsRequest
+	12, // 22: document.v1.DocumentService.ClaimReplica:input_type -> document.v1.ClaimReplicaRequest
+	14, // 23: document.v1.DocumentService.ForkDocument:input_type -> document.v1.ForkDocumentRequest
+	15, // 24: document.v1.DocumentService.ListChangedDocuments:input_type -> document.v1.ListChangedRequest
+	3,  // 25: document.v1.DocumentService.SetEpoch:input_type -> document.v1.SetEpochRequest
+	17, // 26: document.v1.DocumentService.ReportVector:input_type -> document.v1.ReportVectorRequest
+	19, // 27: document.v1.DocumentService.ListReports:input_type -> document.v1.ListReportsRequest
+	22, // 28: document.v1.DocumentService.ReleaseReplica:input_type -> document.v1.ReleaseReplicaRequest
+	1,  // 29: document.v1.DocumentService.CreateDocument:output_type -> document.v1.Document
+	1,  // 30: document.v1.DocumentService.GetDocument:output_type -> document.v1.Document
+	1,  // 31: document.v1.DocumentService.ArchiveDocument:output_type -> document.v1.Document
+	7,  // 32: document.v1.DocumentService.LoadState:output_type -> document.v1.LoadStateResponse
+	9,  // 33: document.v1.DocumentService.AppendOperations:output_type -> document.v1.AppendOperationsResponse
+	11, // 34: document.v1.DocumentService.ReadOperations:output_type -> document.v1.ReadOperationsResponse
+	13, // 35: document.v1.DocumentService.ClaimReplica:output_type -> document.v1.ClaimReplicaResponse
+	1,  // 36: document.v1.DocumentService.ForkDocument:output_type -> document.v1.Document
+	16, // 37: document.v1.DocumentService.ListChangedDocuments:output_type -> document.v1.ListChangedResponse
+	1,  // 38: document.v1.DocumentService.SetEpoch:output_type -> document.v1.Document
+	18, // 39: document.v1.DocumentService.ReportVector:output_type -> document.v1.ReportVectorResponse
+	21, // 40: document.v1.DocumentService.ListReports:output_type -> document.v1.ListReportsResponse
+	23, // 41: document.v1.DocumentService.ReleaseReplica:output_type -> document.v1.ReleaseReplicaResponse
+	29, // [29:42] is the sub-list for method output_type
+	16, // [16:29] is the sub-list for method input_type
+	16, // [16:16] is the sub-list for extension type_name
+	16, // [16:16] is the sub-list for extension extendee
+	0,  // [0:16] is the sub-list for field type_name
 }
 
 func init() { file_document_v1_document_proto_init() }
@@ -1265,7 +1670,7 @@ func file_document_v1_document_proto_init() {
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_document_v1_document_proto_rawDesc), len(file_document_v1_document_proto_rawDesc)),
 			NumEnums:      1,
-			NumMessages:   16,
+			NumMessages:   23,
 			NumExtensions: 0,
 			NumServices:   1,
 		},
