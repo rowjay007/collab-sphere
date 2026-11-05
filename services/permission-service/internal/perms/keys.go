@@ -69,28 +69,13 @@ func (s *Service) PublishWraps(ctx context.Context, actor string, doc uuid.UUID,
 	if err != nil {
 		return 0, "", err
 	}
-	if err := s.pushEpoch(ctx, doc, epoch, state); err != nil {
+	if err := s.pushCurrent(ctx, doc); err != nil {
 		if replay && status.Code(err) == codes.FailedPrecondition {
 			return epoch, state, nil
 		}
 		return 0, "", err
 	}
 	return epoch, state, nil
-}
-
-func (s *Service) pushEpoch(ctx context.Context, doc uuid.UUID, epoch uint32, state string) error {
-	if s.epochs == nil {
-		return errors.New("permission: epoch client is not configured")
-	}
-	return s.epochs.SetEpoch(ctx, doc, epoch, state)
-}
-
-func (s *Service) repairEpoch(ctx context.Context, doc uuid.UUID) {
-	epoch, state, ok, err := s.db.currentEpoch(ctx, doc)
-	if err != nil || !ok {
-		return
-	}
-	_ = s.pushEpoch(ctx, doc, epoch, state)
 }
 
 func (s *store) putKey(ctx context.Context, user string, pub []byte) (PublicKey, error) {
@@ -309,7 +294,7 @@ func (s *store) publish(ctx context.Context, doc uuid.UUID, requestID string, wr
 			return 0, "", false, err
 		}
 	}
-	if _, err := tx.Exec(ctx, `UPDATE doc_epochs SET state = 'open' WHERE doc_id = $1 AND epoch = $2`, doc, epoch); err != nil {
+	if _, err := tx.Exec(ctx, `UPDATE doc_epochs SET state = 'open', pushed = false WHERE doc_id = $1 AND epoch = $2`, doc, epoch); err != nil {
 		return 0, "", false, err
 	}
 	if _, err := tx.Exec(ctx, `INSERT INTO wrap_publishes (doc_id, request_id, epoch) VALUES ($1, $2, $3)`, doc, requestID, epoch); err != nil {

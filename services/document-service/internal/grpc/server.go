@@ -86,12 +86,17 @@ func (s *Server) GetDocument(ctx context.Context, req *documentv1.GetDocumentReq
 	if err != nil {
 		return nil, err
 	}
+	if !auth.IsInternal(ctx) {
+		if err := s.allow(ctx, id, permissionv1.Role_ROLE_VIEWER); err != nil {
+			return nil, err
+		}
+	}
 	doc, err := s.store.Get(ctx, id)
 	if err != nil {
+		if !auth.IsInternal(ctx) && errors.Is(err, domain.ErrNotFound) {
+			return nil, status.Error(codes.PermissionDenied, "permission denied")
+		}
 		return nil, mapError(err)
-	}
-	if err := s.allow(ctx, id, permissionv1.Role_ROLE_VIEWER); err != nil {
-		return nil, err
 	}
 	return toProto(doc), nil
 }
@@ -295,6 +300,8 @@ func mapError(err error) error {
 		return failedPrecondition(err, "ENCRYPTED")
 	case errors.Is(err, domain.ErrEpoch):
 		return status.Error(codes.FailedPrecondition, err.Error())
+	case errors.Is(err, domain.ErrKeyRotation):
+		return failedPrecondition(err, "KEY_ROTATION")
 	default:
 		return status.Error(codes.Internal, "internal error")
 	}

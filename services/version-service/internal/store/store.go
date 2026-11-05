@@ -173,6 +173,15 @@ func (s *Store) Version(ctx context.Context, id dag.NodeID) (Version, error) {
 	return v, err
 }
 
+func (s *Store) DocOf(ctx context.Context, id dag.NodeID) (uuid.UUID, error) {
+	var doc uuid.UUID
+	err := s.pool.QueryRow(ctx, `SELECT doc FROM nodes WHERE id = $1`, id[:]).Scan(&doc)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return uuid.UUID{}, fmt.Errorf("%w: version %s", ErrNotFound, id)
+	}
+	return doc, err
+}
+
 func (s *Store) VersionAt(ctx context.Context, doc uuid.UUID, seq uint64) (Version, error) {
 	v, err := scanVersion(s.pool.QueryRow(ctx, selectVersion+` WHERE n.doc = $1 AND n.seq = $2`, doc, int64(seq)))
 	if errors.Is(err, pgx.ErrNoRows) {

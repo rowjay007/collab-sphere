@@ -6,6 +6,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/google/uuid"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/credentials/insecure"
@@ -94,6 +95,41 @@ func TestUserMethodRejectsBareContext(t *testing.T) {
 	_, err := s.CreateDocument(context.Background(), &documentv1.CreateDocumentRequest{Title: "x", OwnerId: "eve"})
 	if status.Code(err) != codes.Unauthenticated {
 		t.Fatalf("bare create: %v", err)
+	}
+}
+
+type denyAll struct{}
+
+func (denyAll) EnsureOwner(context.Context, string, string, bool) error { return nil }
+func (denyAll) Require(context.Context, string, string, permissionv1.Role) error {
+	return status.Error(codes.PermissionDenied, "permission denied")
+}
+func (denyAll) CopyGrants(context.Context, string, string) error { return nil }
+
+func TestGetDocumentSameCodeForMissingAndForbidden(t *testing.T) {
+	st, _ := testdb.Open(t)
+	doc, err := st.Create(t.Context(), "exists", "owner")
+	if err != nil {
+		t.Fatal(err)
+	}
+	api := docgrpc.New(st)
+	api.UsePermissions(denyAll{})
+	user := auth.WithSubject(t.Context(), "ada")
+	_, missing := api.GetDocument(user, &documentv1.GetDocumentRequest{Id: uuid.NewString()})
+	_, forbidden := api.GetDocument(user, &documentv1.GetDocumentRequest{Id: doc.ID.String()})
+	if status.Code(missing) != codes.PermissionDenied || status.Code(forbidden) != codes.PermissionDenied {
+		t.Fatalf("missing %v forbidden %v", missing, forbidden)
+	}
+	if status.Code(missing) != status.Code(forbidden) {
+		t.Fatalf("codes differ: missing %v forbidden %v", missing, forbidden)
+	}
+	_, err = api.GetDocument(auth.WithInternal(t.Context()), &documentv1.GetDocumentRequest{Id: uuid.NewString()})
+	if status.Code(err) != codes.NotFound {
+		t.Fatalf("internal missing = %v", err)
+	}
+	got, err := api.GetDocument(auth.WithInternal(t.Context()), &documentv1.GetDocumentRequest{Id: doc.ID.String()})
+	if err != nil || got.GetId() != doc.ID.String() {
+		t.Fatalf("internal get = %+v %v", got, err)
 	}
 }
 

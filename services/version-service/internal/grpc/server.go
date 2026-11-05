@@ -31,14 +31,33 @@ type permissions interface {
 	Require(ctx context.Context, docID, userID string, min permissionv1.Role) error
 }
 
+type versionHistory interface {
+	Versions(ctx context.Context, id uuid.UUID, after int64, limit int) ([]store.Version, error)
+	Version(ctx context.Context, id dag.NodeID) (store.Version, error)
+	DocOf(ctx context.Context, id dag.NodeID) (uuid.UUID, error)
+	Head(ctx context.Context, id uuid.UUID) (store.Version, error)
+	Blob(ctx context.Context, hash dag.Hash) ([]byte, error)
+	DocsForBlob(ctx context.Context, hash dag.Hash) ([]uuid.UUID, error)
+	Checkpoint(ctx context.Context, id uuid.UUID, name, requestID string) (store.Version, error)
+	Branch(ctx context.Context, vid dag.NodeID, title, requestID string) (uuid.UUID, store.Version, error)
+	Diff(ctx context.Context, a, b dag.NodeID) ([]crdt.Span, error)
+	Merge(ctx context.Context, src, dst uuid.UUID, requestID string) (history.MergeResult, error)
+	Restore(ctx context.Context, doc uuid.UUID, vid dag.NodeID, requestID string) (store.Version, error)
+	Frontier(ctx context.Context, id uuid.UUID) (map[uuid.UUID]uint64, error)
+}
+
 type Server struct {
 	versionv1.UnimplementedVersionServiceServer
-	history *history.History
+	history versionHistory
 	perm    permissions
 }
 
 func New(h *history.History) *Server {
-	return &Server{history: h}
+	s := &Server{}
+	if h != nil {
+		s.history = h
+	}
+	return s
 }
 
 func (s *Server) UsePermissions(p permissions) { s.perm = p }
@@ -76,12 +95,12 @@ func (s *Server) ListVersions(ctx context.Context, req *versionv1.ListVersionsRe
 			return nil, status.Error(codes.InvalidArgument, "invalid page_token")
 		}
 	}
-	versions, err := s.history.Versions(ctx, doc, after, size)
-	if err != nil {
-		return nil, mapError(err)
-	}
 	if err := s.allow(ctx, doc, permissionv1.Role_ROLE_VIEWER); err != nil {
 		return nil, err
+	}
+	versions, err := s.history.Versions(ctx, doc, after, size)
+	if err != nil {
+		return nil, hideMissing(ctx, err)
 	}
 	resp := &versionv1.ListVersionsResponse{Versions: make([]*versionv1.Version, len(versions))}
 	for i, v := range versions {
@@ -98,12 +117,16 @@ func (s *Server) GetVersion(ctx context.Context, req *versionv1.GetVersionReques
 	if err != nil {
 		return nil, err
 	}
+	doc, err := s.history.DocOf(ctx, id)
+	if err != nil {
+		return nil, hideMissing(ctx, err)
+	}
+	if err := s.allow(ctx, doc, permissionv1.Role_ROLE_VIEWER); err != nil {
+		return nil, err
+	}
 	v, err := s.history.Version(ctx, id)
 	if err != nil {
 		return nil, mapError(err)
-	}
-	if err := s.allow(ctx, v.Node.Doc, permissionv1.Role_ROLE_VIEWER); err != nil {
-		return nil, err
 	}
 	return toProto(v), nil
 }
@@ -113,12 +136,14 @@ func (s *Server) GetBlob(ctx context.Context, req *versionv1.GetBlobRequest) (*v
 		return nil, status.Error(codes.InvalidArgument, "hash must be 32 bytes")
 	}
 	hash := dag.Hash(req.GetHash())
+	if !auth.IsInternal(ctx) {
+		if err := s.allowBlob(ctx, hash); err != nil {
+			return nil, err
+		}
+	}
 	b, err := s.history.Blob(ctx, hash)
 	if err != nil {
 		return nil, mapError(err)
-	}
-	if err := s.allowBlob(ctx, hash); err != nil {
-		return nil, err
 	}
 	return &versionv1.GetBlobResponse{Bytes: b}, nil
 }
@@ -331,6 +356,13 @@ func (s *Server) allowBlob(ctx context.Context, hash dag.Hash) error {
 	return status.Error(codes.PermissionDenied, "permission denied")
 }
 
+func hideMissing(ctx context.Context, err error) error {
+	if !auth.IsInternal(ctx) && errors.Is(err, history.ErrNotFound) {
+		return status.Error(codes.PermissionDenied, "permission denied")
+	}
+	return mapError(err)
+}
+
 func parseDoc(raw string) (uuid.UUID, error) {
 	id, err := uuid.Parse(raw)
 	if err != nil {
@@ -346,16 +378,23 @@ func parseNodeID(raw []byte) (dag.NodeID, error) {
 	return dag.NodeID(raw), nil
 }
 
+func failedPrecondition(err error, reason string) error {
+	st, detailErr := status.New(codes.FailedPrecondition, err.Error()).WithDetails(&errdetails.ErrorInfo{
+		Reason: reason,
+		Domain: "version-service",
+	})
+	if detailErr != nil {
+		return status.Error(codes.Internal, "internal error")
+	}
+	return st.Err()
+}
+
 func mapError(err error) error {
 	if errors.Is(err, history.ErrEncrypted) {
-		st, detailErr := status.New(codes.FailedPrecondition, err.Error()).WithDetails(&errdetails.ErrorInfo{
-			Reason: "ENCRYPTED",
-			Domain: "version-service",
-		})
-		if detailErr != nil {
-			return status.Error(codes.Internal, "internal error")
-		}
-		return st.Err()
+		return failedPrecondition(err, "ENCRYPTED")
+	}
+	if errors.Is(err, history.ErrKeyRotation) {
+		return failedPrecondition(err, "KEY_ROTATION")
 	}
 	for sentinel, code := range map[error]codes.Code{
 		history.ErrNotFound:           codes.NotFound,

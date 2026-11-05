@@ -158,6 +158,10 @@ func TestEncryptedDocuments(t *testing.T) {
 	if !editor.Connected() {
 		t.Fatal("key rotation closed the editor")
 	}
+	_, err = s.Versions.Client.Restore(ctx, &versionv1.RestoreRequest{DocId: docID, VersionId: version.GetId(), RequestId: t.Name() + "-restore-pending"})
+	if status.Code(err) != codes.FailedPrecondition || linkReason(err) != "KEY_ROTATION" {
+		t.Fatalf("restore while pending: %v", err)
+	}
 
 	key2 := randomKey(t)
 	pub2, err := s.Perm.Client.PublishWraps(s.AuthCtx(ctx, s.Owner()), &permissionv1.PublishWrapsRequest{
@@ -184,6 +188,9 @@ func TestEncryptedDocuments(t *testing.T) {
 	if status.Code(err) != codes.AlreadyExists {
 		t.Fatalf("second publish: %v", err)
 	}
+	if _, err := s.Versions.Client.Restore(ctx, &versionv1.RestoreRequest{DocId: docID, VersionId: version.GetId(), RequestId: t.Name() + "-restore-open"}); err != nil {
+		t.Fatalf("restore after publish: %v", err)
+	}
 
 	aliceKeys[2] = mustUnwrap(t, ctx, s, doc, owner, 2)
 	bobKeys[2] = mustUnwrap(t, ctx, s, doc, bob, 2)
@@ -193,6 +200,11 @@ func TestEncryptedDocuments(t *testing.T) {
 		t.Fatal(err)
 	}
 	waitOpened(t, alice, "AbZ")
+	ackCtx, ackCancel := context.WithTimeout(ctx, 3*time.Second)
+	defer ackCancel()
+	if err := alice.WaitAcked(ackCtx); err != nil {
+		t.Fatal(err)
+	}
 
 	if _, err := s.Perm.Client.GetWraps(s.AuthCtx(ctx, "carol"), &permissionv1.GetWrapsRequest{DocId: docID}); status.Code(err) != codes.PermissionDenied {
 		t.Fatalf("carol wraps: %v", err)

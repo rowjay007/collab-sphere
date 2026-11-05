@@ -96,6 +96,9 @@ func (c *Client) Append(ctx context.Context, doc uuid.UUID, ops []crdt.Op) (hist
 		if isOpConflict(err) {
 			return history.AppendResult{}, fmt.Errorf("%w: document-service: %s", history.ErrConflict, status.Convert(err).Message())
 		}
+		if reason(err) == "KEY_ROTATION" {
+			return history.AppendResult{}, fmt.Errorf("%w: document-service: %s", history.ErrKeyRotation, status.Convert(err).Message())
+		}
 		return history.AppendResult{}, mapError(err)
 	}
 	return history.AppendResult{Seqs: resp.GetSeqs(), FirstNewSeq: resp.GetFirstNewSeq()}, nil
@@ -137,11 +140,12 @@ func fromProto(d *documentv1.Document) (history.Document, error) {
 		return history.Document{}, fmt.Errorf("document id %q: %w", d.GetId(), err)
 	}
 	out := history.Document{
-		ID:        id,
-		OpSeq:     d.GetOpSeq(),
-		ForkSeq:   d.GetForkSeq(),
-		ForkRoot:  id,
-		Encrypted: d.GetEncryption() == "encrypted",
+		ID:         id,
+		OpSeq:      d.GetOpSeq(),
+		ForkSeq:    d.GetForkSeq(),
+		ForkRoot:   id,
+		Encrypted:  d.GetEncryption() == "encrypted",
+		EpochState: d.GetEpochState(),
 	}
 	if d.GetForkOf() != "" {
 		src, err := uuid.Parse(d.GetForkOf())
@@ -163,16 +167,20 @@ func fromProto(d *documentv1.Document) (history.Document, error) {
 const opConflictReason = "OP_CONFLICT"
 
 func isOpConflict(err error) bool {
+	return status.Code(err) == codes.AlreadyExists && reason(err) == opConflictReason
+}
+
+func reason(err error) string {
 	st, ok := status.FromError(err)
-	if !ok || st.Code() != codes.AlreadyExists {
-		return false
+	if !ok {
+		return ""
 	}
 	for _, d := range st.Details() {
-		if info, ok := d.(*errdetails.ErrorInfo); ok && info.GetReason() == opConflictReason {
-			return true
+		if info, ok := d.(*errdetails.ErrorInfo); ok {
+			return info.GetReason()
 		}
 	}
-	return false
+	return ""
 }
 
 func mapError(err error) error {

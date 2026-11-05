@@ -109,6 +109,9 @@ func main() {
 
 	svc := perms.New(pool, share)
 	svc.UseEpochs(docsClient)
+	syncCtx, syncCancel := context.WithCancel(context.Background())
+	defer syncCancel()
+	go svc.RunEpochSync(syncCtx)
 	server := grpc.NewServer(
 		grpc.UnaryInterceptor(auth.UnaryInterceptor(pub, cfg.internal, permgrpc.Methods())),
 		grpc.StreamInterceptor(auth.StreamInterceptor(pub, cfg.internal, permgrpc.Methods())),
@@ -130,6 +133,7 @@ func main() {
 			slog.Error("serve", "err", serveErr)
 		}
 	case <-stop:
+		syncCancel()
 	}
 	server.GracefulStop()
 	if serveErr != nil {

@@ -48,7 +48,12 @@ func (s *Service) EnsureDocument(ctx context.Context, doc uuid.UUID, user string
 	if !auth.ValidHandle(user) {
 		return Grant{}, fmt.Errorf("%w: user id", ErrInvalidArgument)
 	}
-	return s.db.insertOwner(ctx, doc, user, encrypted)
+	g, err := s.db.insertOwner(ctx, doc, user, encrypted)
+	if err != nil || !encrypted {
+		return g, err
+	}
+	_ = s.pushCurrent(ctx, doc)
+	return g, nil
 }
 
 func (s *Service) Grant(ctx context.Context, actor string, doc uuid.UUID, user string, role Role) (Grant, error) {
@@ -101,14 +106,14 @@ func (s *Service) Revoke(ctx context.Context, actor string, doc uuid.UUID, user 
 	rot, err := s.db.revokeMember(ctx, doc, user)
 	if err != nil {
 		if err == ErrNotFound {
-			s.repairEpoch(ctx, doc)
+			_ = s.pushCurrent(ctx, doc)
 		}
 		return err
 	}
-	if !rot.Rotated {
-		return nil
+	if rot.Rotated {
+		_ = s.pushCurrent(ctx, doc)
 	}
-	return s.pushEpoch(ctx, doc, rot.Epoch, rot.State)
+	return nil
 }
 
 func (s *Service) CreateLink(ctx context.Context, actor string, doc uuid.UUID, role Role, exp time.Time) (Link, string, error) {

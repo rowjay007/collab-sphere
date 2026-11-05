@@ -54,6 +54,25 @@ func TestRegistryCachesPositiveReplicaClaims(t *testing.T) {
 	}
 }
 
+func TestRememberReplicaKeepsTheFirstUser(t *testing.T) {
+	reg := localRegistry(NewMemoryStore())
+	t.Cleanup(reg.Close)
+	key := replicaKey{docID: "doc", client: 7}
+	reg.rememberReplica(key, "ada")
+	reg.rememberReplica(key, "bob")
+	got, ok := reg.lookupReplica(key)
+	if !ok || got != "ada" {
+		t.Fatalf("cached user = %q ok=%v", got, ok)
+	}
+	if _, err := reg.Replica(t.Context(), "doc", "bob", 7); !errors.Is(err, ErrReplicaForbidden) {
+		t.Fatalf("later claim by bob = %v", err)
+	}
+	id, err := reg.Replica(t.Context(), "doc", "ada", 7)
+	if err != nil || id != 7 {
+		t.Fatalf("ada still owns the replica: %d %v", id, err)
+	}
+}
+
 func TestRegistryDoesNotCacheNegativeReplicaClaims(t *testing.T) {
 	store := &scriptedReplicaStore{MemoryStore: NewMemoryStore(), fail: errors.New("unavailable")}
 	reg := localRegistry(store)

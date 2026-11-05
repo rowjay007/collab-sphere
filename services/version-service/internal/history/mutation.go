@@ -203,6 +203,9 @@ func (h *History) Restore(ctx context.Context, doc uuid.UUID, vid dag.NodeID, re
 	if err != nil {
 		return store.Version{}, err
 	}
+	if dstDoc.Encrypted && dstDoc.EpochState != "open" {
+		return store.Version{}, ErrKeyRotation
+	}
 	srcDoc, err := h.docs.Get(ctx, target.Node.Doc)
 	if err != nil {
 		return store.Version{}, err
@@ -384,11 +387,14 @@ func (h *History) drive(ctx context.Context, m store.Mutation) error {
 		end := min(i+appendChunk, len(ops))
 		res, err := h.docs.Append(ctx, m.Doc, ops[i:end])
 		if err != nil {
-			if isOpConflict(err) {
+			if isOpConflict(err) || errors.Is(err, ErrKeyRotation) {
 				if markErr := h.do(ctx, []uuid.UUID{m.Doc}, func(tx store.Tx) error {
 					return tx.SetMutationState(ctx, m.RequestID, store.StateFailed)
 				}); markErr != nil {
 					return markErr
+				}
+				if errors.Is(err, ErrKeyRotation) {
+					return ErrKeyRotation
 				}
 				return fmt.Errorf("%w: %v", ErrFailedPrecondition, err)
 			}

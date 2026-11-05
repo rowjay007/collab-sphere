@@ -22,14 +22,17 @@ import (
 )
 
 type fakeDoc struct {
-	ops      []crdt.Op
-	byBytes  map[string]uint64
-	forkOf   *uuid.UUID
-	forkSeq  uint64
-	forkRoot uuid.UUID
-	replica  *crdt.Replica
-	claimed  uint64
-	updated  time.Time
+	ops        []crdt.Op
+	byBytes    map[string]uint64
+	forkOf     *uuid.UUID
+	forkSeq    uint64
+	forkRoot   uuid.UUID
+	replica    *crdt.Replica
+	claimed    uint64
+	updated    time.Time
+	encrypted  bool
+	epochState string
+	appendErr  error
 }
 
 type fakeDocs struct {
@@ -88,7 +91,10 @@ func (f *fakeDocs) Get(_ context.Context, id uuid.UUID) (history.Document, error
 	if !ok {
 		return history.Document{}, history.ErrNotFound
 	}
-	return history.Document{ID: id, OpSeq: uint64(len(d.ops)), ForkOf: d.forkOf, ForkSeq: d.forkSeq, ForkRoot: d.forkRoot}, nil
+	return history.Document{
+		ID: id, OpSeq: uint64(len(d.ops)), ForkOf: d.forkOf, ForkSeq: d.forkSeq, ForkRoot: d.forkRoot,
+		Encrypted: d.encrypted, EpochState: d.epochState,
+	}, nil
 }
 
 func (f *fakeDocs) Read(_ context.Context, id uuid.UUID, after uint64, limit int) ([]crdt.Op, error) {
@@ -147,6 +153,9 @@ func (f *fakeDocs) Append(_ context.Context, id uuid.UUID, ops []crdt.Op) (histo
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	d := f.docs[id]
+	if d.appendErr != nil {
+		return history.AppendResult{}, d.appendErr
+	}
 	if d.byBytes == nil {
 		d.byBytes = map[string]uint64{}
 	}
@@ -446,5 +455,69 @@ func TestCheckpointRefIsImmutable(t *testing.T) {
 	}
 	if !slices.Equal(auto.Node.Parents, []dag.NodeID{v.ID}) {
 		t.Fatal("auto node after a checkpoint does not follow it")
+	}
+}
+
+func TestRestoreWhileEpochPendingWritesNoMutation(t *testing.T) {
+	st, _ := testdb.Open(t)
+	docs := newFakeDocs()
+	h := history.New(st, docs)
+	ctx := t.Context()
+	doc := docs.create(t)
+	docs.edit(t, doc, 1)
+	v, err := h.Checkpoint(ctx, doc, "kept", "cp")
+	if err != nil {
+		t.Fatal(err)
+	}
+	docs.mu.Lock()
+	docs.docs[doc].encrypted = true
+	docs.docs[doc].epochState = "pending"
+	docs.mu.Unlock()
+	if _, err := h.Restore(ctx, doc, v.ID, "restore-pending"); !errors.Is(err, history.ErrKeyRotation) {
+		t.Fatalf("restore while pending: %v", err)
+	}
+	if _, ok, err := st.Mutation(ctx, "restore-pending"); err != nil || ok {
+		t.Fatalf("mutation stored ok=%v err=%v", ok, err)
+	}
+	docs.mu.Lock()
+	docs.docs[doc].epochState = "open"
+	docs.mu.Unlock()
+	if _, err := h.Restore(ctx, doc, v.ID, "restore-pending"); err != nil {
+		t.Fatalf("same request after open: %v", err)
+	}
+}
+
+func TestRestoreAppendKeyRotationMarksMutationFailed(t *testing.T) {
+	st, _ := testdb.Open(t)
+	docs := newFakeDocs()
+	h := history.New(st, docs)
+	ctx := t.Context()
+	doc := docs.create(t)
+	docs.edit(t, doc, 2)
+	v, err := h.Checkpoint(ctx, doc, "kept", "cp")
+	if err != nil {
+		t.Fatal(err)
+	}
+	docs.edit(t, doc, 1)
+	docs.mu.Lock()
+	docs.docs[doc].encrypted = true
+	docs.docs[doc].epochState = "open"
+	docs.docs[doc].appendErr = history.ErrKeyRotation
+	docs.mu.Unlock()
+	if _, err := h.Restore(ctx, doc, v.ID, "r1"); !errors.Is(err, history.ErrKeyRotation) {
+		t.Fatalf("restore: %v", err)
+	}
+	m, ok, err := st.Mutation(ctx, "r1")
+	if err != nil || !ok || m.State != store.StateFailed {
+		t.Fatalf("mutation %+v ok=%v err=%v", m, ok, err)
+	}
+	if _, err := h.Restore(ctx, doc, v.ID, "r1"); err == nil || !errors.Is(err, history.ErrFailedPrecondition) {
+		t.Fatalf("replay: %v", err)
+	}
+	docs.mu.Lock()
+	docs.docs[doc].appendErr = nil
+	docs.mu.Unlock()
+	if _, err := h.Restore(ctx, doc, v.ID, "r2"); err != nil {
+		t.Fatalf("new request after open: %v", err)
 	}
 }

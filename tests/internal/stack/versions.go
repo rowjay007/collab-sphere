@@ -98,7 +98,7 @@ func (v *VersionService) Start() {
 	v.proc = start(v.s.t, "version-service", versionBinary(v.s.t), append(env, v.Env...)...)
 	waitFor(v.s.t, "version-service", func(ctx context.Context) error {
 		_, err := v.Client.ListVersions(ctx, &versionv1.ListVersionsRequest{DocId: uuid.NewString()})
-		if status.Code(err) == codes.NotFound {
+		if status.Code(err) == codes.PermissionDenied {
 			return nil
 		}
 		return fmt.Errorf("not ready: %v", err)

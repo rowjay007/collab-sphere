@@ -7,11 +7,11 @@ import (
 	"maps"
 	"slices"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	collabv1 "github.com/rowjay007/collab-sphere/gen/collab/v1"
 	crdtv1 "github.com/rowjay007/collab-sphere/gen/crdt/v1"
-	permissionv1 "github.com/rowjay007/collab-sphere/gen/permission/v1"
 	presencev1 "github.com/rowjay007/collab-sphere/gen/presence/v1"
 	"github.com/rowjay007/collab-sphere/pkg/crdt"
 	"github.com/rowjay007/collab-sphere/services/collab-hub/internal/fanout"
@@ -58,11 +58,13 @@ const (
 	policyStale  = 2 * time.Second
 )
 
-type policyTick struct{}
-
-func (policyTick) isEvent() {}
-
 type event interface{ isEvent() }
+
+// wakeEvent asks the loop to notice a policy stop. The poller sends it
+// without blocking; the flag it set is what the loop acts on.
+type wakeEvent struct{}
+
+func (wakeEvent) isEvent() {}
 
 type joinEvent struct {
 	peer   *Peer
@@ -151,22 +153,26 @@ type Hub struct {
 	once     sync.Once
 	refs     int
 
-	sub        fanout.Subscription
-	doc        *crdt.Doc
-	seq        *fanout.Sequencer
-	gap        gapTimer
-	loadErr    error
-	peers      map[crdt.ClientID]*Peer
-	dead       bool
-	members    map[string]permissionv1.Role
-	writeEpoch uint32
-	epochState string
-	policyOK   time.Time
-	policyNeed time.Time
+	sub     fanout.Subscription
+	doc     *crdt.Doc
+	seq     *fanout.Sequencer
+	gap     gapTimer
+	loadErr error
+	peers   map[crdt.ClientID]*Peer
+	dead    bool
+
+	// policy is published by the poller. The loop only loads it.
+	// peerView is published by the loop. The poller only loads it.
+	policy     atomic.Pointer[policyView]
+	peerView   atomic.Pointer[peerSnap]
+	stopApply  atomic.Bool
+	attempted  atomic.Bool
+	policyNote chan struct{}
+	pollStop   chan struct{}
 }
 
 func newHub(docID string, registry *Registry) *Hub {
-	return &Hub{
+	h := &Hub{
 		docID:    docID,
 		store:    registry.store,
 		pres:     registry.pres,
@@ -179,9 +185,22 @@ func newHub(docID string, registry *Registry) *Hub {
 		stopped:  make(chan struct{}),
 		peers:    make(map[crdt.ClientID]*Peer),
 	}
+	if registry.Policy() != nil {
+		h.policyNote = make(chan struct{}, 1)
+	}
+	return h
 }
 
 func (h *Hub) loop() {
+	if h.registry.Policy() != nil {
+		h.pollStop = make(chan struct{})
+		var wg sync.WaitGroup
+		wg.Go(h.pollMembers)
+		defer func() {
+			close(h.pollStop)
+			wg.Wait()
+		}()
+	}
 	h.subscribe()
 	ctx, cancel := context.WithTimeout(context.Background(), loadTimeout)
 	doc, delivered, err := h.store.Load(ctx, h.docID)
@@ -193,15 +212,12 @@ func (h *Hub) loop() {
 		h.doc = doc
 		h.seq = fanout.NewSequencer(delivered)
 	}
+	if h.registry.Policy() != nil {
+		h.waitFirstPolicy()
+	}
 
 	idle := time.NewTimer(h.registry.idleSync)
 	defer idle.Stop()
-	var policy <-chan time.Time
-	if h.registry.Policy() != nil {
-		tick := time.NewTicker(policyPeriod)
-		defer tick.Stop()
-		policy = tick.C
-	}
 	var pending event
 	for {
 		ev := pending
@@ -217,41 +233,47 @@ func (h *Hub) loop() {
 				ev = resyncEvent{}
 			case <-idle.C:
 				ev = idleEvent{}
-			case <-policy:
-				ev = policyTick{}
 			}
 		}
+		if h.stopApply.Load() && !h.dead {
+			if ev != nil {
+				h.reject(ev)
+			}
+			h.failStop(collabv1.ErrorMessage_CODE_UNAVAILABLE, "permission service unavailable")
+			ev = nil
+		}
+		h.reapClosed()
 		before := h.delivered()
 		var stop bool
-		switch ev := ev.(type) {
-		case stopEvent:
-			stop = true
-		case joinEvent:
-			stop = h.handleJoin(ev)
-		case leaveEvent:
-			h.handleLeave(ev)
-		case opsEvent:
-			pending, stop = h.handleOpsGroup(ev)
-		case cursorEvent:
-			h.handleCursor(ev)
-		case renameEvent:
-			h.handleRename(ev)
-		case presenceEvent:
-			h.handlePresence(ev.ev)
-		case timerEvent:
-			stop = h.handleTimer(ev)
-		case remoteOpsEvent:
-			stop = h.handleRemote(ev.b)
-		case resyncEvent:
-			h.resyncPresence()
-			stop = h.poll()
-		case idleEvent:
-			if len(h.peers) > 0 {
+		if !h.dead {
+			switch ev := ev.(type) {
+			case stopEvent:
+				stop = true
+			case joinEvent:
+				stop = h.handleJoin(ev)
+			case leaveEvent:
+				h.handleLeave(ev)
+			case opsEvent:
+				pending, stop = h.handleOpsGroup(ev)
+			case cursorEvent:
+				h.handleCursor(ev)
+			case renameEvent:
+				h.handleRename(ev)
+			case presenceEvent:
+				h.handlePresence(ev.ev)
+			case timerEvent:
+				stop = h.handleTimer(ev)
+			case remoteOpsEvent:
+				stop = h.handleRemote(ev.b)
+			case resyncEvent:
+				h.resyncPresence()
 				stop = h.poll()
+			case idleEvent:
+				if len(h.peers) > 0 {
+					stop = h.poll()
+				}
+				idle.Reset(h.registry.idleSync)
 			}
-			idle.Reset(h.registry.idleSync)
-		case policyTick:
-			h.pollPolicy()
 		}
 		if h.dead {
 			stop = true
@@ -342,6 +364,7 @@ func (h *Hub) shutdown() {
 		h.leavePresence(p)
 	}
 	h.peers = nil
+	h.publishPeers()
 	for {
 		select {
 		case ev := <-h.events:
@@ -366,13 +389,8 @@ func (h *Hub) handleJoin(ev joinEvent) bool {
 		ev.reply <- ErrStopped
 		return false
 	}
-	if err := h.admit(ev.peer); err != nil {
-		code := collabv1.ErrorMessage_CODE_REVOKED
-		if errors.Is(err, errPolicyDown) {
-			code = collabv1.ErrorMessage_CODE_UNAVAILABLE
-		}
-		ev.peer.TrySend(EncodeError(code, err.Error()))
-		ev.reply <- err
+	if err := h.admitFresh(ev.peer, time.Now()); err != nil {
+		h.refuseJoin(ev, err)
 		return false
 	}
 	if h.loadErr != nil {
@@ -413,6 +431,10 @@ func (h *Hub) handleJoin(ev joinEvent) bool {
 		ev.reply <- ErrUnavailable
 		return false
 	}
+	if err := h.admit(ev.peer); err != nil {
+		h.refuseJoin(ev, err)
+		return false
+	}
 
 	// A superseded peer gets no presence Leave: the new session's Join
 	// replaces its state, so nobody sees the client leave.
@@ -424,7 +446,14 @@ func (h *Hub) handleJoin(ev joinEvent) bool {
 		superseded = old.joined
 	}
 	h.peers[ev.peer.id] = ev.peer
+	h.publishPeers()
 	for _, frame := range frames {
+		if !h.peerVisible(ev.peer) {
+			ev.peer.TrySend(EncodeError(collabv1.ErrorMessage_CODE_REVOKED, "access revoked"))
+			h.dropPeer(ev.peer)
+			ev.reply <- errNoGrant
+			return false
+		}
 		if !h.sendOrDrop(ev.peer, frame) {
 			ev.reply <- errors.New("send buffer full")
 			return false
@@ -433,6 +462,29 @@ func (h *Hub) handleJoin(ev joinEvent) bool {
 	h.joinPresence(ev.peer, superseded)
 	ev.reply <- nil
 	return false
+}
+
+func (h *Hub) refuseJoin(ev joinEvent, err error) {
+	if errors.Is(err, ErrStopped) {
+		ev.reply <- ErrStopped
+		return
+	}
+	code := collabv1.ErrorMessage_CODE_REVOKED
+	if errors.Is(err, errPolicyDown) {
+		code = collabv1.ErrorMessage_CODE_UNAVAILABLE
+	}
+	ev.peer.TrySend(EncodeError(code, err.Error()))
+	ev.reply <- err
+}
+
+func (h *Hub) reapClosed() {
+	for _, p := range h.peers {
+		select {
+		case <-p.Done():
+			h.dropPeer(p)
+		default:
+		}
+	}
 }
 
 // joinPresence runs the presence Join off the loop and sends the result as
@@ -507,6 +559,9 @@ func (h *Hub) resyncPresence() {
 			return
 		}
 		for _, p := range peers {
+			if !h.peerVisible(p) {
+				continue
+			}
 			p.TrySend(encodeAwarenessSync(states, version, p.id))
 		}
 	}()
@@ -602,7 +657,7 @@ func (h *Hub) opProblem(op crdt.Op) string {
 		if ins.Cipher == nil {
 			return "operation does not match document mode"
 		}
-		if h.registry.Policy() != nil && !ins.Copy && ins.Cipher.Epoch != h.writeEpoch {
+		if h.registry.Policy() != nil && !ins.Copy && ins.Cipher.Epoch != h.currentEpoch() {
 			return "epoch is not the open write epoch"
 		}
 		n := len(ins.Cipher.Bytes)
@@ -645,7 +700,7 @@ func (h *Hub) applyOps(ev opsEvent) []crdt.Op {
 	if !h.gateWrite(p) {
 		return nil
 	}
-	if h.registry.Policy() != nil && h.doc.Mode() == crdt.Encrypted && h.epochState != "open" {
+	if h.registry.Policy() != nil && h.doc.Mode() == crdt.Encrypted && !h.epochOpen() {
 		p.TrySend(EncodeError(collabv1.ErrorMessage_CODE_KEY_ROTATION, "key rotation"))
 		return nil
 	}
@@ -702,6 +757,10 @@ func (h *Hub) persist(accepted []crdt.Op) bool {
 	ctx, cancel := context.WithTimeout(context.Background(), appendTimeout)
 	res, err := h.store.Append(ctx, h.docID, accepted)
 	cancel()
+	if h.stopApply.Load() {
+		h.failStop(collabv1.ErrorMessage_CODE_UNAVAILABLE, "permission service unavailable")
+		return true
+	}
 	if err != nil {
 		var conflict ConflictError
 		if errors.As(err, &conflict) {
@@ -865,6 +924,9 @@ func (h *Hub) poll() bool {
 // With toHead it first learns the log's end and makes that the target.
 func (h *Hub) fill(target uint64, toHead bool) error {
 	for {
+		if h.stopApply.Load() {
+			return errPolicyDown
+		}
 		if !toHead && h.caughtUp(target) {
 			return nil
 		}
@@ -937,6 +999,7 @@ func (h *Hub) failStop(code collabv1.ErrorMessage_Code, message string) {
 		h.leavePresence(p)
 	}
 	h.peers = nil
+	h.publishPeers()
 	h.dead = true
 	h.unsubscribe()
 	h.registry.evict(h)
@@ -947,6 +1010,7 @@ func (h *Hub) dropPeer(p *Peer) {
 		return
 	}
 	delete(h.peers, p.id)
+	h.publishPeers()
 	p.CloseWithReason("session ended")
 	h.leavePresence(p)
 }
@@ -964,6 +1028,15 @@ func (h *Hub) broadcast(frame []byte, except crdt.ClientID, includeExcept bool) 
 	var dead []*Peer
 	for id, p := range h.peers {
 		if !includeExcept && id == except {
+			continue
+		}
+		select {
+		case <-p.Done():
+			dead = append(dead, p)
+			continue
+		default:
+		}
+		if !h.peerVisible(p) {
 			continue
 		}
 		if !p.TrySend(frame) {

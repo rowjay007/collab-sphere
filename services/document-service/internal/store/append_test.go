@@ -1,6 +1,7 @@
 package store_test
 
 import (
+	"bytes"
 	"errors"
 	"fmt"
 	"sync"
@@ -672,4 +673,65 @@ func equalSeqs(got, want []uint64) bool {
 		}
 	}
 	return true
+}
+
+func TestAppendFreezesEncryptedDocumentUntilEpochOpens(t *testing.T) {
+	st, _ := testdb.Open(t)
+	ctx := t.Context()
+	doc, err := st.CreateWithEncryption(ctx, "sealed", "owner", true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	cipher := bytes.Repeat([]byte{0x11}, 17)
+	del := crdt.OpToProto(crdt.Delete{ID: crdt.ID{Client: 1, Clock: 1}, Target: crdt.ID{Client: 1, Clock: 2}})
+	copyOp := crdt.OpToProto(crdt.Insert{
+		ID: crdt.ID{Client: 1, Clock: 2}, Parent: crdt.ID{Client: 1, Clock: 1}, Copy: true,
+		Cipher: &crdt.Ciphertext{Epoch: 1, Bytes: cipher},
+	})
+	insert := crdt.OpToProto(crdt.Insert{
+		ID: crdt.ID{Client: 1, Clock: 1}, Parent: crdt.Root,
+		Cipher: &crdt.Ciphertext{Epoch: 1, Bytes: cipher},
+	})
+	for _, op := range []*crdtv1.Operation{del, copyOp, insert} {
+		if _, err := st.Append(ctx, doc.ID, []*crdtv1.Operation{op}); !errors.Is(err, domain.ErrKeyRotation) {
+			t.Fatalf("pending append: %v", err)
+		}
+	}
+	got, err := st.Get(ctx, doc.ID)
+	if err != nil || got.OpSeq != 0 {
+		t.Fatalf("seq after frozen appends = %+v %v", got.OpSeq, err)
+	}
+	if _, err := st.SetEpoch(ctx, doc.ID, 1, domain.EpochOpen); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := st.Append(ctx, doc.ID, []*crdtv1.Operation{insert}); err != nil {
+		t.Fatalf("open insert: %v", err)
+	}
+	wrongEpoch := crdt.OpToProto(crdt.Insert{
+		ID: crdt.ID{Client: 1, Clock: 5}, Parent: crdt.Root,
+		Cipher: &crdt.Ciphertext{Epoch: 9, Bytes: cipher},
+	})
+	if _, err := st.Append(ctx, doc.ID, []*crdtv1.Operation{wrongEpoch}); !errors.Is(err, domain.ErrInvalidArgument) {
+		t.Fatalf("open insert with a foreign epoch: %v", err)
+	}
+	parentEpoch := crdt.OpToProto(crdt.Insert{
+		ID: crdt.ID{Client: 1, Clock: 3}, Parent: crdt.ID{Client: 1, Clock: 1}, Copy: true,
+		Cipher: &crdt.Ciphertext{Epoch: 9, Bytes: cipher},
+	})
+	if _, err := st.Append(ctx, doc.ID, []*crdtv1.Operation{parentEpoch}); err != nil {
+		t.Fatalf("open copy keeps the parent epoch: %v", err)
+	}
+	openDelete := crdt.OpToProto(crdt.Delete{ID: crdt.ID{Client: 1, Clock: 4}, Target: crdt.ID{Client: 1, Clock: 1}})
+	if _, err := st.Append(ctx, doc.ID, []*crdtv1.Operation{openDelete}); err != nil {
+		t.Fatalf("open delete: %v", err)
+	}
+	if _, err := st.SetEpoch(ctx, doc.ID, 2, domain.EpochPending); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := st.Append(ctx, doc.ID, []*crdtv1.Operation{del}); !errors.Is(err, domain.ErrKeyRotation) {
+		t.Fatalf("pending delete: %v", err)
+	}
+	if _, err := st.Append(ctx, doc.ID, []*crdtv1.Operation{parentEpoch}); !errors.Is(err, domain.ErrKeyRotation) {
+		t.Fatalf("pending copy: %v", err)
+	}
 }

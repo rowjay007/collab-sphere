@@ -1,8 +1,11 @@
 package perms_test
 
 import (
+	"bytes"
 	"context"
 	"errors"
+	"strconv"
+	"sync"
 	"testing"
 	"time"
 
@@ -224,6 +227,84 @@ func TestPolicyDump(t *testing.T) {
 	}
 	if p.WriteEpoch != 0 || p.EpochState != "" {
 		t.Fatalf("epoch %+v", p)
+	}
+}
+
+type flakyEpochs struct {
+	mu    sync.Mutex
+	fail  int
+	tries int
+	ok    [][3]string
+}
+
+func (f *flakyEpochs) SetEpoch(_ context.Context, doc uuid.UUID, epoch uint32, state string) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.tries++
+	if f.fail > 0 {
+		f.fail--
+		return errors.New("epoch client down")
+	}
+	f.ok = append(f.ok, [3]string{doc.String(), strconv.FormatUint(uint64(epoch), 10), state})
+	return nil
+}
+
+func (f *flakyEpochs) saw(doc uuid.UUID, epoch uint32, state string) bool {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	want := [3]string{doc.String(), strconv.FormatUint(uint64(epoch), 10), state}
+	for _, got := range f.ok {
+		if got == want {
+			return true
+		}
+	}
+	return false
+}
+
+func (f *flakyEpochs) attempts() int {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.tries
+}
+
+func TestEpochSyncConvergesAfterPushFailures(t *testing.T) {
+	svc, ctx := setup(t)
+	epochs := &flakyEpochs{fail: 4}
+	svc.UseEpochs(epochs)
+	doc := uuid.New()
+	if _, err := svc.EnsureDocument(ctx, doc, "alice", true); err != nil {
+		t.Fatal(err)
+	}
+	bobKey, err := svc.PutKey(ctx, "bob", bytes.Repeat([]byte{2}, 32))
+	if err != nil {
+		t.Fatal(err)
+	}
+	wrap := perms.KeyWrap{
+		Epoch: 1, UserID: "bob", KeyID: bobKey.ID,
+		EphPub: bytes.Repeat([]byte{3}, 32), Nonce: bytes.Repeat([]byte{4}, 12), Ciphertext: bytes.Repeat([]byte{5}, 48),
+	}
+	if _, err := svc.GrantWithWraps(ctx, "alice", doc, "bob", perms.RoleEditor, []perms.KeyWrap{wrap}); err != nil {
+		t.Fatal(err)
+	}
+	syncCtx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	go svc.RunEpochSync(syncCtx)
+	if err := svc.Revoke(ctx, "alice", doc, "bob"); err != nil {
+		t.Fatal(err)
+	}
+	deadline := time.Now().Add(8 * time.Second)
+	for time.Now().Before(deadline) && !epochs.saw(doc, 2, "pending") {
+		time.Sleep(100 * time.Millisecond)
+	}
+	if !epochs.saw(doc, 2, "pending") {
+		t.Fatal("document-service did not converge on the pending epoch")
+	}
+	before := epochs.attempts()
+	if err := svc.Revoke(ctx, "alice", doc, "bob"); !errors.Is(err, perms.ErrNotFound) {
+		t.Fatalf("second revoke: %v", err)
+	}
+	if epochs.attempts() <= before {
+		t.Fatal("revoking a missing member did not push")
 	}
 }
 

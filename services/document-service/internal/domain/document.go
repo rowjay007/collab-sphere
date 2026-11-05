@@ -52,6 +52,7 @@ var (
 	ErrAlreadyExists         = errors.New("document: already exists")
 	ErrEncrypted             = errors.New("document: encrypted")
 	ErrEpoch                 = errors.New("document: epoch")
+	ErrKeyRotation           = errors.New("document: key rotation")
 )
 
 // ConflictError names the op whose (client, clock) is already stored, or

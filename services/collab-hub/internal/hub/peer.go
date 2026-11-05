@@ -3,6 +3,7 @@ package hub
 import (
 	"math/rand/v2"
 	"sync"
+	"sync/atomic"
 
 	"github.com/rowjay007/collab-sphere/pkg/crdt"
 )
@@ -21,17 +22,20 @@ type Peer struct {
 	once     sync.Once
 	reasonMu sync.Mutex
 	reason   string
+	user     atomic.Value
 
 	// Owned by the hub loop. joined closes when the presence Join for this
 	// peer has returned, and stays nil until the hub starts that Join.
 	name   string
 	joined chan struct{}
-	user   string
 }
 
-func (p *Peer) SetUser(user string) { p.user = user }
+func (p *Peer) SetUser(user string) { p.user.Store(user) }
 
-func (p *Peer) User() string { return p.user }
+func (p *Peer) User() string {
+	v, _ := p.user.Load().(string)
+	return v
+}
 
 // NewPeer constructs a peer with a bounded send buffer and a fresh presence
 // session. epoch is the client's connection count, or zero if it sent none.

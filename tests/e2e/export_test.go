@@ -51,7 +51,7 @@ func TestExportFormats(t *testing.T) {
 	_, err := s.Export.Client.RequestExport(s.AuthCtx(ctx, "viewer"), &exportv1.RequestExportRequest{
 		DocId: docID, VersionId: bytes.Repeat([]byte{9}, 32), Format: "pdf", RequestId: t.Name() + "/missing",
 	})
-	if status.Code(err) != codes.NotFound {
+	if status.Code(err) != codes.PermissionDenied {
 		t.Fatalf("missing version: %v", err)
 	}
 	_, err = s.Export.Client.RequestExport(s.AuthCtx(ctx, "viewer"), &exportv1.RequestExportRequest{

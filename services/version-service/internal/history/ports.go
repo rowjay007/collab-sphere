@@ -3,6 +3,7 @@ package history
 import (
 	"context"
 	"errors"
+	"fmt"
 	"time"
 
 	"github.com/google/uuid"
@@ -16,17 +17,19 @@ var (
 	ErrInvalidArgument    = errors.New("history: invalid argument")
 	ErrOutOfRange         = errors.New("history: out of range")
 	ErrFailedPrecondition = errors.New("history: failed precondition")
+	ErrKeyRotation        = fmt.Errorf("%w: key rotation", ErrFailedPrecondition)
 	ErrConflict           = errors.New("history: op conflict")
 	ErrEncrypted          = errors.New("history: encrypted")
 )
 
 type Document struct {
-	ID        uuid.UUID
-	OpSeq     uint64
-	ForkOf    *uuid.UUID
-	ForkSeq   uint64
-	ForkRoot  uuid.UUID
-	Encrypted bool
+	ID         uuid.UUID
+	OpSeq      uint64
+	ForkOf     *uuid.UUID
+	ForkSeq    uint64
+	ForkRoot   uuid.UUID
+	Encrypted  bool
+	EpochState string
 }
 
 type AppendResult struct {

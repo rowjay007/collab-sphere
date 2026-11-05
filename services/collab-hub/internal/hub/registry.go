@@ -112,7 +112,6 @@ func (r *Registry) rememberReplica(key replicaKey, user string) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	if _, ok := r.replicas[key]; ok {
-		r.replicas[key] = user
 		return
 	}
 	if len(r.order) >= replicaCacheCap {

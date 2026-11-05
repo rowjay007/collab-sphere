@@ -427,6 +427,11 @@ func (h *History) DocsForBlob(ctx context.Context, hash dag.Hash) ([]uuid.UUID, 
 	return h.store.DocsByHash(ctx, hash)
 }
 
+func (h *History) DocOf(ctx context.Context, id dag.NodeID) (uuid.UUID, error) {
+	doc, err := h.store.DocOf(ctx, id)
+	return doc, mapStore(err)
+}
+
 func (h *History) Blob(ctx context.Context, hash dag.Hash) ([]byte, error) {
 	b, err := h.store.Blob(ctx, hash)
 	return b, mapStore(err)

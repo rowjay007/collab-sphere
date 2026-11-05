@@ -263,10 +263,14 @@ func lockDocument(ctx context.Context, tx pgx.Tx, id uuid.UUID) (domain.Document
 }
 
 func opsMatchDocument(doc domain.Document, ops []*crdtv1.Operation) error {
+	frozen := doc.Encryption == domain.EncryptionEncrypted && doc.EpochState != domain.EpochOpen
 	for _, raw := range ops {
 		op, err := crdt.OpFromProto(raw)
 		if err != nil {
 			return fmt.Errorf("%w: %v", domain.ErrInvalidArgument, err)
+		}
+		if frozen {
+			return fmt.Errorf("%w: write epoch is not open", domain.ErrKeyRotation)
 		}
 		ins, ok := op.(crdt.Insert)
 		if !ok {
@@ -276,7 +280,7 @@ func opsMatchDocument(doc domain.Document, ops []*crdtv1.Operation) error {
 			if ins.Cipher == nil || ins.Value != 0 {
 				return fmt.Errorf("%w: operation does not match document mode", domain.ErrInvalidArgument)
 			}
-			if !ins.Copy && (doc.EpochState != domain.EpochOpen || ins.Cipher.Epoch != doc.WriteEpoch) {
+			if !ins.Copy && ins.Cipher.Epoch != doc.WriteEpoch {
 				return fmt.Errorf("%w: epoch is not the open write epoch", domain.ErrInvalidArgument)
 			}
 			continue
