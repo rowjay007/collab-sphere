@@ -1,6 +1,7 @@
 package hub
 
 import (
+	"errors"
 	"time"
 
 	collabv1 "github.com/rowjay007/collab-sphere/gen/collab/v1"
@@ -27,6 +28,18 @@ func (h *Hub) admit(p *Peer) error {
 		return nil
 	}
 	return h.admitSnap(p, h.policy.Load())
+}
+
+// deny sends the admission error frame. ErrStopped has no frame: the caller retries or the handler writes one.
+func (h *Hub) deny(p *Peer, err error) {
+	if err == nil || errors.Is(err, ErrStopped) {
+		return
+	}
+	code := collabv1.ErrorMessage_CODE_REVOKED
+	if errors.Is(err, errPolicyDown) || errors.Is(err, ErrUnavailable) {
+		code = collabv1.ErrorMessage_CODE_UNAVAILABLE
+	}
+	p.TrySend(EncodeError(code, err.Error()))
 }
 
 func (h *Hub) admitSnap(p *Peer, snap *policyView) error {

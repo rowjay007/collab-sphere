@@ -130,25 +130,35 @@ func (h *Hub) dumpPolicy() {
 	h.closeAbsent(view)
 }
 
+// notePolicy wakes every waiter by closing the current note channel.
 func (h *Hub) notePolicy() {
+	h.noteMu.Lock()
+	defer h.noteMu.Unlock()
 	if h.policyNote == nil {
 		return
 	}
-	select {
-	case h.policyNote <- struct{}{}:
-	default:
-	}
+	close(h.policyNote)
+	h.policyNote = make(chan struct{})
+}
+
+// policyChanged must be taken before the condition is checked, so a note
+// between the check and the select is not lost.
+func (h *Hub) policyChanged() <-chan struct{} {
+	h.noteMu.Lock()
+	defer h.noteMu.Unlock()
+	return h.policyNote
 }
 
 func (h *Hub) waitFirstPolicy() {
 	timer := time.NewTimer(policyStale)
 	defer timer.Stop()
 	for {
+		changed := h.policyChanged()
 		if h.policy.Load() != nil || h.attempted.Load() || h.stopApply.Load() {
 			return
 		}
 		select {
-		case <-h.policyNote:
+		case <-changed:
 		case <-h.stopped:
 			return
 		case <-timer.C:
@@ -160,9 +170,8 @@ func (h *Hub) waitFirstPolicy() {
 func (h *Hub) waitPolicy(asOf time.Time) (*policyView, error) {
 	timer := time.NewTimer(policyStale)
 	defer timer.Stop()
-	tick := time.NewTicker(5 * time.Millisecond)
-	defer tick.Stop()
 	for {
+		changed := h.policyChanged()
 		if h.stopApply.Load() {
 			return nil, errPolicyDown
 		}
@@ -179,8 +188,7 @@ func (h *Hub) waitPolicy(asOf time.Time) (*policyView, error) {
 			return nil, ErrStopped
 		case <-timer.C:
 			return nil, errPolicyDown
-		case <-h.policyNote:
-		case <-tick.C:
+		case <-changed:
 		}
 	}
 }

@@ -51,6 +51,8 @@ var (
 	errNoProgress = errors.New("log read returned nothing new")
 	errNoGrant    = errors.New("no grant")
 	errPolicyDown = errors.New("permission service unavailable")
+	errSuperseded = errors.New("superseded")
+	errPeerClosed = errors.New("peer closed")
 )
 
 const (
@@ -128,6 +130,54 @@ type stopEvent struct{}
 
 func (stopEvent) isEvent() {}
 
+// fillEvent is one ReadOperations result. The loop offers it. A gen that is
+// not the in-flight read is discarded.
+type fillEvent struct {
+	gen   uint64
+	after uint64
+	batch fanout.Batch
+	opSeq uint64
+	err   error
+}
+
+func (fillEvent) isEvent() {}
+
+// joinReadyEvent is a MissedOps read finished off the loop. The loop sends
+// the frames, then any live frames buffered while the read ran.
+type joinReadyEvent struct {
+	gen    uint64
+	id     crdt.ClientID
+	frames [][]byte
+	err    error
+}
+
+func (joinReadyEvent) isEvent() {}
+
+// fillReq is the one in-flight log read. after is Delivered at the start.
+type fillReq struct {
+	gen    uint64
+	after  uint64
+	target uint64
+	toHead bool
+	heal   bool
+}
+
+// fillNeed is the work that arrived while a read was in flight.
+type fillNeed struct {
+	target uint64
+	toHead bool
+	heal   bool
+	set    bool
+}
+
+// opening is a peer whose MissedOps are not queued yet. Live frames go to
+// buf and leave after those frames, which keeps ADR 0007 seq order.
+type opening struct {
+	ev  joinEvent
+	gen uint64
+	buf [][]byte
+}
+
 // gapTimer is the gap-healing state: at most one armed timer, tagged with a
 // generation so a stale one is ignored, and the consecutive failed fills
 // that set its backoff.
@@ -161,12 +211,20 @@ type Hub struct {
 	peers   map[crdt.ClientID]*Peer
 	dead    bool
 
+	filling *fillReq
+	follow  fillNeed
+	fillGen uint64
+	catchup []joinEvent
+	opening map[crdt.ClientID]*opening
+	openGen uint64
+
 	// policy is published by the poller. The loop only loads it.
 	// peerView is published by the loop. The poller only loads it.
 	policy     atomic.Pointer[policyView]
 	peerView   atomic.Pointer[peerSnap]
 	stopApply  atomic.Bool
 	attempted  atomic.Bool
+	noteMu     sync.Mutex
 	policyNote chan struct{}
 	pollStop   chan struct{}
 }
@@ -184,9 +242,10 @@ func newHub(docID string, registry *Registry) *Hub {
 		resync:   make(chan struct{}, 1),
 		stopped:  make(chan struct{}),
 		peers:    make(map[crdt.ClientID]*Peer),
+		opening:  make(map[crdt.ClientID]*opening),
 	}
 	if registry.Policy() != nil {
-		h.policyNote = make(chan struct{}, 1)
+		h.policyNote = make(chan struct{})
 	}
 	return h
 }
@@ -273,6 +332,10 @@ func (h *Hub) loop() {
 					stop = h.poll()
 				}
 				idle.Reset(h.registry.idleSync)
+			case fillEvent:
+				stop = h.handleFill(ev)
+			case joinReadyEvent:
+				stop = h.handleJoinReady(ev)
 			}
 		}
 		if h.dead {
@@ -357,6 +420,7 @@ func (h *Hub) shutdown() {
 	h.closeStopped()
 	h.unsubscribe()
 	h.dead = true
+	h.cancelJoins(ErrStopped)
 	frame := EncodeError(collabv1.ErrorMessage_CODE_UNAVAILABLE, "hub stopped")
 	for _, p := range h.peers {
 		p.TrySend(frame)
@@ -386,10 +450,11 @@ func (h *Hub) reject(ev event) {
 
 func (h *Hub) handleJoin(ev joinEvent) bool {
 	if h.dead {
-		ev.reply <- ErrStopped
+		replyJoin(ev, ErrStopped)
 		return false
 	}
-	if err := h.admitFresh(ev.peer, time.Now()); err != nil {
+	// admitFresh already ran on the caller's goroutine. A stale pointer still refuses.
+	if err := h.admit(ev.peer); err != nil {
 		h.refuseJoin(ev, err)
 		return false
 	}
@@ -399,9 +464,16 @@ func (h *Hub) handleJoin(ev joinEvent) bool {
 		} else {
 			ev.peer.TrySend(EncodeError(collabv1.ErrorMessage_CODE_UNAVAILABLE, "failed to load document"))
 		}
-		ev.reply <- h.loadErr
+		replyJoin(ev, h.loadErr)
 		return false
 	}
+	h.takeOver(ev.peer.id)
+	return h.progressJoin(ev)
+}
+
+// progressJoin serves the join once D covers a resume and no gap is open.
+// Otherwise it parks on the single in-flight fill.
+func (h *Hub) progressJoin(ev joinEvent) bool {
 	// A resuming client holds log[1..seq], so D must reach seq before its ops
 	// are validated. A snapshot holding an op above D would let the joiner
 	// build on an op another hub has not delivered, so G must be empty too.
@@ -410,32 +482,75 @@ func (h *Hub) handleJoin(ev joinEvent) bool {
 		target = ev.seq
 	}
 	if open, _ := h.seq.Gap(); open || h.seq.Delivered() < target {
-		err := h.heal(target)
-		switch {
-		case h.dead:
-			ev.reply <- ErrStopped
-			return true
-		case errors.Is(err, ErrInvalidResume):
-			ev.peer.TrySend(EncodeError(collabv1.ErrorMessage_CODE_INVALID_RESUME, ErrInvalidResume.Error()))
-			ev.reply <- ErrInvalidResume
-			return false
-		case err != nil:
-			ev.peer.TrySend(EncodeError(collabv1.ErrorMessage_CODE_UNAVAILABLE, "document log unavailable"))
-			ev.reply <- ErrUnavailable
-			return false
-		}
-	}
-	frames, err := h.joinFrames(ev.peer.id, ev.resume, ev.seq)
-	if err != nil {
-		ev.peer.TrySend(EncodeError(collabv1.ErrorMessage_CODE_UNAVAILABLE, "document log unavailable"))
-		ev.reply <- ErrUnavailable
+		h.catchup = append(h.catchup, ev)
+		h.requestFill(target, false, true)
 		return false
 	}
+	h.serveJoin(ev)
+	return h.dead
+}
+
+func (h *Hub) serveJoin(ev joinEvent) {
+	d := h.seq.Delivered()
+	if ev.resume && d < ev.seq {
+		h.refuseResume(ev, ErrInvalidResume)
+		return
+	}
+	if !ev.resume || d-ev.seq > h.registry.maxReplay {
+		frame := mustMarshal(&collabv1.ServerMessage{
+			Payload: &collabv1.ServerMessage_DocumentSync{DocumentSync: &collabv1.DocumentSync{
+				DocumentId: h.docID,
+				Snapshot:   h.doc.Snapshot(),
+				Seq:        d,
+				Client:     uint64(ev.peer.id),
+			}},
+		})
+		h.attachJoin(ev, [][]byte{frame}, nil)
+		return
+	}
+	h.openGen++
+	gen := h.openGen
+	h.opening[ev.peer.id] = &opening{ev: ev, gen: gen}
+	go h.readMissed(gen, ev.peer.id, ev.seq, d)
+}
+
+// readMissed loads MissedOps off the loop. The loop sends them on joinReady,
+// before any live frame buffered for this peer.
+func (h *Hub) readMissed(gen uint64, id crdt.ClientID, seq, d uint64) {
+	frames, err := h.missedFrames(seq, d)
+	_ = h.send(context.Background(), joinReadyEvent{gen: gen, id: id, frames: frames, err: err})
+}
+
+func (h *Hub) handleJoinReady(ev joinReadyEvent) bool {
+	op := h.opening[ev.id]
+	if op == nil || op.gen != ev.gen {
+		return false
+	}
+	delete(h.opening, ev.id)
+	if h.dead {
+		replyJoin(op.ev, ErrStopped)
+		return false
+	}
+	select {
+	case <-op.ev.peer.Done():
+		replyJoin(op.ev, errPeerClosed)
+		return false
+	default:
+	}
+	if ev.err != nil {
+		op.ev.peer.TrySend(EncodeError(collabv1.ErrorMessage_CODE_UNAVAILABLE, "document log unavailable"))
+		replyJoin(op.ev, ErrUnavailable)
+		return false
+	}
+	h.attachJoin(op.ev, ev.frames, op.buf)
+	return h.dead
+}
+
+func (h *Hub) attachJoin(ev joinEvent, frames, extra [][]byte) {
 	if err := h.admit(ev.peer); err != nil {
 		h.refuseJoin(ev, err)
-		return false
+		return
 	}
-
 	// A superseded peer gets no presence Leave: the new session's Join
 	// replaces its state, so nobody sees the client leave.
 	var superseded <-chan struct{}
@@ -448,33 +563,97 @@ func (h *Hub) handleJoin(ev joinEvent) bool {
 	h.peers[ev.peer.id] = ev.peer
 	h.publishPeers()
 	for _, frame := range frames {
-		if !h.peerVisible(ev.peer) {
-			ev.peer.TrySend(EncodeError(collabv1.ErrorMessage_CODE_REVOKED, "access revoked"))
-			h.dropPeer(ev.peer)
-			ev.reply <- errNoGrant
-			return false
+		if !h.sendJoinFrame(ev, frame) {
+			return
 		}
-		if !h.sendOrDrop(ev.peer, frame) {
-			ev.reply <- errors.New("send buffer full")
-			return false
+	}
+	for _, frame := range extra {
+		if !h.sendJoinFrame(ev, frame) {
+			return
 		}
 	}
 	h.joinPresence(ev.peer, superseded)
-	ev.reply <- nil
-	return false
+	replyJoin(ev, nil)
+}
+
+func (h *Hub) sendJoinFrame(ev joinEvent, frame []byte) bool {
+	if !h.peerVisible(ev.peer) {
+		ev.peer.TrySend(EncodeError(collabv1.ErrorMessage_CODE_REVOKED, "access revoked"))
+		h.dropPeer(ev.peer)
+		replyJoin(ev, errNoGrant)
+		return false
+	}
+	if !h.sendOrDrop(ev.peer, frame) {
+		replyJoin(ev, errors.New("send buffer full"))
+		return false
+	}
+	return true
+}
+
+func (h *Hub) takeOver(id crdt.ClientID) {
+	if op := h.opening[id]; op != nil {
+		delete(h.opening, id)
+		h.supersedeJoin(op.ev)
+	}
+	kept := h.catchup[:0]
+	for _, ev := range h.catchup {
+		if ev.peer.id == id {
+			h.supersedeJoin(ev)
+			continue
+		}
+		kept = append(kept, ev)
+	}
+	h.catchup = kept
+}
+
+func (h *Hub) supersedeJoin(ev joinEvent) {
+	ev.peer.TrySend(EncodeError(collabv1.ErrorMessage_CODE_SUPERSEDED, "superseded by a newer connection"))
+	ev.peer.CloseWithReason("superseded")
+	replyJoin(ev, errSuperseded)
+}
+
+func (h *Hub) dropWaiting(p *Peer) {
+	if op := h.opening[p.id]; op != nil && op.ev.peer == p {
+		delete(h.opening, p.id)
+		replyJoin(op.ev, errPeerClosed)
+	}
+	kept := h.catchup[:0]
+	for _, ev := range h.catchup {
+		if ev.peer == p {
+			replyJoin(ev, errPeerClosed)
+			continue
+		}
+		kept = append(kept, ev)
+	}
+	h.catchup = kept
+}
+
+func (h *Hub) cancelJoins(err error) {
+	for _, ev := range h.catchup {
+		h.refuseJoin(ev, err)
+	}
+	h.catchup = nil
+	for id, op := range h.opening {
+		h.refuseJoin(op.ev, err)
+		delete(h.opening, id)
+	}
 }
 
 func (h *Hub) refuseJoin(ev joinEvent, err error) {
-	if errors.Is(err, ErrStopped) {
-		ev.reply <- ErrStopped
-		return
+	h.deny(ev.peer, err)
+	replyJoin(ev, err)
+}
+
+func (h *Hub) refuseResume(ev joinEvent, err error) {
+	ev.peer.TrySend(EncodeError(collabv1.ErrorMessage_CODE_INVALID_RESUME, err.Error()))
+	replyJoin(ev, err)
+}
+
+func replyJoin(ev joinEvent, err error) {
+	select {
+	case ev.reply <- err:
+	default:
 	}
-	code := collabv1.ErrorMessage_CODE_REVOKED
-	if errors.Is(err, errPolicyDown) {
-		code = collabv1.ErrorMessage_CODE_UNAVAILABLE
-	}
-	ev.peer.TrySend(EncodeError(code, err.Error()))
-	ev.reply <- err
 }
 
 func (h *Hub) reapClosed() {
@@ -567,23 +746,10 @@ func (h *Hub) resyncPresence() {
 	}()
 }
 
-// joinFrames answers a resume within maxReplay with MissedOps for
-// log(seq, D] and anything else with a DocumentSync of log[1..D]. MissedOps
-// is split into frames of at most missedFrameOps ops with contiguous
-// first_seq, and every frame carries seq D so the client knows when it has
-// them all. It is sent even when empty.
-func (h *Hub) joinFrames(client crdt.ClientID, resume bool, seq uint64) ([][]byte, error) {
-	d := h.seq.Delivered()
-	if !resume || d-seq > h.registry.maxReplay {
-		return [][]byte{mustMarshal(&collabv1.ServerMessage{
-			Payload: &collabv1.ServerMessage_DocumentSync{DocumentSync: &collabv1.DocumentSync{
-				DocumentId: h.docID,
-				Snapshot:   h.doc.Snapshot(),
-				Seq:        d,
-				Client:     uint64(client),
-			}},
-		})}, nil
-	}
+// missedFrames reads log(seq, d] into MissedOps frames of at most
+// missedFrameOps ops. Every frame carries seq d. An empty frame is sent
+// when seq is already d, so the client knows it is attached.
+func (h *Hub) missedFrames(seq, d uint64) ([][]byte, error) {
 	var frames [][]byte
 	for after := seq; ; {
 		var ops []*crdtv1.Operation
@@ -596,6 +762,9 @@ func (h *Hub) joinFrames(client crdt.ClientID, resume bool, seq uint64) ([][]byt
 			}
 			if len(b.Ops) == 0 {
 				return nil, errNoProgress
+			}
+			if uint64(len(b.Ops)) > d-after {
+				b.Ops = b.Ops[:d-after]
 			}
 			ops = make([]*crdtv1.Operation, len(b.Ops))
 			for i, op := range b.Ops {
@@ -618,6 +787,7 @@ func (h *Hub) joinFrames(client crdt.ClientID, resume bool, seq uint64) ([][]byt
 }
 
 func (h *Hub) handleLeave(ev leaveEvent) {
+	h.dropWaiting(ev.peer)
 	h.dropPeer(ev.peer)
 	close(ev.reply)
 }
@@ -794,16 +964,16 @@ func (h *Hub) handleRemote(b fanout.Batch) bool {
 	return h.watchGap()
 }
 
-// watchGap arms the grace timer for an open gap, or fills at once when too
-// many ranges wait. It reports whether the hub fail-stopped.
+// watchGap arms the grace timer for an open gap, or starts a fill at once
+// when too many ranges wait.
 func (h *Hub) watchGap() bool {
 	open, buffered := h.seq.Gap()
 	switch {
 	case !open:
 		return false
 	case buffered > maxBufferedRanges:
-		_ = h.heal(0)
-		return h.dead
+		h.requestFill(0, false, true)
+		return false
 	}
 	h.armGap()
 	return false
@@ -863,8 +1033,8 @@ func (h *Hub) handleTimer(ev timerEvent) bool {
 		return false
 	}
 	h.gap.armed = false
-	_ = h.heal(0)
-	return h.dead
+	h.requestFill(0, false, true)
+	return false
 }
 
 func (h *Hub) armGap() {
@@ -879,80 +1049,188 @@ func (h *Hub) armGap() {
 	})
 }
 
-// heal fills from the log until no gap is open and D is at least target, and
-// schedules a retry with backoff when it cannot. A failed read counts toward
-// the fail-stop; a target beyond the log does not. h.dead reports whether
-// the hub fail-stopped.
-func (h *Hub) heal(target uint64) error {
-	err := h.fill(target, false)
-	switch {
-	case err == nil:
-		h.gap.failures = 0
-		h.gap.armed = false
-		return nil
-	case errors.Is(err, ErrInvalidResume):
-		return err
-	case errors.Is(err, errDiverged):
-		h.failStop(collabv1.ErrorMessage_CODE_INTERNAL, "internal error")
-		return err
-	}
-	h.gap.failures++
-	if h.gap.failures >= maxFillFailures {
-		h.failStop(collabv1.ErrorMessage_CODE_UNAVAILABLE, "document log unavailable")
-		return err
-	}
-	h.armGap()
-	return err
-}
-
-// poll reads the log to its end. The idle and resync paths use it, so finding
-// nothing is the normal outcome, and a failed read waits for the next idle
-// tick instead of counting toward fail-stop. It reports whether the hub
-// fail-stopped.
+// poll asks for a read to the log's end. The idle and resync paths use it.
+// A failed read waits for the next idle tick instead of counting toward
+// fail-stop. Divergence is handled when the result arrives.
 func (h *Hub) poll() bool {
 	if h.dead || h.seq == nil {
 		return false
 	}
-	if err := h.fill(0, true); errors.Is(err, errDiverged) {
-		h.failStop(collabv1.ErrorMessage_CODE_INTERNAL, "internal error")
-		return true
-	}
+	h.requestFill(0, true, false)
 	return false
 }
 
-// fill reads the log after D until no gap is open and D is at least target.
-// With toHead it first learns the log's end and makes that the target.
-func (h *Hub) fill(target uint64, toHead bool) error {
-	for {
-		if h.stopApply.Load() {
-			return errPolicyDown
-		}
-		if !toHead && h.caughtUp(target) {
-			return nil
-		}
-		ctx, cancel := context.WithTimeout(context.Background(), readTimeout)
-		b, opSeq, err := h.store.ReadOperations(ctx, h.docID, h.seq.Delivered(), fillLimit)
-		cancel()
-		if err != nil {
-			return err
-		}
-		if opSeq < target {
-			return ErrInvalidResume
+// requestFill keeps one ReadOperations in flight. A result whose gen is not
+// that read is discarded. Ops the loop already delivered are trimmed by Offer.
+func (h *Hub) requestFill(target uint64, toHead, heal bool) {
+	if h.dead || h.seq == nil {
+		return
+	}
+	if h.filling != nil {
+		if target > h.follow.target {
+			h.follow.target = target
 		}
 		if toHead {
-			target, toHead = opSeq, false
+			h.follow.toHead = true
 		}
-		ready := h.seq.Offer(b)
-		if len(ready) == 0 {
-			if h.caughtUp(target) {
-				return nil
-			}
-			return errNoProgress
+		if heal {
+			h.follow.heal = true
 		}
-		if err := h.deliver(ready); err != nil {
-			return err
+		h.follow.set = true
+		return
+	}
+	if !toHead && h.caughtUp(target) {
+		return
+	}
+	h.startFill(target, toHead, heal)
+}
+
+func (h *Hub) startFill(target uint64, toHead, heal bool) {
+	h.fillGen++
+	after := h.seq.Delivered()
+	gen := h.fillGen
+	h.filling = &fillReq{gen: gen, after: after, target: target, toHead: toHead, heal: heal}
+	docID := h.docID
+	store := h.store
+	go func() {
+		ctx, cancel := context.WithTimeout(context.Background(), readTimeout)
+		b, opSeq, err := store.ReadOperations(ctx, docID, after, fillLimit)
+		cancel()
+		_ = h.send(context.Background(), fillEvent{gen: gen, after: after, batch: b, opSeq: opSeq, err: err})
+	}()
+}
+
+func (h *Hub) handleFill(ev fillEvent) bool {
+	req := h.filling
+	if req == nil || ev.gen != req.gen {
+		return false
+	}
+	follow := h.follow
+	h.filling = nil
+	h.follow = fillNeed{}
+	if h.dead {
+		return false
+	}
+
+	heal := req.heal || follow.heal
+	target := max(req.target, follow.target)
+	sawHead := req.toHead || follow.toHead
+	if ev.err != nil {
+		return h.finishFillErr(heal, ev.err)
+	}
+	if ev.opSeq < target && h.delivered() < target {
+		h.refuseBeyond(ev.opSeq)
+		target = ev.opSeq
+	}
+	if sawHead && ev.opSeq > target {
+		target = ev.opSeq
+	}
+	// A read started at ev.after. Ops the loop delivered since then are dropped.
+	cursor := h.delivered()
+	batch := ev.batch
+	if ev.after != cursor {
+		batch = trimDelivered(batch, cursor)
+	}
+	ready := h.seq.Offer(batch)
+	if len(ready) == 0 && !h.caughtUp(target) {
+		return h.finishFillErr(heal, errNoProgress)
+	}
+	if err := h.deliver(ready); err != nil {
+		h.failStop(collabv1.ErrorMessage_CODE_INTERNAL, "internal error")
+		h.cancelJoins(ErrStopped)
+		return true
+	}
+	if !h.caughtUp(target) {
+		h.startFill(target, false, heal)
+		return false
+	}
+	h.gap.failures = 0
+	h.gap.armed = false
+	h.serveReadyJoins()
+	return h.dead
+}
+
+// finishFillErr counts a heal failure toward fail-stop and answers parked
+// joins now. A resume past the log is not a failure. Idle reads are not either.
+func (h *Hub) finishFillErr(heal bool, err error) bool {
+	if errors.Is(err, errDiverged) {
+		h.failStop(collabv1.ErrorMessage_CODE_INTERNAL, "internal error")
+		h.cancelJoins(ErrStopped)
+		return true
+	}
+	if heal && !errors.Is(err, ErrInvalidResume) {
+		h.gap.failures++
+		if h.gap.failures >= maxFillFailures {
+			h.failStop(collabv1.ErrorMessage_CODE_UNAVAILABLE, "document log unavailable")
+			h.cancelJoins(ErrStopped)
+			return true
+		}
+		h.armGap()
+	}
+	h.refuseCatchup(ErrUnavailable)
+	return h.dead
+}
+
+func (h *Hub) refuseBeyond(opSeq uint64) {
+	kept := h.catchup[:0]
+	for _, ev := range h.catchup {
+		if ev.resume && ev.seq > opSeq {
+			h.refuseResume(ev, ErrInvalidResume)
+			continue
+		}
+		kept = append(kept, ev)
+	}
+	h.catchup = kept
+}
+
+func (h *Hub) refuseCatchup(err error) {
+	for _, ev := range h.catchup {
+		h.refuseJoin(ev, err)
+	}
+	h.catchup = nil
+}
+
+func (h *Hub) serveReadyJoins() {
+	pending := h.catchup
+	h.catchup = nil
+	var again []joinEvent
+	for _, ev := range pending {
+		if h.dead {
+			replyJoin(ev, ErrStopped)
+			continue
+		}
+		var target uint64
+		if ev.resume {
+			target = ev.seq
+		}
+		if open, _ := h.seq.Gap(); open || h.seq.Delivered() < target {
+			again = append(again, ev)
+			continue
+		}
+		h.serveJoin(ev)
+	}
+	if len(again) == 0 {
+		return
+	}
+	h.catchup = append(h.catchup, again...)
+	var target uint64
+	for _, ev := range again {
+		if ev.resume && ev.seq > target {
+			target = ev.seq
 		}
 	}
+	h.requestFill(target, false, true)
+}
+
+func trimDelivered(b fanout.Batch, delivered uint64) fanout.Batch {
+	if len(b.Ops) == 0 || b.Next() <= delivered+1 {
+		return fanout.Batch{}
+	}
+	next := delivered + 1
+	if b.FirstSeq >= next {
+		return b
+	}
+	return fanout.Batch{FirstSeq: next, Ops: b.Ops[next-b.FirstSeq:]}
 }
 
 func (h *Hub) caughtUp(target uint64) bool {
@@ -992,6 +1270,7 @@ func (h *Hub) handlePresence(ev *presencev1.Event) {
 }
 
 func (h *Hub) failStop(code collabv1.ErrorMessage_Code, message string) {
+	h.cancelJoins(ErrStopped)
 	frame := EncodeError(code, message)
 	for _, p := range h.peers {
 		p.TrySend(frame)
@@ -1043,6 +1322,12 @@ func (h *Hub) broadcast(frame []byte, except crdt.ClientID, includeExcept bool) 
 			p.CloseWithReason("slow consumer")
 			dead = append(dead, p)
 		}
+	}
+	for id, op := range h.opening {
+		if !includeExcept && id == except {
+			continue
+		}
+		op.buf = append(op.buf, frame)
 	}
 	for _, p := range dead {
 		h.dropPeer(p)

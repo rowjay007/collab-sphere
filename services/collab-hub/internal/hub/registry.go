@@ -141,6 +141,15 @@ func (r *Registry) Join(ctx context.Context, docID string, peer *Peer, resume bo
 		if h == nil {
 			return nil, ErrStopped
 		}
+		// The policy wait runs here, on the caller's goroutine, so the loop never blocks in it.
+		if err := h.admitFresh(peer, time.Now()); err != nil {
+			h.deny(peer, err)
+			r.release(h)
+			if err == ErrStopped {
+				continue
+			}
+			return nil, err
+		}
 		reply := make(chan error, 1)
 		if err := h.send(ctx, joinEvent{peer: peer, resume: resume, seq: seq, reply: reply}); err != nil {
 			r.release(h)
