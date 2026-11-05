@@ -14,6 +14,7 @@ service PermissionService {
   rpc RevokeLink(RevokeLinkRequest) returns (RevokeLinkResponse);
   rpc Redeem(RedeemRequest) returns (GrantRecord);
   rpc PolicyDump(PolicyDumpRequest) returns (PolicyDumpResponse);
+  rpc CopyGrants(CopyGrantsRequest) returns (CopyGrantsResponse);
 }
 
 enum Role {
@@ -81,3 +82,10 @@ message PolicyDumpResponse {
   uint32 write_epoch = 2;
   string epoch_state = 3;
 }
+
+message CopyGrantsRequest {
+  string source_doc_id = 1;
+  string dest_doc_id = 2;
+}
+
+message CopyGrantsResponse {}

@@ -18,8 +18,11 @@ import (
 	"google.golang.org/protobuf/proto"
 
 	presencev1 "github.com/rowjay007/collab-sphere/gen/presence/v1"
+	"github.com/rowjay007/collab-sphere/pkg/auth"
 	"github.com/rowjay007/collab-sphere/pkg/crdt"
 )
+
+const testInternalToken = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
 
 // A half-open hub A still holds client 7's session s1 and flushes a late
 // cursor move after client 7 rejoined hub B with s2 and a higher epoch.
@@ -152,7 +155,7 @@ func presenceService(t *testing.T) (presencev1.PresenceServiceClient, func(doc s
 	addr := l.Addr().String()
 	l.Close()
 	cmd := exec.Command(bin)
-	cmd.Env = append(os.Environ(), "REDIS_URL="+redisURL, "GRPC_ADDR="+addr)
+	cmd.Env = append(os.Environ(), "REDIS_URL="+redisURL, "GRPC_ADDR="+addr, "INTERNAL_TOKEN="+testInternalToken)
 	if err := cmd.Start(); err != nil {
 		t.Fatal(err)
 	}
@@ -161,7 +164,10 @@ func presenceService(t *testing.T) (presencev1.PresenceServiceClient, func(doc s
 		_ = cmd.Wait()
 	})
 
-	conn, err := grpc.NewClient(addr, grpc.WithTransportCredentials(insecure.NewCredentials()))
+	conn, err := grpc.NewClient(addr,
+		grpc.WithTransportCredentials(insecure.NewCredentials()),
+		grpc.WithUnaryInterceptor(auth.InternalUnary(testInternalToken)),
+	)
 	if err != nil {
 		t.Fatal(err)
 	}

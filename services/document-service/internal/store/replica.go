@@ -9,10 +9,17 @@ import (
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 
+	"github.com/rowjay007/collab-sphere/pkg/auth"
 	"github.com/rowjay007/collab-sphere/services/document-service/internal/domain"
 )
 
-func (s *Store) ClaimReplica(ctx context.Context, documentID uuid.UUID, requested uint64, system bool) (uint64, error) {
+func (s *Store) ClaimReplica(ctx context.Context, documentID uuid.UUID, requested uint64, system bool, userID string) (uint64, error) {
+	if system && userID != "" {
+		return 0, fmt.Errorf("%w: system replica has no user", domain.ErrInvalidArgument)
+	}
+	if userID != "" && !auth.ValidHandle(userID) {
+		return 0, fmt.Errorf("%w: user id", domain.ErrInvalidArgument)
+	}
 	tx, err := s.pool.Begin(ctx)
 	if err != nil {
 		return 0, fmt.Errorf("begin replica claim: %w", err)
@@ -39,9 +46,9 @@ func (s *Store) ClaimReplica(ctx context.Context, documentID uuid.UUID, requeste
 	kind := replicaKind(system)
 	client := requested
 	if client == 0 {
-		client, err = allocateReplica(ctx, tx, documentID, forkRoot, kind)
+		client, err = allocateReplica(ctx, tx, documentID, forkRoot, kind, userID)
 	} else {
-		err = claimReplica(ctx, tx, documentID, forkRoot, client, kind)
+		err = claimReplica(ctx, tx, documentID, forkRoot, client, kind, userID)
 	}
 	if err != nil {
 		return 0, err
@@ -59,7 +66,7 @@ func replicaKind(system bool) string {
 	return "client"
 }
 
-func allocateReplica(ctx context.Context, tx pgx.Tx, documentID, forkRoot uuid.UUID, kind string) (uint64, error) {
+func allocateReplica(ctx context.Context, tx pgx.Tx, documentID, forkRoot uuid.UUID, kind, userID string) (uint64, error) {
 	for {
 		var next int64
 		if err := tx.QueryRow(ctx, `SELECT nextval('replica_ids')`).Scan(&next); err != nil {
@@ -67,9 +74,9 @@ func allocateReplica(ctx context.Context, tx pgx.Tx, documentID, forkRoot uuid.U
 		}
 		client := uint64(next)
 		tag, err := tx.Exec(ctx, `
-			INSERT INTO replicas (id, fork_root, document_id, kind)
-			VALUES ($1::numeric, $2, $3, $4)
-			ON CONFLICT DO NOTHING`, strconv.FormatUint(client, 10), forkRoot, documentID, kind)
+			INSERT INTO replicas (id, fork_root, document_id, kind, user_id)
+			VALUES ($1::numeric, $2, $3, $4, $5)
+			ON CONFLICT DO NOTHING`, strconv.FormatUint(client, 10), forkRoot, documentID, kind, userArg(userID))
 		if err != nil {
 			return 0, fmt.Errorf("insert allocated replica: %w", err)
 		}
@@ -79,11 +86,11 @@ func allocateReplica(ctx context.Context, tx pgx.Tx, documentID, forkRoot uuid.U
 	}
 }
 
-func claimReplica(ctx context.Context, tx pgx.Tx, documentID, forkRoot uuid.UUID, client uint64, kind string) error {
+func claimReplica(ctx context.Context, tx pgx.Tx, documentID, forkRoot uuid.UUID, client uint64, kind, userID string) error {
 	tag, err := tx.Exec(ctx, `
-		INSERT INTO replicas (id, fork_root, document_id, kind)
-		VALUES ($1::numeric, $2, $3, $4)
-		ON CONFLICT DO NOTHING`, strconv.FormatUint(client, 10), forkRoot, documentID, kind)
+		INSERT INTO replicas (id, fork_root, document_id, kind, user_id)
+		VALUES ($1::numeric, $2, $3, $4, $5)
+		ON CONFLICT DO NOTHING`, strconv.FormatUint(client, 10), forkRoot, documentID, kind, userArg(userID))
 	if err != nil {
 		return fmt.Errorf("insert claimed replica: %w", err)
 	}
@@ -93,16 +100,61 @@ func claimReplica(ctx context.Context, tx pgx.Tx, documentID, forkRoot uuid.UUID
 
 	var home uuid.UUID
 	var existing string
+	var existingUser *string
 	err = tx.QueryRow(ctx, `
-		SELECT document_id, kind
+		SELECT document_id, kind, user_id
 		FROM replicas
 		WHERE id = $1::numeric AND fork_root = $2`,
-		strconv.FormatUint(client, 10), forkRoot).Scan(&home, &existing)
+		strconv.FormatUint(client, 10), forkRoot).Scan(&home, &existing, &existingUser)
 	if err != nil {
 		return fmt.Errorf("load replica home: %w", err)
 	}
 	if home != documentID || existing == "system" && kind != "system" {
 		return domain.ErrReplicaHomedElsewhere
 	}
-	return nil
+	if kind == "system" || existing == "system" {
+		return nil
+	}
+	return bindReplicaUser(ctx, tx, forkRoot, client, userID, existingUser)
+}
+
+func bindReplicaUser(ctx context.Context, tx pgx.Tx, forkRoot uuid.UUID, client uint64, userID string, existing *string) error {
+	if existing == nil {
+		if userID == "" {
+			return nil
+		}
+		tag, err := tx.Exec(ctx, `
+			UPDATE replicas SET user_id = $3
+			WHERE id = $1::numeric AND fork_root = $2 AND user_id IS NULL`,
+			strconv.FormatUint(client, 10), forkRoot, userID)
+		if err != nil {
+			return fmt.Errorf("bind replica user: %w", err)
+		}
+		if tag.RowsAffected() == 1 {
+			return nil
+		}
+		var now *string
+		err = tx.QueryRow(ctx, `
+			SELECT user_id FROM replicas
+			WHERE id = $1::numeric AND fork_root = $2`,
+			strconv.FormatUint(client, 10), forkRoot).Scan(&now)
+		if err != nil {
+			return fmt.Errorf("reload replica user: %w", err)
+		}
+		if now != nil && *now == userID {
+			return nil
+		}
+		return domain.ErrReplicaOwned
+	}
+	if userID != "" && *existing == userID {
+		return nil
+	}
+	return domain.ErrReplicaOwned
+}
+
+func userArg(userID string) any {
+	if userID == "" {
+		return nil
+	}
+	return userID
 }

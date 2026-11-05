@@ -13,6 +13,7 @@ import (
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/credentials/insecure"
+	"google.golang.org/grpc/metadata"
 	"google.golang.org/grpc/status"
 
 	commentv1 "github.com/rowjay007/collab-sphere/gen/comment/v1"
@@ -51,14 +52,17 @@ func commentBinary(t *testing.T) string {
 func StartCommentService(s *Stack, vs *VersionService) commentv1.CommentServiceClient {
 	s.t.Helper()
 	addr := freeAddr(s.t)
-	env := []string{
+	env := append([]string{
 		"DATABASE_URL=" + freshDatabase(s.t),
 		"GRPC_ADDR=" + addr,
 		"DOCUMENT_ADDR=" + s.grpc,
 		"VERSION_ADDR=" + vs.addr,
-	}
+	}, s.authEnv()...)
 	start(s.t, "comment-service", commentBinary(s.t), env...)
-	conn, err := grpc.NewClient(addr, grpc.WithTransportCredentials(insecure.NewCredentials()))
+	conn, err := grpc.NewClient(addr,
+		grpc.WithTransportCredentials(insecure.NewCredentials()),
+		grpc.WithUnaryInterceptor(s.commentAuth()),
+	)
 	if err != nil {
 		s.t.Fatal(err)
 	}
@@ -66,10 +70,19 @@ func StartCommentService(s *Stack, vs *VersionService) commentv1.CommentServiceC
 	client := commentv1.NewCommentServiceClient(conn)
 	waitFor(s.t, "comment-service", func(ctx context.Context) error {
 		_, err := client.ListThreads(ctx, &commentv1.ListThreadsRequest{DocumentId: uuid.NewString()})
-		if status.Code(err) == codes.NotFound || status.Code(err) == codes.InvalidArgument || err == nil {
+		if status.Code(err) == codes.NotFound || status.Code(err) == codes.InvalidArgument || status.Code(err) == codes.PermissionDenied || err == nil {
 			return nil
 		}
 		return err
 	})
 	return client
+}
+
+func (s *Stack) commentAuth() grpc.UnaryClientInterceptor {
+	return func(ctx context.Context, method string, req, reply any, cc *grpc.ClientConn, invoker grpc.UnaryInvoker, opts ...grpc.CallOption) error {
+		if md, _ := metadata.FromOutgoingContext(ctx); len(md.Get("authorization")) == 0 {
+			ctx = s.AuthCtx(ctx, s.Owner())
+		}
+		return invoker(ctx, method, req, reply, cc, opts...)
+	}
 }

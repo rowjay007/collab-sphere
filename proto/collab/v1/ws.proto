@@ -130,6 +130,14 @@ message ErrorMessage {
     CODE_SUPERSEDED = 8;
     // The requested replica is homed in another document in this fork tree.
     CODE_UNKNOWN_REPLICA = 9;
+    // The sender's role cannot apply the batch. The socket stays open.
+    CODE_FORBIDDEN = 10;
+    // The replica id is bound to another user.
+    CODE_REPLICA_FORBIDDEN = 11;
+    // The member was removed. The socket closes.
+    CODE_REVOKED = 12;
+    // Editors stay connected while a new epoch is pending.
+    CODE_KEY_ROTATION = 13;
   }
   Code code = 1;
   string message = 2;

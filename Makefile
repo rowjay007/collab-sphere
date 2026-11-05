@@ -2,7 +2,11 @@ PROTO_FILES := $(shell find proto -name '*.proto')
 TEST_DATABASE_URL ?= postgres://collab:collab@localhost:55432/collab?sslmode=disable
 TEST_REDIS_URL ?= redis://localhost:56379/0
 
-.PHONY: proto test test-integration up down run-docsvc run-hub run-presence
+.PHONY: proto test test-integration up down run-docsvc run-hub run-presence run-permission
+
+DEV_AUTH_PUBLIC_KEY ?= wBiwn96X59Q0XaGgZIFY1UDnR55L2agldgCbneQFQvM=
+DEV_SHARE_PRIVATE_KEY ?= 1/Phydme/tVCmEdnYd3iDBlvCBEtVvanqFUW10vwMg0=
+DEV_INTERNAL_TOKEN ?= 99555b306395f2318808fdf9d3c6e1262e809d072790eeb91871cdc6c7214ee8
 
 proto:
 	protoc -I proto \
@@ -30,3 +34,12 @@ run-hub:
 
 run-presence:
 	REDIS_URL='$(TEST_REDIS_URL)' go run ./services/presence-service/cmd/presence-service
+
+run-permission:
+	DATABASE_URL='postgres://permission:permission@localhost:55433/permission?sslmode=disable' \
+	GRPC_ADDR=:9094 \
+	AUTH_PUBLIC_KEY='$(DEV_AUTH_PUBLIC_KEY)' \
+	SHARE_PRIVATE_KEY='$(DEV_SHARE_PRIVATE_KEY)' \
+	INTERNAL_TOKEN='$(DEV_INTERNAL_TOKEN)' \
+	DOCUMENT_ADDR=localhost:9090 \
+	go run ./services/permission-service/cmd/permission-service

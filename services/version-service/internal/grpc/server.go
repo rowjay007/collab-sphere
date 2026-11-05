@@ -12,7 +12,9 @@ import (
 	"google.golang.org/protobuf/types/known/timestamppb"
 
 	crdtv1 "github.com/rowjay007/collab-sphere/gen/crdt/v1"
+	permissionv1 "github.com/rowjay007/collab-sphere/gen/permission/v1"
 	versionv1 "github.com/rowjay007/collab-sphere/gen/version/v1"
+	"github.com/rowjay007/collab-sphere/pkg/auth"
 	"github.com/rowjay007/collab-sphere/pkg/crdt"
 	"github.com/rowjay007/collab-sphere/services/version-service/internal/dag"
 	"github.com/rowjay007/collab-sphere/services/version-service/internal/history"
@@ -24,13 +26,35 @@ const (
 	maxPageSize     = 1000
 )
 
+type permissions interface {
+	Require(ctx context.Context, docID, userID string, min permissionv1.Role) error
+}
+
 type Server struct {
 	versionv1.UnimplementedVersionServiceServer
 	history *history.History
+	perm    permissions
 }
 
 func New(h *history.History) *Server {
 	return &Server{history: h}
+}
+
+func (s *Server) UsePermissions(p permissions) { s.perm = p }
+
+func Methods() map[string]auth.Class {
+	return map[string]auth.Class{
+		versionv1.VersionService_ListVersions_FullMethodName: auth.User,
+		versionv1.VersionService_GetVersion_FullMethodName:   auth.User,
+		versionv1.VersionService_GetBlob_FullMethodName:      auth.Either,
+		versionv1.VersionService_Head_FullMethodName:         auth.Either,
+		versionv1.VersionService_Checkpoint_FullMethodName:   auth.User,
+		versionv1.VersionService_Branch_FullMethodName:       auth.User,
+		versionv1.VersionService_Diff_FullMethodName:         auth.User,
+		versionv1.VersionService_Frontier_FullMethodName:     auth.Internal,
+		versionv1.VersionService_Merge_FullMethodName:        auth.User,
+		versionv1.VersionService_Restore_FullMethodName:      auth.User,
+	}
 }
 
 func (s *Server) ListVersions(ctx context.Context, req *versionv1.ListVersionsRequest) (*versionv1.ListVersionsResponse, error) {
@@ -55,6 +79,9 @@ func (s *Server) ListVersions(ctx context.Context, req *versionv1.ListVersionsRe
 	if err != nil {
 		return nil, mapError(err)
 	}
+	if err := s.allow(ctx, doc, permissionv1.Role_ROLE_VIEWER); err != nil {
+		return nil, err
+	}
 	resp := &versionv1.ListVersionsResponse{Versions: make([]*versionv1.Version, len(versions))}
 	for i, v := range versions {
 		resp.Versions[i] = toProto(v)
@@ -74,6 +101,9 @@ func (s *Server) GetVersion(ctx context.Context, req *versionv1.GetVersionReques
 	if err != nil {
 		return nil, mapError(err)
 	}
+	if err := s.allow(ctx, v.Node.Doc, permissionv1.Role_ROLE_VIEWER); err != nil {
+		return nil, err
+	}
 	return toProto(v), nil
 }
 
@@ -81,16 +111,38 @@ func (s *Server) GetBlob(ctx context.Context, req *versionv1.GetBlobRequest) (*v
 	if len(req.GetHash()) != len(dag.Hash{}) {
 		return nil, status.Error(codes.InvalidArgument, "hash must be 32 bytes")
 	}
-	b, err := s.history.Blob(ctx, dag.Hash(req.GetHash()))
+	hash := dag.Hash(req.GetHash())
+	b, err := s.history.Blob(ctx, hash)
 	if err != nil {
 		return nil, mapError(err)
 	}
+	if err := s.allowBlob(ctx, hash); err != nil {
+		return nil, err
+	}
 	return &versionv1.GetBlobResponse{Bytes: b}, nil
+}
+
+func (s *Server) Head(ctx context.Context, req *versionv1.HeadRequest) (*versionv1.Version, error) {
+	doc, err := parseDoc(req.GetDocId())
+	if err != nil {
+		return nil, err
+	}
+	v, err := s.history.Head(ctx, doc)
+	if err != nil {
+		return nil, mapError(err)
+	}
+	if err := s.allow(ctx, doc, permissionv1.Role_ROLE_VIEWER); err != nil {
+		return nil, err
+	}
+	return toProto(v), nil
 }
 
 func (s *Server) Checkpoint(ctx context.Context, req *versionv1.CheckpointRequest) (*versionv1.Version, error) {
 	doc, err := parseDoc(req.GetDocId())
 	if err != nil {
+		return nil, err
+	}
+	if err := s.allow(ctx, doc, permissionv1.Role_ROLE_EDITOR); err != nil {
 		return nil, err
 	}
 	v, err := s.history.Checkpoint(ctx, doc, req.GetName(), req.GetRequestId())
@@ -103,6 +155,13 @@ func (s *Server) Checkpoint(ctx context.Context, req *versionv1.CheckpointReques
 func (s *Server) Branch(ctx context.Context, req *versionv1.BranchRequest) (*versionv1.BranchResponse, error) {
 	id, err := parseNodeID(req.GetVersionId())
 	if err != nil {
+		return nil, err
+	}
+	src, err := s.history.Version(ctx, id)
+	if err != nil {
+		return nil, mapError(err)
+	}
+	if err := s.allow(ctx, src.Node.Doc, permissionv1.Role_ROLE_EDITOR); err != nil {
 		return nil, err
 	}
 	fork, v, err := s.history.Branch(ctx, id, req.GetTitle(), req.GetRequestId())
@@ -120,6 +179,22 @@ func (s *Server) Diff(ctx context.Context, req *versionv1.DiffRequest) (*version
 	b, err := parseNodeID(req.GetToVersionId())
 	if err != nil {
 		return nil, err
+	}
+	from, err := s.history.Version(ctx, a)
+	if err != nil {
+		return nil, mapError(err)
+	}
+	to, err := s.history.Version(ctx, b)
+	if err != nil {
+		return nil, mapError(err)
+	}
+	if err := s.allow(ctx, from.Node.Doc, permissionv1.Role_ROLE_VIEWER); err != nil {
+		return nil, err
+	}
+	if to.Node.Doc != from.Node.Doc {
+		if err := s.allow(ctx, to.Node.Doc, permissionv1.Role_ROLE_VIEWER); err != nil {
+			return nil, err
+		}
 	}
 	spans, err := s.history.Diff(ctx, a, b)
 	if err != nil {
@@ -141,6 +216,14 @@ func (s *Server) Merge(ctx context.Context, req *versionv1.MergeRequest) (*versi
 	if err != nil {
 		return nil, err
 	}
+	if err := s.allow(ctx, src, permissionv1.Role_ROLE_EDITOR); err != nil {
+		return nil, err
+	}
+	if dst != src {
+		if err := s.allow(ctx, dst, permissionv1.Role_ROLE_EDITOR); err != nil {
+			return nil, err
+		}
+	}
 	r, err := s.history.Merge(ctx, src, dst, req.GetRequestId())
 	if err != nil {
 		return nil, mapError(err)
@@ -155,6 +238,9 @@ func (s *Server) Restore(ctx context.Context, req *versionv1.RestoreRequest) (*v
 	}
 	id, err := parseNodeID(req.GetVersionId())
 	if err != nil {
+		return nil, err
+	}
+	if err := s.allow(ctx, doc, permissionv1.Role_ROLE_EDITOR); err != nil {
 		return nil, err
 	}
 	v, err := s.history.Restore(ctx, doc, id, req.GetRequestId())
@@ -204,6 +290,44 @@ func toProto(v store.Version) *versionv1.Version {
 		out.Parents = append(out.Parents, p[:])
 	}
 	return out
+}
+
+func (s *Server) allow(ctx context.Context, doc uuid.UUID, min permissionv1.Role) error {
+	if auth.IsInternal(ctx) {
+		return nil
+	}
+	subject := auth.Subject(ctx)
+	if subject == "" {
+		return status.Error(codes.Unauthenticated, "unauthenticated")
+	}
+	if s.perm == nil {
+		return status.Error(codes.PermissionDenied, "permission denied")
+	}
+	return s.perm.Require(ctx, doc.String(), subject, min)
+}
+
+func (s *Server) allowBlob(ctx context.Context, hash dag.Hash) error {
+	if auth.IsInternal(ctx) {
+		return nil
+	}
+	if auth.Subject(ctx) == "" {
+		return status.Error(codes.Unauthenticated, "unauthenticated")
+	}
+	docs, err := s.history.DocsForBlob(ctx, hash)
+	if err != nil {
+		return mapError(err)
+	}
+	var last error
+	for _, doc := range docs {
+		last = s.allow(ctx, doc, permissionv1.Role_ROLE_VIEWER)
+		if last == nil {
+			return nil
+		}
+	}
+	if last != nil {
+		return last
+	}
+	return status.Error(codes.PermissionDenied, "permission denied")
 }
 
 func parseDoc(raw string) (uuid.UUID, error) {

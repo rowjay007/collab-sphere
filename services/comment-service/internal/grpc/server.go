@@ -11,17 +11,36 @@ import (
 
 	commentv1 "github.com/rowjay007/collab-sphere/gen/comment/v1"
 	crdtv1 "github.com/rowjay007/collab-sphere/gen/crdt/v1"
+	permissionv1 "github.com/rowjay007/collab-sphere/gen/permission/v1"
+	"github.com/rowjay007/collab-sphere/pkg/auth"
 	"github.com/rowjay007/collab-sphere/pkg/crdt"
 	"github.com/rowjay007/collab-sphere/services/comment-service/internal/comments"
 )
 
+type permissions interface {
+	Require(ctx context.Context, docID, userID string, min permissionv1.Role) error
+}
+
 type Server struct {
 	commentv1.UnimplementedCommentServiceServer
-	svc *comments.Service
+	svc  *comments.Service
+	perm permissions
 }
 
 func New(svc *comments.Service) *Server {
 	return &Server{svc: svc}
+}
+
+func (s *Server) UsePermissions(p permissions) { s.perm = p }
+
+func Methods() map[string]auth.Class {
+	return map[string]auth.Class{
+		commentv1.CommentService_CreateThread_FullMethodName:      auth.User,
+		commentv1.CommentService_Reply_FullMethodName:             auth.User,
+		commentv1.CommentService_SetResolved_FullMethodName:       auth.User,
+		commentv1.CommentService_ListThreads_FullMethodName:       auth.User,
+		commentv1.CommentService_ListNotifications_FullMethodName: auth.User,
+	}
 }
 
 func (s *Server) CreateThread(ctx context.Context, req *commentv1.CreateThreadRequest) (*commentv1.Thread, error) {
@@ -33,7 +52,14 @@ func (s *Server) CreateThread(ctx context.Context, req *commentv1.CreateThreadRe
 	if err != nil {
 		return nil, err
 	}
-	th, err := s.svc.Create(ctx, home, anchor, req.GetAuthor(), req.GetBody(), req.GetRequestId())
+	author, err := identity(ctx, req.GetAuthor())
+	if err != nil {
+		return nil, err
+	}
+	if err := s.allow(ctx, home, permissionv1.Role_ROLE_COMMENTER); err != nil {
+		return nil, err
+	}
+	th, err := s.svc.Create(ctx, home, anchor, author, req.GetBody(), req.GetRequestId())
 	if err != nil {
 		return nil, mapError(err)
 	}
@@ -45,7 +71,18 @@ func (s *Server) Reply(ctx context.Context, req *commentv1.ReplyRequest) (*comme
 	if err != nil {
 		return nil, err
 	}
-	c, err := s.svc.Reply(ctx, threadID, req.GetAuthor(), req.GetBody(), req.GetRequestId())
+	author, err := identity(ctx, req.GetAuthor())
+	if err != nil {
+		return nil, err
+	}
+	th, err := s.svc.Lookup(ctx, threadID)
+	if err != nil {
+		return nil, mapError(err)
+	}
+	if err := s.allow(ctx, th.Home, permissionv1.Role_ROLE_COMMENTER); err != nil {
+		return nil, err
+	}
+	c, err := s.svc.Reply(ctx, threadID, author, req.GetBody(), req.GetRequestId())
 	if err != nil {
 		return nil, mapError(err)
 	}
@@ -57,7 +94,18 @@ func (s *Server) SetResolved(ctx context.Context, req *commentv1.SetResolvedRequ
 	if err != nil {
 		return nil, err
 	}
-	th, err := s.svc.SetResolved(ctx, threadID, req.GetResolved(), req.GetActor(), req.GetRequestId())
+	actor, err := identity(ctx, req.GetActor())
+	if err != nil {
+		return nil, err
+	}
+	existing, err := s.svc.Lookup(ctx, threadID)
+	if err != nil {
+		return nil, mapError(err)
+	}
+	if err := s.allowResolve(ctx, existing, actor); err != nil {
+		return nil, err
+	}
+	th, err := s.svc.SetResolved(ctx, threadID, req.GetResolved(), actor, req.GetRequestId())
 	if err != nil {
 		return nil, mapError(err)
 	}
@@ -67,6 +115,9 @@ func (s *Server) SetResolved(ctx context.Context, req *commentv1.SetResolvedRequ
 func (s *Server) ListThreads(ctx context.Context, req *commentv1.ListThreadsRequest) (*commentv1.ListThreadsResponse, error) {
 	docID, err := parseID(req.GetDocumentId(), "document id")
 	if err != nil {
+		return nil, err
+	}
+	if err := s.allow(ctx, docID, permissionv1.Role_ROLE_VIEWER); err != nil {
 		return nil, err
 	}
 	threads, err := s.svc.List(ctx, docID, req.GetIncludeResolved())
@@ -81,7 +132,11 @@ func (s *Server) ListThreads(ctx context.Context, req *commentv1.ListThreadsRequ
 }
 
 func (s *Server) ListNotifications(ctx context.Context, req *commentv1.ListNotificationsRequest) (*commentv1.ListNotificationsResponse, error) {
-	notes, err := s.svc.ListNotifications(ctx, req.GetUser(), req.GetAfterId(), int(req.GetLimit()))
+	user, err := identity(ctx, req.GetUser())
+	if err != nil {
+		return nil, err
+	}
+	notes, err := s.svc.ListNotifications(ctx, user, req.GetAfterId(), int(req.GetLimit()))
 	if err != nil {
 		return nil, mapError(err)
 	}
@@ -90,6 +145,53 @@ func (s *Server) ListNotifications(ctx context.Context, req *commentv1.ListNotif
 		out[i] = notificationToProto(n)
 	}
 	return &commentv1.ListNotificationsResponse{Notifications: out}, nil
+}
+
+func identity(ctx context.Context, field string) (string, error) {
+	subject := auth.Subject(ctx)
+	if subject == "" {
+		if !auth.IsInternal(ctx) {
+			return "", status.Error(codes.Unauthenticated, "unauthenticated")
+		}
+		if field == "" {
+			return "", status.Error(codes.InvalidArgument, "identity is required")
+		}
+		return field, nil
+	}
+	if field != "" && field != subject {
+		return "", status.Error(codes.InvalidArgument, "field does not match token")
+	}
+	return subject, nil
+}
+
+func (s *Server) allow(ctx context.Context, doc uuid.UUID, min permissionv1.Role) error {
+	if auth.IsInternal(ctx) {
+		return nil
+	}
+	subject := auth.Subject(ctx)
+	if subject == "" {
+		return status.Error(codes.Unauthenticated, "unauthenticated")
+	}
+	if s.perm == nil {
+		return status.Error(codes.PermissionDenied, "permission denied")
+	}
+	return s.perm.Require(ctx, doc.String(), subject, min)
+}
+
+func (s *Server) allowResolve(ctx context.Context, th comments.Thread, actor string) error {
+	if auth.IsInternal(ctx) {
+		return nil
+	}
+	if auth.Subject(ctx) == "" {
+		return status.Error(codes.Unauthenticated, "unauthenticated")
+	}
+	if err := s.allow(ctx, th.Home, permissionv1.Role_ROLE_EDITOR); err == nil {
+		return nil
+	}
+	if actor != th.Author {
+		return s.allow(ctx, th.Home, permissionv1.Role_ROLE_EDITOR)
+	}
+	return s.allow(ctx, th.Home, permissionv1.Role_ROLE_VIEWER)
 }
 
 func parseID(raw, what string) (uuid.UUID, error) {

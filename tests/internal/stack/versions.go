@@ -12,6 +12,8 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgxpool"
+	"strings"
+
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/credentials/insecure"
@@ -68,7 +70,10 @@ type VersionService struct {
 func StartVersionService(s *Stack, sweep time.Duration) *VersionService {
 	s.t.Helper()
 	v := &VersionService{s: s, addr: freeAddr(s.t), dbURL: freshDatabase(s.t), sweep: sweep}
-	conn, err := grpc.NewClient(v.addr, grpc.WithTransportCredentials(insecure.NewCredentials()))
+	conn, err := grpc.NewClient(v.addr,
+		grpc.WithTransportCredentials(insecure.NewCredentials()),
+		grpc.WithUnaryInterceptor(s.versionAuth()),
+	)
 	if err != nil {
 		s.t.Fatal(err)
 	}
@@ -84,12 +89,12 @@ func StartVersionService(s *Stack, sweep time.Duration) *VersionService {
 
 func (v *VersionService) Start() {
 	v.s.t.Helper()
-	env := []string{
+	env := append([]string{
 		"DATABASE_URL=" + v.dbURL,
 		"GRPC_ADDR=" + v.addr,
 		"DOCUMENT_ADDR=" + v.s.grpc,
 		"SWEEP_INTERVAL=" + v.sweep.String(),
-	}
+	}, v.s.authEnv()...)
 	v.proc = start(v.s.t, "version-service", versionBinary(v.s.t), append(env, v.Env...)...)
 	waitFor(v.s.t, "version-service", func(ctx context.Context) error {
 		_, err := v.Client.ListVersions(ctx, &versionv1.ListVersionsRequest{DocId: uuid.NewString()})
@@ -106,3 +111,14 @@ func (v *VersionService) Kill() { v.proc.kill() }
 // DB is version-service's own database, for assertions that must not touch
 // a document through an RPC.
 func (v *VersionService) DB() *pgxpool.Pool { return v.db }
+
+func (s *Stack) versionAuth() grpc.UnaryClientInterceptor {
+	return func(ctx context.Context, method string, req, reply any, cc *grpc.ClientConn, invoker grpc.UnaryInvoker, opts ...grpc.CallOption) error {
+		if strings.HasSuffix(method, "/Frontier") {
+			ctx = s.InternalCtx(ctx)
+		} else {
+			ctx = s.AuthCtx(ctx, s.Owner())
+		}
+		return invoker(ctx, method, req, reply, cc, opts...)
+	}
+}

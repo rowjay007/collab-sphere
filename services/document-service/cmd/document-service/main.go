@@ -12,6 +12,8 @@ import (
 	"google.golang.org/grpc"
 
 	documentv1 "github.com/rowjay007/collab-sphere/gen/document/v1"
+	"github.com/rowjay007/collab-sphere/pkg/access"
+	"github.com/rowjay007/collab-sphere/pkg/auth"
 	docgrpc "github.com/rowjay007/collab-sphere/services/document-service/internal/grpc"
 	"github.com/rowjay007/collab-sphere/services/document-service/internal/store"
 )
@@ -28,6 +30,28 @@ func main() {
 	if addr == "" {
 		addr = ":9090"
 	}
+	pubB64 := os.Getenv("AUTH_PUBLIC_KEY")
+	internal := os.Getenv("INTERNAL_TOKEN")
+	permAddr := os.Getenv("PERMISSION_ADDR")
+	if pubB64 == "" || internal == "" || permAddr == "" {
+		slog.Error("AUTH_PUBLIC_KEY, INTERNAL_TOKEN, and PERMISSION_ADDR are required")
+		os.Exit(1)
+	}
+	pub, err := auth.ParsePublicKey(pubB64)
+	if err != nil {
+		slog.Error("AUTH_PUBLIC_KEY", "err", err)
+		os.Exit(1)
+	}
+	if _, err := auth.ParseInternal(internal); err != nil {
+		slog.Error("INTERNAL_TOKEN", "err", err)
+		os.Exit(1)
+	}
+	perms, err := access.Dial(permAddr, internal)
+	if err != nil {
+		slog.Error("dial permission-service", "err", err)
+		os.Exit(1)
+	}
+	defer perms.Close()
 
 	ctx := context.Background()
 	pool, err := pgxpool.New(ctx, dbURL)
@@ -48,9 +72,14 @@ func main() {
 		os.Exit(1)
 	}
 
-	server := grpc.NewServer()
+	server := grpc.NewServer(
+		grpc.UnaryInterceptor(auth.UnaryInterceptor(pub, internal, docgrpc.Methods())),
+		grpc.StreamInterceptor(auth.StreamInterceptor(pub, internal, docgrpc.Methods())),
+	)
 	st := store.New(pool)
-	documentv1.RegisterDocumentServiceServer(server, docgrpc.New(st))
+	doc := docgrpc.New(st)
+	doc.UsePermissions(perms)
+	documentv1.RegisterDocumentServiceServer(server, doc)
 
 	errCh := make(chan error, 1)
 	go func() {

@@ -701,6 +701,94 @@ func (x *PolicyDumpResponse) GetEpochState() string {
 	return ""
 }
 
+type CopyGrantsRequest struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	SourceDocId   string                 `protobuf:"bytes,1,opt,name=source_doc_id,json=sourceDocId,proto3" json:"source_doc_id,omitempty"`
+	DestDocId     string                 `protobuf:"bytes,2,opt,name=dest_doc_id,json=destDocId,proto3" json:"dest_doc_id,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *CopyGrantsRequest) Reset() {
+	*x = CopyGrantsRequest{}
+	mi := &file_permission_v1_permission_proto_msgTypes[12]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *CopyGrantsRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*CopyGrantsRequest) ProtoMessage() {}
+
+func (x *CopyGrantsRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_permission_v1_permission_proto_msgTypes[12]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use CopyGrantsRequest.ProtoReflect.Descriptor instead.
+func (*CopyGrantsRequest) Descriptor() ([]byte, []int) {
+	return file_permission_v1_permission_proto_rawDescGZIP(), []int{12}
+}
+
+func (x *CopyGrantsRequest) GetSourceDocId() string {
+	if x != nil {
+		return x.SourceDocId
+	}
+	return ""
+}
+
+func (x *CopyGrantsRequest) GetDestDocId() string {
+	if x != nil {
+		return x.DestDocId
+	}
+	return ""
+}
+
+type CopyGrantsResponse struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *CopyGrantsResponse) Reset() {
+	*x = CopyGrantsResponse{}
+	mi := &file_permission_v1_permission_proto_msgTypes[13]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *CopyGrantsResponse) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*CopyGrantsResponse) ProtoMessage() {}
+
+func (x *CopyGrantsResponse) ProtoReflect() protoreflect.Message {
+	mi := &file_permission_v1_permission_proto_msgTypes[13]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use CopyGrantsResponse.ProtoReflect.Descriptor instead.
+func (*CopyGrantsResponse) Descriptor() ([]byte, []int) {
+	return file_permission_v1_permission_proto_rawDescGZIP(), []int{13}
+}
+
 var File_permission_v1_permission_proto protoreflect.FileDescriptor
 
 const file_permission_v1_permission_proto_rawDesc = "" +
@@ -748,14 +836,18 @@ const file_permission_v1_permission_proto_rawDesc = "" +
 	"epochState\x1aO\n" +
 	"\fMembersEntry\x12\x10\n" +
 	"\x03key\x18\x01 \x01(\tR\x03key\x12)\n" +
-	"\x05value\x18\x02 \x01(\x0e2\x13.permission.v1.RoleR\x05value:\x028\x01*b\n" +
+	"\x05value\x18\x02 \x01(\x0e2\x13.permission.v1.RoleR\x05value:\x028\x01\"W\n" +
+	"\x11CopyGrantsRequest\x12\"\n" +
+	"\rsource_doc_id\x18\x01 \x01(\tR\vsourceDocId\x12\x1e\n" +
+	"\vdest_doc_id\x18\x02 \x01(\tR\tdestDocId\"\x14\n" +
+	"\x12CopyGrantsResponse*b\n" +
 	"\x04Role\x12\x14\n" +
 	"\x10ROLE_UNSPECIFIED\x10\x00\x12\x0e\n" +
 	"\n" +
 	"ROLE_OWNER\x10\x01\x12\x0f\n" +
 	"\vROLE_EDITOR\x10\x02\x12\x12\n" +
 	"\x0eROLE_COMMENTER\x10\x03\x12\x0f\n" +
-	"\vROLE_VIEWER\x10\x042\x9e\x04\n" +
+	"\vROLE_VIEWER\x10\x042\xf1\x04\n" +
 	"\x11PermissionService\x12L\n" +
 	"\vEnsureOwner\x12!.permission.v1.EnsureOwnerRequest\x1a\x1a.permission.v1.GrantRecord\x12@\n" +
 	"\x05Grant\x12\x1b.permission.v1.GrantRequest\x1a\x1a.permission.v1.GrantRecord\x12E\n" +
@@ -766,7 +858,9 @@ const file_permission_v1_permission_proto_rawDesc = "" +
 	"RevokeLink\x12 .permission.v1.RevokeLinkRequest\x1a!.permission.v1.RevokeLinkResponse\x12B\n" +
 	"\x06Redeem\x12\x1c.permission.v1.RedeemRequest\x1a\x1a.permission.v1.GrantRecord\x12Q\n" +
 	"\n" +
-	"PolicyDump\x12 .permission.v1.PolicyDumpRequest\x1a!.permission.v1.PolicyDumpResponseBCZAgithub.com/rowjay007/collab-sphere/gen/permission/v1;permissionv1b\x06proto3"
+	"PolicyDump\x12 .permission.v1.PolicyDumpRequest\x1a!.permission.v1.PolicyDumpResponse\x12Q\n" +
+	"\n" +
+	"CopyGrants\x12 .permission.v1.CopyGrantsRequest\x1a!.permission.v1.CopyGrantsResponseBCZAgithub.com/rowjay007/collab-sphere/gen/permission/v1;permissionv1b\x06proto3"
 
 var (
 	file_permission_v1_permission_proto_rawDescOnce sync.Once
@@ -781,7 +875,7 @@ func file_permission_v1_permission_proto_rawDescGZIP() []byte {
 }
 
 var file_permission_v1_permission_proto_enumTypes = make([]protoimpl.EnumInfo, 1)
-var file_permission_v1_permission_proto_msgTypes = make([]protoimpl.MessageInfo, 13)
+var file_permission_v1_permission_proto_msgTypes = make([]protoimpl.MessageInfo, 15)
 var file_permission_v1_permission_proto_goTypes = []any{
 	(Role)(0),                     // 0: permission.v1.Role
 	(*GrantRecord)(nil),           // 1: permission.v1.GrantRecord
@@ -796,17 +890,19 @@ var file_permission_v1_permission_proto_goTypes = []any{
 	(*RedeemRequest)(nil),         // 10: permission.v1.RedeemRequest
 	(*PolicyDumpRequest)(nil),     // 11: permission.v1.PolicyDumpRequest
 	(*PolicyDumpResponse)(nil),    // 12: permission.v1.PolicyDumpResponse
-	nil,                           // 13: permission.v1.PolicyDumpResponse.MembersEntry
-	(*timestamppb.Timestamp)(nil), // 14: google.protobuf.Timestamp
+	(*CopyGrantsRequest)(nil),     // 13: permission.v1.CopyGrantsRequest
+	(*CopyGrantsResponse)(nil),    // 14: permission.v1.CopyGrantsResponse
+	nil,                           // 15: permission.v1.PolicyDumpResponse.MembersEntry
+	(*timestamppb.Timestamp)(nil), // 16: google.protobuf.Timestamp
 }
 var file_permission_v1_permission_proto_depIdxs = []int32{
 	0,  // 0: permission.v1.GrantRecord.role:type_name -> permission.v1.Role
 	0,  // 1: permission.v1.GrantRequest.role:type_name -> permission.v1.Role
 	0,  // 2: permission.v1.CreateLinkRequest.role:type_name -> permission.v1.Role
-	14, // 3: permission.v1.CreateLinkRequest.expires_at:type_name -> google.protobuf.Timestamp
+	16, // 3: permission.v1.CreateLinkRequest.expires_at:type_name -> google.protobuf.Timestamp
 	0,  // 4: permission.v1.ShareLink.role:type_name -> permission.v1.Role
-	14, // 5: permission.v1.ShareLink.expires_at:type_name -> google.protobuf.Timestamp
-	13, // 6: permission.v1.PolicyDumpResponse.members:type_name -> permission.v1.PolicyDumpResponse.MembersEntry
+	16, // 5: permission.v1.ShareLink.expires_at:type_name -> google.protobuf.Timestamp
+	15, // 6: permission.v1.PolicyDumpResponse.members:type_name -> permission.v1.PolicyDumpResponse.MembersEntry
 	0,  // 7: permission.v1.PolicyDumpResponse.MembersEntry.value:type_name -> permission.v1.Role
 	2,  // 8: permission.v1.PermissionService.EnsureOwner:input_type -> permission.v1.EnsureOwnerRequest
 	3,  // 9: permission.v1.PermissionService.Grant:input_type -> permission.v1.GrantRequest
@@ -815,15 +911,17 @@ var file_permission_v1_permission_proto_depIdxs = []int32{
 	8,  // 12: permission.v1.PermissionService.RevokeLink:input_type -> permission.v1.RevokeLinkRequest
 	10, // 13: permission.v1.PermissionService.Redeem:input_type -> permission.v1.RedeemRequest
 	11, // 14: permission.v1.PermissionService.PolicyDump:input_type -> permission.v1.PolicyDumpRequest
-	1,  // 15: permission.v1.PermissionService.EnsureOwner:output_type -> permission.v1.GrantRecord
-	1,  // 16: permission.v1.PermissionService.Grant:output_type -> permission.v1.GrantRecord
-	5,  // 17: permission.v1.PermissionService.Revoke:output_type -> permission.v1.RevokeResponse
-	7,  // 18: permission.v1.PermissionService.CreateLink:output_type -> permission.v1.ShareLink
-	9,  // 19: permission.v1.PermissionService.RevokeLink:output_type -> permission.v1.RevokeLinkResponse
-	1,  // 20: permission.v1.PermissionService.Redeem:output_type -> permission.v1.GrantRecord
-	12, // 21: permission.v1.PermissionService.PolicyDump:output_type -> permission.v1.PolicyDumpResponse
-	15, // [15:22] is the sub-list for method output_type
-	8,  // [8:15] is the sub-list for method input_type
+	13, // 15: permission.v1.PermissionService.CopyGrants:input_type -> permission.v1.CopyGrantsRequest
+	1,  // 16: permission.v1.PermissionService.EnsureOwner:output_type -> permission.v1.GrantRecord
+	1,  // 17: permission.v1.PermissionService.Grant:output_type -> permission.v1.GrantRecord
+	5,  // 18: permission.v1.PermissionService.Revoke:output_type -> permission.v1.RevokeResponse
+	7,  // 19: permission.v1.PermissionService.CreateLink:output_type -> permission.v1.ShareLink
+	9,  // 20: permission.v1.PermissionService.RevokeLink:output_type -> permission.v1.RevokeLinkResponse
+	1,  // 21: permission.v1.PermissionService.Redeem:output_type -> permission.v1.GrantRecord
+	12, // 22: permission.v1.PermissionService.PolicyDump:output_type -> permission.v1.PolicyDumpResponse
+	14, // 23: permission.v1.PermissionService.CopyGrants:output_type -> permission.v1.CopyGrantsResponse
+	16, // [16:24] is the sub-list for method output_type
+	8,  // [8:16] is the sub-list for method input_type
 	8,  // [8:8] is the sub-list for extension type_name
 	8,  // [8:8] is the sub-list for extension extendee
 	0,  // [0:8] is the sub-list for field type_name
@@ -840,7 +938,7 @@ func file_permission_v1_permission_proto_init() {
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_permission_v1_permission_proto_rawDesc), len(file_permission_v1_permission_proto_rawDesc)),
 			NumEnums:      1,
-			NumMessages:   13,
+			NumMessages:   15,
 			NumExtensions: 0,
 			NumServices:   1,
 		},

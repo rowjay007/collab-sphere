@@ -21,6 +21,7 @@ const (
 )
 
 type identityKey struct{}
+type internalKey struct{}
 
 func Subject(ctx context.Context) string {
 	s, _ := ctx.Value(identityKey{}).(string)
@@ -29,6 +30,15 @@ func Subject(ctx context.Context) string {
 
 func WithSubject(ctx context.Context, subject string) context.Context {
 	return context.WithValue(ctx, identityKey{}, subject)
+}
+
+func WithInternal(ctx context.Context) context.Context {
+	return context.WithValue(ctx, internalKey{}, true)
+}
+
+func IsInternal(ctx context.Context) bool {
+	v, _ := ctx.Value(internalKey{}).(bool)
+	return v
 }
 
 func UnaryInterceptor(pub ed25519.PublicKey, internal string, methods map[string]Class) grpc.UnaryServerInterceptor {
@@ -90,9 +100,31 @@ func (v *verifier) authenticate(ctx context.Context, method string) (context.Con
 		if !MatchInternal(raw, v.internal) {
 			return nil, status.Error(codes.Unauthenticated, "unauthenticated")
 		}
-		return ctx, nil
+		return WithInternal(ctx), nil
 	default:
 		return nil, status.Error(codes.Unauthenticated, "unauthenticated")
+	}
+}
+
+// InternalUnary sets the outgoing bearer to the shared internal token.
+// A secret that does not parse fails every call.
+func InternalUnary(secret string) grpc.UnaryClientInterceptor {
+	hex, err := ParseInternal(secret)
+	bearer := ""
+	if err == nil {
+		bearer = "Bearer " + FormatInternal(hex)
+	}
+	return func(ctx context.Context, method string, req, reply any, cc *grpc.ClientConn, invoker grpc.UnaryInvoker, opts ...grpc.CallOption) error {
+		if bearer == "" {
+			return status.Error(codes.Unauthenticated, "unauthenticated")
+		}
+		md, _ := metadata.FromOutgoingContext(ctx)
+		md = md.Copy()
+		if md == nil {
+			md = metadata.MD{}
+		}
+		md.Set("authorization", bearer)
+		return invoker(metadata.NewOutgoingContext(ctx, md), method, req, reply, cc, opts...)
 	}
 }
 

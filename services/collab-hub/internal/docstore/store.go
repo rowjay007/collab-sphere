@@ -19,6 +19,7 @@ import (
 const (
 	conflictReason              = "OP_CONFLICT"
 	replicaHomedElsewhereReason = "REPLICA_HOMED_ELSEWHERE"
+	replicaOwnedReason          = "REPLICA_OWNED"
 )
 
 // Store loads, appends and reads document state through DocumentService.
@@ -35,8 +36,12 @@ func (s *Store) Replica(ctx context.Context, docID string, requested crdt.Client
 	resp, err := s.client.ClaimReplica(ctx, &documentv1.ClaimReplicaRequest{
 		DocumentId: docID,
 		Client:     uint64(requested),
+		UserId:     hub.ReplicaUser(ctx),
 	})
 	if err != nil {
+		if hasErrorReason(err, codes.FailedPrecondition, replicaOwnedReason) {
+			return 0, hub.ErrReplicaForbidden
+		}
 		if hasErrorReason(err, codes.FailedPrecondition, replicaHomedElsewhereReason) {
 			return 0, hub.ErrUnknownReplica
 		}

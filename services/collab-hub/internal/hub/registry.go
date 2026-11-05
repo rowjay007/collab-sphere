@@ -2,13 +2,21 @@ package hub
 
 import (
 	"context"
+	"crypto/ed25519"
 	"errors"
 	"sync"
 	"time"
 
+	permissionv1 "github.com/rowjay007/collab-sphere/gen/permission/v1"
 	"github.com/rowjay007/collab-sphere/pkg/crdt"
 	"github.com/rowjay007/collab-sphere/services/collab-hub/internal/fanout"
 )
+
+const replicaCacheCap = 4096
+
+type Policy interface {
+	Dump(ctx context.Context, docID string) (map[string]permissionv1.Role, uint32, string, error)
+}
 
 // Registry maps document IDs to live hubs and counts connected clients.
 type Registry struct {
@@ -21,8 +29,11 @@ type Registry struct {
 	maxReplay uint64
 	mu        sync.Mutex
 	hubs      map[string]*Hub
-	replicas  map[replicaKey]struct{}
+	replicas  map[replicaKey]string
+	order     []replicaKey
 	closed    bool
+	pub       ed25519.PublicKey
+	policy    Policy
 
 	loops         sync.WaitGroup
 	presenceCalls sync.WaitGroup
@@ -40,33 +51,77 @@ func NewRegistry(store Store, bus fanout.Bus, pres Presence) *Registry {
 		readyWait: defaultReadyWait,
 		maxReplay: defaultMaxReplay,
 		hubs:      make(map[string]*Hub),
-		replicas:  make(map[replicaKey]struct{}),
+		replicas:  make(map[replicaKey]string),
 	}
 }
+
+func (r *Registry) SetSecurity(pub ed25519.PublicKey, policy Policy) {
+	r.pub = pub
+	r.policy = policy
+}
+
+func (r *Registry) PublicKey() ed25519.PublicKey { return r.pub }
+
+func (r *Registry) Policy() Policy { return r.policy }
 
 type replicaKey struct {
 	docID  string
 	client crdt.ClientID
 }
 
-func (r *Registry) Replica(ctx context.Context, docID string, requested crdt.ClientID) (crdt.ClientID, error) {
-	if requested != 0 {
-		key := replicaKey{docID: docID, client: requested}
-		r.mu.Lock()
-		_, ok := r.replicas[key]
-		r.mu.Unlock()
-		if ok {
+func (r *Registry) Replica(ctx context.Context, docID, user string, requested crdt.ClientID) (crdt.ClientID, error) {
+	if requested != 0 && user != "" {
+		if cached, ok := r.lookupReplica(replicaKey{docID: docID, client: requested}); ok {
+			if cached != user {
+				return 0, ErrReplicaForbidden
+			}
 			return requested, nil
 		}
 	}
-	client, err := r.store.Replica(ctx, docID, requested)
+	client, err := r.store.Replica(WithReplicaUser(ctx, user), docID, requested)
 	if err != nil {
 		return 0, err
 	}
-	r.mu.Lock()
-	r.replicas[replicaKey{docID: docID, client: client}] = struct{}{}
-	r.mu.Unlock()
+	if user != "" {
+		r.rememberReplica(replicaKey{docID: docID, client: client}, user)
+	}
 	return client, nil
+}
+
+func (r *Registry) lookupReplica(key replicaKey) (string, bool) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	user, ok := r.replicas[key]
+	if !ok {
+		return "", false
+	}
+	for i, item := range r.order {
+		if item == key {
+			r.order = append(r.order[:i], r.order[i+1:]...)
+			r.order = append(r.order, key)
+			break
+		}
+	}
+	return user, true
+}
+
+func (r *Registry) rememberReplica(key replicaKey, user string) {
+	if user == "" {
+		return
+	}
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if _, ok := r.replicas[key]; ok {
+		r.replicas[key] = user
+		return
+	}
+	if len(r.order) >= replicaCacheCap {
+		old := r.order[0]
+		r.order = r.order[1:]
+		delete(r.replicas, old)
+	}
+	r.order = append(r.order, key)
+	r.replicas[key] = user
 }
 
 // Session is one client's attachment to the hub it joined. Every later

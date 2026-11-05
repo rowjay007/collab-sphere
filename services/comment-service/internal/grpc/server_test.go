@@ -14,6 +14,7 @@ import (
 
 	commentv1 "github.com/rowjay007/collab-sphere/gen/comment/v1"
 	crdtv1 "github.com/rowjay007/collab-sphere/gen/crdt/v1"
+	"github.com/rowjay007/collab-sphere/pkg/auth"
 	"github.com/rowjay007/collab-sphere/pkg/crdt"
 	"github.com/rowjay007/collab-sphere/services/comment-service/internal/comments"
 	"github.com/rowjay007/collab-sphere/services/comment-service/internal/comments/testdb"
@@ -119,6 +120,14 @@ func TestGRPCMapsDomainErrors(t *testing.T) {
 	}
 }
 
+func TestUserMethodRejectsBareContext(t *testing.T) {
+	s := commentgrpc.New(nil)
+	_, err := s.ListNotifications(context.Background(), &commentv1.ListNotificationsRequest{User: "eve"})
+	if status.Code(err) != codes.Unauthenticated {
+		t.Fatalf("bare list: %v", err)
+	}
+}
+
 func idPB(id crdt.ID) *crdtv1.OpID {
 	return &crdtv1.OpID{Client: uint64(id.Client), Clock: id.Clock}
 }
@@ -126,7 +135,9 @@ func idPB(id crdt.ID) *crdtv1.OpID {
 func startGRPC(t *testing.T, svc *comments.Service) (commentv1.CommentServiceClient, func()) {
 	t.Helper()
 	lis := bufconn.Listen(1024 * 1024)
-	server := grpc.NewServer()
+	server := grpc.NewServer(grpc.UnaryInterceptor(func(ctx context.Context, req any, _ *grpc.UnaryServerInfo, handler grpc.UnaryHandler) (any, error) {
+		return handler(auth.WithInternal(ctx), req)
+	}))
 	commentv1.RegisterCommentServiceServer(server, commentgrpc.New(svc))
 	go server.Serve(lis)
 

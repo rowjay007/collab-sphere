@@ -26,7 +26,12 @@ type Peer struct {
 	// peer has returned, and stays nil until the hub starts that Join.
 	name   string
 	joined chan struct{}
+	user   string
 }
+
+func (p *Peer) SetUser(user string) { p.user = user }
+
+func (p *Peer) User() string { return p.user }
 
 // NewPeer constructs a peer with a bounded send buffer and a fresh presence
 // session. epoch is the client's connection count, or zero if it sent none.

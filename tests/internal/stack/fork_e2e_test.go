@@ -60,6 +60,7 @@ func TestForkLiveDocumentRefusesSourceReplica(t *testing.T) {
 	_, err = collabclient.DialWith(ctx, fork.GetId(), collabclient.Options{
 		URLs:   s.HubURLs(),
 		Client: src.ID(),
+		Token:  s.Token(s.Owner()),
 	})
 	if err == nil || !strings.Contains(err.Error(), "CODE_UNKNOWN_REPLICA") {
 		t.Fatalf("source replica on fork: %v", err)

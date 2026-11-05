@@ -35,6 +35,7 @@ func Methods() map[string]auth.Class {
 		permissionv1.PermissionService_RevokeLink_FullMethodName:  auth.User,
 		permissionv1.PermissionService_Redeem_FullMethodName:      auth.User,
 		permissionv1.PermissionService_PolicyDump_FullMethodName:  auth.Internal,
+		permissionv1.PermissionService_CopyGrants_FullMethodName:  auth.Internal,
 	}
 }
 
@@ -139,6 +140,21 @@ func (s *Server) PolicyDump(ctx context.Context, req *permissionv1.PolicyDumpReq
 		WriteEpoch: p.WriteEpoch,
 		EpochState: p.EpochState,
 	}, nil
+}
+
+func (s *Server) CopyGrants(ctx context.Context, req *permissionv1.CopyGrantsRequest) (*permissionv1.CopyGrantsResponse, error) {
+	src, err := parseID(req.GetSourceDocId(), "source doc id")
+	if err != nil {
+		return nil, err
+	}
+	dst, err := parseID(req.GetDestDocId(), "dest doc id")
+	if err != nil {
+		return nil, err
+	}
+	if err := s.svc.CopyGrants(ctx, src, dst); err != nil {
+		return nil, mapError(err)
+	}
+	return &permissionv1.CopyGrantsResponse{}, nil
 }
 
 func parseID(raw, what string) (uuid.UUID, error) {

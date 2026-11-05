@@ -96,6 +96,7 @@ message ClaimReplicaRequest {
   string document_id = 1;
   uint64 client = 2;
   bool system = 3;
+  string user_id = 4;
 }
 
 message ClaimReplicaResponse {

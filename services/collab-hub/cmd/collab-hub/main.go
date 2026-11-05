@@ -15,7 +15,10 @@ import (
 	"google.golang.org/grpc/credentials/insecure"
 
 	documentv1 "github.com/rowjay007/collab-sphere/gen/document/v1"
+	permissionv1 "github.com/rowjay007/collab-sphere/gen/permission/v1"
 	presencev1 "github.com/rowjay007/collab-sphere/gen/presence/v1"
+	"github.com/rowjay007/collab-sphere/pkg/access"
+	"github.com/rowjay007/collab-sphere/pkg/auth"
 	"github.com/rowjay007/collab-sphere/services/collab-hub/internal/client"
 	"github.com/rowjay007/collab-sphere/services/collab-hub/internal/docstore"
 	"github.com/rowjay007/collab-sphere/services/collab-hub/internal/fanout"
@@ -30,8 +33,33 @@ func main() {
 
 	httpAddr := envOr("HTTP_ADDR", ":8080")
 	docAddr := envOr("DOCUMENT_SERVICE_ADDR", "localhost:9090")
+	pubB64 := os.Getenv("AUTH_PUBLIC_KEY")
+	internal := os.Getenv("INTERNAL_TOKEN")
+	permAddr := os.Getenv("PERMISSION_ADDR")
+	if pubB64 == "" || internal == "" || permAddr == "" {
+		slog.Error("AUTH_PUBLIC_KEY, INTERNAL_TOKEN, and PERMISSION_ADDR are required")
+		os.Exit(1)
+	}
+	pub, err := auth.ParsePublicKey(pubB64)
+	if err != nil {
+		slog.Error("AUTH_PUBLIC_KEY", "err", err)
+		os.Exit(1)
+	}
+	if _, err := auth.ParseInternal(internal); err != nil {
+		slog.Error("INTERNAL_TOKEN", "err", err)
+		os.Exit(1)
+	}
+	perms, err := access.Dial(permAddr, internal)
+	if err != nil {
+		slog.Error("dial permission-service", "err", err)
+		os.Exit(1)
+	}
+	defer perms.Close()
 
-	conn, err := grpc.NewClient(docAddr, grpc.WithTransportCredentials(insecure.NewCredentials()))
+	conn, err := grpc.NewClient(docAddr,
+		grpc.WithTransportCredentials(insecure.NewCredentials()),
+		grpc.WithUnaryInterceptor(auth.InternalUnary(internal)),
+	)
 	if err != nil {
 		slog.Error("dial document-service", "addr", docAddr, "err", err)
 		os.Exit(1)
@@ -68,7 +96,10 @@ func main() {
 			slog.Error("parse PRESENCE_HEARTBEAT", "err", err)
 			os.Exit(1)
 		}
-		pconn, err := grpc.NewClient(presenceAddr, grpc.WithTransportCredentials(insecure.NewCredentials()))
+		pconn, err := grpc.NewClient(presenceAddr,
+			grpc.WithTransportCredentials(insecure.NewCredentials()),
+			grpc.WithUnaryInterceptor(auth.InternalUnary(internal)),
+		)
 		if err != nil {
 			slog.Error("dial presence-service", "addr", presenceAddr, "err", err)
 			os.Exit(1)
@@ -81,6 +112,7 @@ func main() {
 	}
 
 	reg := hub.NewRegistry(docstore.New(documentv1.NewDocumentServiceClient(conn)), bus, pres)
+	reg.SetSecurity(pub, permPolicy{c: perms})
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusOK)
@@ -113,6 +145,16 @@ func main() {
 		slog.Error("shutdown", "err", err)
 		os.Exit(1)
 	}
+}
+
+type permPolicy struct{ c *access.Client }
+
+func (p permPolicy) Dump(ctx context.Context, docID string) (map[string]permissionv1.Role, uint32, string, error) {
+	resp, err := p.c.Dump(ctx, docID)
+	if err != nil {
+		return nil, 0, "", err
+	}
+	return resp.GetMembers(), resp.GetWriteEpoch(), resp.GetEpochState(), nil
 }
 
 func hubID() string {

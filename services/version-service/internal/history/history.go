@@ -371,6 +371,14 @@ func (h *History) Version(ctx context.Context, id dag.NodeID) (store.Version, er
 	return h.version(ctx, id)
 }
 
+func (h *History) Head(ctx context.Context, id uuid.UUID) (store.Version, error) {
+	return h.nodeAtHead(ctx, id)
+}
+
+func (h *History) DocsForBlob(ctx context.Context, hash dag.Hash) ([]uuid.UUID, error) {
+	return h.store.DocsByHash(ctx, hash)
+}
+
 func (h *History) Blob(ctx context.Context, hash dag.Hash) ([]byte, error) {
 	b, err := h.store.Blob(ctx, hash)
 	return b, mapStore(err)

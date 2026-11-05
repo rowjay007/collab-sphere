@@ -150,6 +150,13 @@ func (s *Service) PolicyDump(ctx context.Context, doc uuid.UUID) (Policy, error)
 	return s.db.policy(ctx, doc)
 }
 
+func (s *Service) CopyGrants(ctx context.Context, src, dst uuid.UUID) error {
+	if src == dst {
+		return nil
+	}
+	return s.db.copyGrants(ctx, src, dst)
+}
+
 func (s *Service) SetNow(now func() time.Time) {
 	if now == nil {
 		s.now = time.Now

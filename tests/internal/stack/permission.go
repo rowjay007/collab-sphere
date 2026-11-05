@@ -67,25 +67,20 @@ type PermissionService struct {
 // StartPermissionService starts permission-service on its own database.
 func StartPermissionService(s *Stack) *PermissionService {
 	s.t.Helper()
-	pub, priv, err := auth.GenerateKeypair()
-	if err != nil {
-		s.t.Fatal(err)
-	}
-	_, share, err := auth.GenerateKeypair()
-	if err != nil {
-		s.t.Fatal(err)
-	}
-	secret := randomInternal(s.t)
+	s.ensureAuth()
 	p := &PermissionService{
 		s:             s,
 		addr:          freeAddr(s.t),
 		dbURL:         freshDatabase(s.t),
-		PublicKey:     auth.EncodeKey(pub),
-		PrivateKey:    auth.EncodeKey(priv.Seed()),
-		InternalToken: secret,
-		sharePriv:     auth.EncodeKey(share.Seed()),
+		PublicKey:     s.pubB64,
+		PrivateKey:    auth.EncodeKey(s.priv.Seed()),
+		InternalToken: s.internal,
+		sharePriv:     s.sharePriv,
 	}
-	conn, err := grpc.NewClient(p.addr, grpc.WithTransportCredentials(insecure.NewCredentials()))
+	conn, err := grpc.NewClient(p.addr,
+		grpc.WithTransportCredentials(insecure.NewCredentials()),
+		grpc.WithUnaryInterceptor(s.fillInternal()),
+	)
 	if err != nil {
 		s.t.Fatal(err)
 	}

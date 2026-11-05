@@ -13,6 +13,7 @@ import (
 	"google.golang.org/grpc"
 
 	presencev1 "github.com/rowjay007/collab-sphere/gen/presence/v1"
+	"github.com/rowjay007/collab-sphere/pkg/auth"
 	presgrpc "github.com/rowjay007/collab-sphere/services/presence-service/internal/grpc"
 	"github.com/rowjay007/collab-sphere/services/presence-service/internal/store"
 )
@@ -28,6 +29,11 @@ func main() {
 	addr := os.Getenv("GRPC_ADDR")
 	if addr == "" {
 		addr = ":9091"
+	}
+	internal := os.Getenv("INTERNAL_TOKEN")
+	if _, err := auth.ParseInternal(internal); err != nil {
+		slog.Error("INTERNAL_TOKEN", "err", err)
+		os.Exit(1)
 	}
 	ttl, err := envDuration("PRESENCE_TTL", "30s")
 	if err != nil {
@@ -60,7 +66,10 @@ func main() {
 	}
 
 	st := store.New(rdb, ttl)
-	server := grpc.NewServer()
+	server := grpc.NewServer(
+		grpc.UnaryInterceptor(auth.UnaryInterceptor(nil, internal, presgrpc.Methods())),
+		grpc.StreamInterceptor(auth.StreamInterceptor(nil, internal, presgrpc.Methods())),
+	)
 	presencev1.RegisterPresenceServiceServer(server, presgrpc.New(st))
 
 	sweepCtx, stopSweep := context.WithCancel(context.Background())

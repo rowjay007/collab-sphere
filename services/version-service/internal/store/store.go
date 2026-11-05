@@ -206,6 +206,23 @@ func (s *Store) Blob(ctx context.Context, hash dag.Hash) ([]byte, error) {
 	return blob(ctx, s.pool, hash)
 }
 
+func (s *Store) DocsByHash(ctx context.Context, hash dag.Hash) ([]uuid.UUID, error) {
+	rows, err := s.pool.Query(ctx, `SELECT DISTINCT doc FROM nodes WHERE content_hash = $1`, hash[:])
+	if err != nil {
+		return nil, fmt.Errorf("docs for blob: %w", err)
+	}
+	defer rows.Close()
+	var out []uuid.UUID
+	for rows.Next() {
+		var id uuid.UUID
+		if err := rows.Scan(&id); err != nil {
+			return nil, err
+		}
+		out = append(out, id)
+	}
+	return out, rows.Err()
+}
+
 // Reach returns every other document that doc's nodes reach through
 // cross-document parent edges, each at the highest seq reached. A document
 // reached at seq s contributes the edges of all its nodes at or below s,

@@ -11,6 +11,7 @@ import (
 
 	collabv1 "github.com/rowjay007/collab-sphere/gen/collab/v1"
 	crdtv1 "github.com/rowjay007/collab-sphere/gen/crdt/v1"
+	permissionv1 "github.com/rowjay007/collab-sphere/gen/permission/v1"
 	presencev1 "github.com/rowjay007/collab-sphere/gen/presence/v1"
 	"github.com/rowjay007/collab-sphere/pkg/crdt"
 	"github.com/rowjay007/collab-sphere/services/collab-hub/internal/fanout"
@@ -48,7 +49,18 @@ var (
 
 	errDiverged   = errors.New("sequenced op does not apply")
 	errNoProgress = errors.New("log read returned nothing new")
+	errNoGrant    = errors.New("no grant")
+	errPolicyDown = errors.New("permission service unavailable")
 )
+
+const (
+	policyPeriod = 500 * time.Millisecond
+	policyStale  = 2 * time.Second
+)
+
+type policyTick struct{}
+
+func (policyTick) isEvent() {}
 
 type event interface{ isEvent() }
 
@@ -139,13 +151,18 @@ type Hub struct {
 	once     sync.Once
 	refs     int
 
-	sub     fanout.Subscription
-	doc     *crdt.Doc
-	seq     *fanout.Sequencer
-	gap     gapTimer
-	loadErr error
-	peers   map[crdt.ClientID]*Peer
-	dead    bool
+	sub        fanout.Subscription
+	doc        *crdt.Doc
+	seq        *fanout.Sequencer
+	gap        gapTimer
+	loadErr    error
+	peers      map[crdt.ClientID]*Peer
+	dead       bool
+	members    map[string]permissionv1.Role
+	writeEpoch uint32
+	epochState string
+	policyOK   time.Time
+	policyNeed time.Time
 }
 
 func newHub(docID string, registry *Registry) *Hub {
@@ -179,6 +196,12 @@ func (h *Hub) loop() {
 
 	idle := time.NewTimer(h.registry.idleSync)
 	defer idle.Stop()
+	var policy <-chan time.Time
+	if h.registry.Policy() != nil {
+		tick := time.NewTicker(policyPeriod)
+		defer tick.Stop()
+		policy = tick.C
+	}
 	var pending event
 	for {
 		ev := pending
@@ -194,6 +217,8 @@ func (h *Hub) loop() {
 				ev = resyncEvent{}
 			case <-idle.C:
 				ev = idleEvent{}
+			case <-policy:
+				ev = policyTick{}
 			}
 		}
 		before := h.delivered()
@@ -225,6 +250,11 @@ func (h *Hub) loop() {
 				stop = h.poll()
 			}
 			idle.Reset(h.registry.idleSync)
+		case policyTick:
+			h.pollPolicy()
+		}
+		if h.dead {
+			stop = true
 		}
 		if stop {
 			h.shutdown()
@@ -334,6 +364,15 @@ func (h *Hub) reject(ev event) {
 func (h *Hub) handleJoin(ev joinEvent) bool {
 	if h.dead {
 		ev.reply <- ErrStopped
+		return false
+	}
+	if err := h.admit(ev.peer); err != nil {
+		code := collabv1.ErrorMessage_CODE_REVOKED
+		if errors.Is(err, errPolicyDown) {
+			code = collabv1.ErrorMessage_CODE_UNAVAILABLE
+		}
+		ev.peer.TrySend(EncodeError(code, err.Error()))
+		ev.reply <- err
 		return false
 	}
 	if h.loadErr != nil {
@@ -596,6 +635,9 @@ func (h *Hub) applyOps(ev opsEvent) []crdt.Op {
 	if !ok {
 		return nil
 	}
+	if !h.gateWrite(p) {
+		return nil
+	}
 	accepted := make([]crdt.Op, 0, len(ev.ops))
 	for _, op := range ev.ops {
 		if msg := cipherProblem(h.doc.Mode(), op); msg != "" {
@@ -848,7 +890,7 @@ func (h *Hub) caughtUp(target uint64) bool {
 // handleCursor drops a cursor whose anchor or head the hub does not hold
 // yet: it races the sender's in-flight ops and the next move replaces it.
 func (h *Hub) handleCursor(ev cursorEvent) {
-	if h.dead || h.peers[ev.peer.id] != ev.peer {
+	if h.dead || h.peers[ev.peer.id] != ev.peer || !h.gatePresence(ev.peer) {
 		return
 	}
 	if !h.doc.Has(ev.anchor) || !h.doc.Has(ev.head) {
@@ -858,7 +900,7 @@ func (h *Hub) handleCursor(ev cursorEvent) {
 }
 
 func (h *Hub) handleRename(ev renameEvent) {
-	if h.dead || h.peers[ev.peer.id] != ev.peer {
+	if h.dead || h.peers[ev.peer.id] != ev.peer || !h.gatePresence(ev.peer) {
 		return
 	}
 	ev.peer.name = ev.name

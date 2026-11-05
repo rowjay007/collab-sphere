@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"maps"
 	"math/rand/v2"
+	"net/http"
 	"net/url"
 	"slices"
 	"strconv"
@@ -66,6 +67,8 @@ type Options struct {
 	AutoReconnect bool
 	// Client is an existing replica ID. Zero asks the hub to allocate one.
 	Client crdt.ClientID
+	// Token is sent as Authorization: Bearer on every dial when set.
+	Token string
 }
 
 type state int
@@ -640,7 +643,11 @@ func (c *Client) handshake(ctx context.Context, urlIdx int, hubURL string, gen u
 	}
 	ctx, cancel := context.WithTimeout(ctx, handshakeTimeout)
 	defer cancel()
-	conn, _, err := websocket.Dial(ctx, target, nil)
+	var dialOpts *websocket.DialOptions
+	if c.opts.Token != "" {
+		dialOpts = &websocket.DialOptions{HTTPHeader: http.Header{"Authorization": {"Bearer " + c.opts.Token}}}
+	}
+	conn, _, err := websocket.Dial(ctx, target, dialOpts)
 	if err != nil {
 		return err
 	}
@@ -856,6 +863,9 @@ func (c *Client) handle(msg *collabv1.ServerMessage) error {
 		c.applyAwareness(p.AwarenessSync)
 	case *collabv1.ServerMessage_Error:
 		c.errs = append(c.errs, p.Error)
+		if keepReading(p.Error.GetCode()) {
+			return nil
+		}
 		return errorFrame(p.Error)
 	}
 	return nil
@@ -962,8 +972,34 @@ func terminal(err error) bool {
 	if errors.Is(err, errBrokenStream) {
 		return true
 	}
+	code, ok := ErrorCode(err)
+	return ok && !nonTerminal(code)
+}
+
+func nonTerminal(code collabv1.ErrorMessage_Code) bool {
+	switch code {
+	case collabv1.ErrorMessage_CODE_UNAVAILABLE, collabv1.ErrorMessage_CODE_FORBIDDEN, collabv1.ErrorMessage_CODE_KEY_ROTATION:
+		return true
+	default:
+		return false
+	}
+}
+
+func keepReading(code collabv1.ErrorMessage_Code) bool {
+	switch code {
+	case collabv1.ErrorMessage_CODE_FORBIDDEN, collabv1.ErrorMessage_CODE_KEY_ROTATION:
+		return true
+	default:
+		return false
+	}
+}
+
+func ErrorCode(err error) (collabv1.ErrorMessage_Code, bool) {
 	var e *hubError
-	return errors.As(err, &e) && e.code != collabv1.ErrorMessage_CODE_UNAVAILABLE
+	if !errors.As(err, &e) {
+		return 0, false
+	}
+	return e.code, true
 }
 
 func errorFrame(e *collabv1.ErrorMessage) error {

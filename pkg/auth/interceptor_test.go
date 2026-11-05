@@ -32,28 +32,31 @@ func TestUnaryInterceptorTable(t *testing.T) {
 	internalTok := auth.FormatInternal(secret)
 
 	type tc struct {
-		method string
-		token  string
-		want   codes.Code
-		sub    string
+		method   string
+		token    string
+		want     codes.Code
+		sub      string
+		internal bool
 	}
 	cases := []tc{
-		{userMethod, userTok, codes.OK, "grace"},
-		{userMethod, internalTok, codes.Unauthenticated, ""},
-		{userMethod, "", codes.Unauthenticated, ""},
-		{internalMethod, internalTok, codes.OK, ""},
-		{internalMethod, userTok, codes.Unauthenticated, ""},
-		{eitherMethod, userTok, codes.OK, "grace"},
-		{eitherMethod, internalTok, codes.OK, ""},
-		{unknownMethod, userTok, codes.Unauthenticated, ""},
-		{unknownMethod, internalTok, codes.Unauthenticated, ""},
-		{userMethod, "s1." + strings.TrimPrefix(userTok, "v1."), codes.Unauthenticated, ""},
+		{userMethod, userTok, codes.OK, "grace", false},
+		{userMethod, internalTok, codes.Unauthenticated, "", false},
+		{userMethod, "", codes.Unauthenticated, "", false},
+		{internalMethod, internalTok, codes.OK, "", true},
+		{internalMethod, userTok, codes.Unauthenticated, "", false},
+		{eitherMethod, userTok, codes.OK, "grace", false},
+		{eitherMethod, internalTok, codes.OK, "", true},
+		{unknownMethod, userTok, codes.Unauthenticated, "", false},
+		{unknownMethod, internalTok, codes.Unauthenticated, "", false},
+		{userMethod, "s1." + strings.TrimPrefix(userTok, "v1."), codes.Unauthenticated, "", false},
 	}
 	for _, c := range cases {
 		ctx := bearerCtx(c.token)
 		var gotSub string
+		var gotInternal bool
 		_, err := unary(ctx, nil, &grpc.UnaryServerInfo{FullMethod: c.method}, func(ctx context.Context, _ any) (any, error) {
 			gotSub = auth.Subject(ctx)
+			gotInternal = auth.IsInternal(ctx)
 			return "ok", nil
 		})
 		if status.Code(err) != c.want {
@@ -61,6 +64,9 @@ func TestUnaryInterceptorTable(t *testing.T) {
 		}
 		if err == nil && gotSub != c.sub {
 			t.Fatalf("%s subject %q want %q", c.method, gotSub, c.sub)
+		}
+		if err == nil && gotInternal != c.internal {
+			t.Fatalf("%s internal=%v want %v", c.method, gotInternal, c.internal)
 		}
 	}
 
@@ -81,6 +87,24 @@ func TestUnaryInterceptorTable(t *testing.T) {
 		t.Fatalf("stream internal on user: %v", err)
 	}
 	_ = pub
+}
+
+func TestWithInternal(t *testing.T) {
+	ctx := context.Background()
+	if auth.IsInternal(ctx) || auth.Subject(ctx) != "" {
+		t.Fatal("bare context")
+	}
+	ctx = auth.WithInternal(ctx)
+	if !auth.IsInternal(ctx) {
+		t.Fatal("WithInternal")
+	}
+	if auth.Subject(ctx) != "" {
+		t.Fatalf("subject %q", auth.Subject(ctx))
+	}
+	ctx = auth.WithSubject(ctx, "ada")
+	if !auth.IsInternal(ctx) || auth.Subject(ctx) != "ada" {
+		t.Fatal("keys should be independent")
+	}
 }
 
 func interceptors(t *testing.T) (ed25519.PublicKey, ed25519.PrivateKey, string, grpc.UnaryServerInterceptor, grpc.StreamServerInterceptor) {

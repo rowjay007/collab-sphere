@@ -22,6 +22,7 @@ const (
 	VersionService_ListVersions_FullMethodName = "/version.v1.VersionService/ListVersions"
 	VersionService_GetVersion_FullMethodName   = "/version.v1.VersionService/GetVersion"
 	VersionService_GetBlob_FullMethodName      = "/version.v1.VersionService/GetBlob"
+	VersionService_Head_FullMethodName         = "/version.v1.VersionService/Head"
 	VersionService_Checkpoint_FullMethodName   = "/version.v1.VersionService/Checkpoint"
 	VersionService_Branch_FullMethodName       = "/version.v1.VersionService/Branch"
 	VersionService_Diff_FullMethodName         = "/version.v1.VersionService/Diff"
@@ -39,6 +40,8 @@ type VersionServiceClient interface {
 	ListVersions(ctx context.Context, in *ListVersionsRequest, opts ...grpc.CallOption) (*ListVersionsResponse, error)
 	GetVersion(ctx context.Context, in *GetVersionRequest, opts ...grpc.CallOption) (*Version, error)
 	GetBlob(ctx context.Context, in *GetBlobRequest, opts ...grpc.CallOption) (*GetBlobResponse, error)
+	// Head materializes to op_seq and returns the tip version.
+	Head(ctx context.Context, in *HeadRequest, opts ...grpc.CallOption) (*Version, error)
 	// Checkpoint names the node at the document's current op_seq. The name is an
 	// immutable ref: the same name on the same node is a no-op, on another node
 	// AlreadyExists.
@@ -89,6 +92,16 @@ func (c *versionServiceClient) GetBlob(ctx context.Context, in *GetBlobRequest, 
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
 	out := new(GetBlobResponse)
 	err := c.cc.Invoke(ctx, VersionService_GetBlob_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *versionServiceClient) Head(ctx context.Context, in *HeadRequest, opts ...grpc.CallOption) (*Version, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(Version)
+	err := c.cc.Invoke(ctx, VersionService_Head_FullMethodName, in, out, cOpts...)
 	if err != nil {
 		return nil, err
 	}
@@ -164,6 +177,8 @@ type VersionServiceServer interface {
 	ListVersions(context.Context, *ListVersionsRequest) (*ListVersionsResponse, error)
 	GetVersion(context.Context, *GetVersionRequest) (*Version, error)
 	GetBlob(context.Context, *GetBlobRequest) (*GetBlobResponse, error)
+	// Head materializes to op_seq and returns the tip version.
+	Head(context.Context, *HeadRequest) (*Version, error)
 	// Checkpoint names the node at the document's current op_seq. The name is an
 	// immutable ref: the same name on the same node is a no-op, on another node
 	// AlreadyExists.
@@ -198,6 +213,9 @@ func (UnimplementedVersionServiceServer) GetVersion(context.Context, *GetVersion
 }
 func (UnimplementedVersionServiceServer) GetBlob(context.Context, *GetBlobRequest) (*GetBlobResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method GetBlob not implemented")
+}
+func (UnimplementedVersionServiceServer) Head(context.Context, *HeadRequest) (*Version, error) {
+	return nil, status.Error(codes.Unimplemented, "method Head not implemented")
 }
 func (UnimplementedVersionServiceServer) Checkpoint(context.Context, *CheckpointRequest) (*Version, error) {
 	return nil, status.Error(codes.Unimplemented, "method Checkpoint not implemented")
@@ -288,6 +306,24 @@ func _VersionService_GetBlob_Handler(srv interface{}, ctx context.Context, dec f
 	}
 	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
 		return srv.(VersionServiceServer).GetBlob(ctx, req.(*GetBlobRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _VersionService_Head_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(HeadRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(VersionServiceServer).Head(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: VersionService_Head_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(VersionServiceServer).Head(ctx, req.(*HeadRequest))
 	}
 	return interceptor(ctx, in, info, handler)
 }
@@ -418,6 +454,10 @@ var VersionService_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "GetBlob",
 			Handler:    _VersionService_GetBlob_Handler,
+		},
+		{
+			MethodName: "Head",
+			Handler:    _VersionService_Head_Handler,
 		},
 		{
 			MethodName: "Checkpoint",

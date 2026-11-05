@@ -3,6 +3,7 @@ package stack
 import (
 	"bytes"
 	"context"
+	"crypto/ed25519"
 	"fmt"
 	"math/rand/v2"
 	"net"
@@ -22,10 +23,13 @@ import (
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/credentials/insecure"
+	"google.golang.org/grpc/metadata"
 	"google.golang.org/grpc/status"
 
 	documentv1 "github.com/rowjay007/collab-sphere/gen/document/v1"
+	permissionv1 "github.com/rowjay007/collab-sphere/gen/permission/v1"
 	presencev1 "github.com/rowjay007/collab-sphere/gen/presence/v1"
+	"github.com/rowjay007/collab-sphere/pkg/auth"
 	"github.com/rowjay007/collab-sphere/pkg/collabclient"
 	"github.com/rowjay007/collab-sphere/pkg/crdt"
 )
@@ -197,6 +201,12 @@ type Stack struct {
 	docsvc      *process
 	hubs        []*hubInstance
 	Docs        documentv1.DocumentServiceClient
+	Perm        *PermissionService
+	pub         ed25519.PublicKey
+	priv        ed25519.PrivateKey
+	pubB64      string
+	internal    string
+	sharePriv   string
 }
 
 type Option func(*config)
@@ -241,6 +251,8 @@ func New(t *testing.T, opts ...Option) *Stack {
 		}
 	}
 	s := &Stack{t: t, dbURL: freshDatabase(t), redisURL: redisURL, hubRedisURL: redisURL, grpc: freeAddr(t), presenceTTL: cfg.presenceTTL}
+	s.ensureAuth()
+	s.Perm = StartPermissionService(s)
 	if cfg.redisProxy && redisURL != "" {
 		u, err := url.Parse(redisURL)
 		if err != nil {
@@ -253,7 +265,10 @@ func New(t *testing.T, opts ...Option) *Stack {
 	for i := range cfg.hubs {
 		s.hubs = append(s.hubs, &hubInstance{id: fmt.Sprintf("hub-%d", i), http: freeAddr(t)})
 	}
-	conn, err := grpc.NewClient(s.grpc, grpc.WithTransportCredentials(insecure.NewCredentials()))
+	conn, err := grpc.NewClient(s.grpc,
+		grpc.WithTransportCredentials(insecure.NewCredentials()),
+		grpc.WithUnaryInterceptor(s.fillInternal()),
+	)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -271,12 +286,15 @@ func New(t *testing.T, opts ...Option) *Stack {
 
 func (s *Stack) startPresenceService() {
 	s.presence = freeAddr(s.t)
-	env := []string{"REDIS_URL=" + s.redisURL, "GRPC_ADDR=" + s.presence}
+	env := []string{"REDIS_URL=" + s.redisURL, "GRPC_ADDR=" + s.presence, "INTERNAL_TOKEN=" + s.internal}
 	if s.presenceTTL > 0 {
 		env = append(env, "PRESENCE_TTL="+s.presenceTTL.String(), "PRESENCE_SWEEP="+(s.presenceTTL/10).String())
 	}
 	start(s.t, "presence-service", binary(s.t, "presence-service"), env...)
-	conn, err := grpc.NewClient(s.presence, grpc.WithTransportCredentials(insecure.NewCredentials()))
+	conn, err := grpc.NewClient(s.presence,
+		grpc.WithTransportCredentials(insecure.NewCredentials()),
+		grpc.WithUnaryInterceptor(auth.InternalUnary(s.internal)),
+	)
 	if err != nil {
 		s.t.Fatal(err)
 	}
@@ -289,7 +307,7 @@ func (s *Stack) startPresenceService() {
 }
 
 func (s *Stack) StartDocumentService() {
-	s.docsvc = start(s.t, "document-service", binary(s.t, "document-service"), "DATABASE_URL="+s.dbURL, "GRPC_ADDR="+s.grpc)
+	s.docsvc = start(s.t, "document-service", binary(s.t, "document-service"), append([]string{"DATABASE_URL=" + s.dbURL, "GRPC_ADDR=" + s.grpc}, s.authEnv()...)...)
 	waitFor(s.t, "document-service", func(ctx context.Context) error {
 		_, err := s.Docs.GetDocument(ctx, &documentv1.GetDocumentRequest{Id: uuid.NewString()})
 		if status.Code(err) == codes.NotFound {
@@ -303,7 +321,7 @@ func (s *Stack) StartDocumentService() {
 // across restarts.
 func (s *Stack) StartHub(i int) {
 	h := s.hubs[i]
-	env := []string{"HTTP_ADDR=" + h.http, "DOCUMENT_SERVICE_ADDR=" + s.grpc, "HUB_ID=" + h.id}
+	env := append([]string{"HTTP_ADDR=" + h.http, "DOCUMENT_SERVICE_ADDR=" + s.grpc, "HUB_ID=" + h.id}, s.authEnv()...)
 	if s.hubRedisURL != "" {
 		env = append(env, "REDIS_URL="+s.hubRedisURL)
 	}
@@ -352,7 +370,7 @@ func (s *Stack) Hubs() int { return len(s.hubs) }
 
 func (s *Stack) CreateDocument(ctx context.Context) string {
 	s.t.Helper()
-	doc, err := s.Docs.CreateDocument(ctx, &documentv1.CreateDocumentRequest{Title: s.t.Name(), OwnerId: "e2e"})
+	doc, err := s.Docs.CreateDocument(s.AuthCtx(ctx, s.Owner()), &documentv1.CreateDocumentRequest{Title: s.t.Name(), OwnerId: s.Owner()})
 	if err != nil {
 		s.t.Fatal(err)
 	}
@@ -401,12 +419,106 @@ func (s *Stack) DialAllocated(ctx context.Context, docID string, i int) *collabc
 
 func (s *Stack) dial(ctx context.Context, docID string, opts collabclient.Options) *collabclient.Client {
 	s.t.Helper()
+	if opts.Token == "" {
+		opts.Token = s.Token(s.Owner())
+	}
 	c, err := collabclient.DialWith(ctx, docID, opts)
 	if err != nil {
 		s.t.Fatal(err)
 	}
 	s.t.Cleanup(func() { c.Close() })
 	return c
+}
+
+func (s *Stack) ensureAuth() {
+	s.t.Helper()
+	if s.internal != "" {
+		return
+	}
+	pub, priv, err := auth.GenerateKeypair()
+	if err != nil {
+		s.t.Fatal(err)
+	}
+	_, share, err := auth.GenerateKeypair()
+	if err != nil {
+		s.t.Fatal(err)
+	}
+	s.pub = pub
+	s.priv = priv
+	s.pubB64 = auth.EncodeKey(pub)
+	s.internal = randomInternal(s.t)
+	s.sharePriv = auth.EncodeKey(share.Seed())
+}
+
+func (s *Stack) authEnv() []string {
+	return []string{
+		"AUTH_PUBLIC_KEY=" + s.pubB64,
+		"INTERNAL_TOKEN=" + s.internal,
+		"PERMISSION_ADDR=" + s.Perm.addr,
+	}
+}
+
+func (s *Stack) Owner() string { return "e2e" }
+
+func (s *Stack) GRPCAddr() string { return s.grpc }
+
+func (s *Stack) Mint(subject string, issued, expiry time.Time) string {
+	s.t.Helper()
+	tok, err := auth.Mint(s.priv, subject, issued, expiry)
+	if err != nil {
+		s.t.Fatal(err)
+	}
+	return tok
+}
+
+func (s *Stack) Token(subject string) string {
+	s.t.Helper()
+	tok, err := auth.Mint(s.priv, subject, time.Now(), time.Now().Add(time.Hour))
+	if err != nil {
+		s.t.Fatal(err)
+	}
+	return tok
+}
+
+func (s *Stack) AuthCtx(ctx context.Context, subject string) context.Context {
+	md, _ := metadata.FromOutgoingContext(ctx)
+	md = md.Copy()
+	if md == nil {
+		md = metadata.MD{}
+	}
+	md.Set("authorization", "Bearer "+s.Token(subject))
+	return metadata.NewOutgoingContext(ctx, md)
+}
+
+func (s *Stack) InternalCtx(ctx context.Context) context.Context {
+	md, _ := metadata.FromOutgoingContext(ctx)
+	md = md.Copy()
+	if md == nil {
+		md = metadata.MD{}
+	}
+	md.Set("authorization", "Bearer "+auth.FormatInternal(s.internal))
+	return metadata.NewOutgoingContext(ctx, md)
+}
+
+func (s *Stack) Grant(ctx context.Context, docID, user string, role permissionv1.Role) {
+	s.t.Helper()
+	_, err := s.Perm.Client.Grant(s.AuthCtx(ctx, s.Owner()), &permissionv1.GrantRequest{
+		DocId:  docID,
+		UserId: user,
+		Role:   role,
+	})
+	if err != nil {
+		s.t.Fatal(err)
+	}
+}
+
+func (s *Stack) fillInternal() grpc.UnaryClientInterceptor {
+	return func(ctx context.Context, method string, req, reply any, cc *grpc.ClientConn, invoker grpc.UnaryInvoker, opts ...grpc.CallOption) error {
+		if md, _ := metadata.FromOutgoingContext(ctx); len(md.Get("authorization")) == 0 {
+			ctx = s.InternalCtx(ctx)
+		}
+		return invoker(ctx, method, req, reply, cc, opts...)
+	}
 }
 
 func waitFor(t *testing.T, what string, ready func(ctx context.Context) error) {

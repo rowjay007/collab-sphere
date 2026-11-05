@@ -152,6 +152,13 @@ func (s *Store) Create(ctx context.Context, title, ownerID string) (domain.Docum
 	return scanDocument(row)
 }
 
+func (s *Store) Delete(ctx context.Context, id uuid.UUID) error {
+	if _, err := s.pool.Exec(ctx, `DELETE FROM documents WHERE id = $1`, id); err != nil {
+		return fmt.Errorf("delete document: %w", err)
+	}
+	return nil
+}
+
 func (s *Store) Get(ctx context.Context, id uuid.UUID) (domain.Document, error) {
 	row := s.pool.QueryRow(ctx, `SELECT `+documentColumns+` FROM documents WHERE id = $1`, id)
 	doc, err := scanDocument(row)

@@ -16,6 +16,8 @@ import (
 	commentv1 "github.com/rowjay007/collab-sphere/gen/comment/v1"
 	documentv1 "github.com/rowjay007/collab-sphere/gen/document/v1"
 	versionv1 "github.com/rowjay007/collab-sphere/gen/version/v1"
+	"github.com/rowjay007/collab-sphere/pkg/access"
+	"github.com/rowjay007/collab-sphere/pkg/auth"
 	"github.com/rowjay007/collab-sphere/services/comment-service/internal/comments"
 	"github.com/rowjay007/collab-sphere/services/comment-service/internal/docs"
 	commentgrpc "github.com/rowjay007/collab-sphere/services/comment-service/internal/grpc"
@@ -27,6 +29,9 @@ type config struct {
 	grpcAddr     string
 	documentAddr string
 	versionAddr  string
+	authPub      string
+	internal     string
+	permAddr     string
 }
 
 func loadConfig() (config, error) {
@@ -35,6 +40,9 @@ func loadConfig() (config, error) {
 		grpcAddr:     os.Getenv("GRPC_ADDR"),
 		documentAddr: os.Getenv("DOCUMENT_ADDR"),
 		versionAddr:  os.Getenv("VERSION_ADDR"),
+		authPub:      os.Getenv("AUTH_PUBLIC_KEY"),
+		internal:     os.Getenv("INTERNAL_TOKEN"),
+		permAddr:     os.Getenv("PERMISSION_ADDR"),
 	}
 	if cfg.dbURL == "" {
 		return config{}, errors.New("DATABASE_URL is required")
@@ -44,6 +52,15 @@ func loadConfig() (config, error) {
 	}
 	if cfg.versionAddr == "" {
 		return config{}, errors.New("VERSION_ADDR is required")
+	}
+	if cfg.authPub == "" {
+		return config{}, errors.New("AUTH_PUBLIC_KEY is required")
+	}
+	if cfg.internal == "" {
+		return config{}, errors.New("INTERNAL_TOKEN is required")
+	}
+	if cfg.permAddr == "" {
+		return config{}, errors.New("PERMISSION_ADDR is required")
 	}
 	if cfg.grpcAddr == "" {
 		cfg.grpcAddr = ":9092"
@@ -73,14 +90,36 @@ func main() {
 		os.Exit(1)
 	}
 
-	docConn, err := grpc.NewClient(cfg.documentAddr, grpc.WithTransportCredentials(insecure.NewCredentials()))
+	pub, err := auth.ParsePublicKey(cfg.authPub)
+	if err != nil {
+		slog.Error("AUTH_PUBLIC_KEY", "err", err)
+		os.Exit(1)
+	}
+	if _, err := auth.ParseInternal(cfg.internal); err != nil {
+		slog.Error("INTERNAL_TOKEN", "err", err)
+		os.Exit(1)
+	}
+	perms, err := access.Dial(cfg.permAddr, cfg.internal)
+	if err != nil {
+		slog.Error("dial permission-service", "err", err)
+		os.Exit(1)
+	}
+	defer perms.Close()
+
+	docConn, err := grpc.NewClient(cfg.documentAddr,
+		grpc.WithTransportCredentials(insecure.NewCredentials()),
+		grpc.WithUnaryInterceptor(auth.InternalUnary(cfg.internal)),
+	)
 	if err != nil {
 		slog.Error("dial document-service", "err", err)
 		os.Exit(1)
 	}
 	defer docConn.Close()
 
-	verConn, err := grpc.NewClient(cfg.versionAddr, grpc.WithTransportCredentials(insecure.NewCredentials()))
+	verConn, err := grpc.NewClient(cfg.versionAddr,
+		grpc.WithTransportCredentials(insecure.NewCredentials()),
+		grpc.WithUnaryInterceptor(auth.InternalUnary(cfg.internal)),
+	)
 	if err != nil {
 		slog.Error("dial version-service", "err", err)
 		os.Exit(1)
@@ -94,8 +133,13 @@ func main() {
 	}
 
 	svc := comments.New(pool, docs.New(documentv1.NewDocumentServiceClient(docConn)), versions.NewFrontierClient(versionv1.NewVersionServiceClient(verConn)))
-	server := grpc.NewServer()
-	commentv1.RegisterCommentServiceServer(server, commentgrpc.New(svc))
+	api := commentgrpc.New(svc)
+	api.UsePermissions(perms)
+	server := grpc.NewServer(
+		grpc.UnaryInterceptor(auth.UnaryInterceptor(pub, cfg.internal, commentgrpc.Methods())),
+		grpc.StreamInterceptor(auth.StreamInterceptor(pub, cfg.internal, commentgrpc.Methods())),
+	)
+	commentv1.RegisterCommentServiceServer(server, api)
 
 	errCh := make(chan error, 1)
 	go func() {

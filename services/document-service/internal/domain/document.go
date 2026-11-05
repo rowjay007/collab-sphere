@@ -37,6 +37,7 @@ var (
 	ErrInvalidArgument       = errors.New("document: invalid argument")
 	ErrConflict              = errors.New("document: conflict")
 	ErrReplicaHomedElsewhere = errors.New("document: replica homed elsewhere")
+	ErrReplicaOwned          = errors.New("document: replica owned")
 	ErrOutOfRange            = errors.New("document: out of range")
 	ErrAlreadyExists         = errors.New("document: already exists")
 )

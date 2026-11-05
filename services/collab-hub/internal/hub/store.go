@@ -13,6 +13,18 @@ import (
 
 var ErrArchived = errors.New("document archived")
 var ErrUnknownReplica = errors.New("unknown replica")
+var ErrReplicaForbidden = errors.New("replica owned by another user")
+
+type replicaUserKey struct{}
+
+func WithReplicaUser(ctx context.Context, user string) context.Context {
+	return context.WithValue(ctx, replicaUserKey{}, user)
+}
+
+func ReplicaUser(ctx context.Context) string {
+	s, _ := ctx.Value(replicaUserKey{}).(string)
+	return s
+}
 
 // ConflictError is an Append refused because the log holds one of Client's
 // op IDs with different content.

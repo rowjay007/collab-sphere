@@ -8,6 +8,7 @@ import (
 	"google.golang.org/grpc/status"
 
 	presencev1 "github.com/rowjay007/collab-sphere/gen/presence/v1"
+	"github.com/rowjay007/collab-sphere/pkg/auth"
 	"github.com/rowjay007/collab-sphere/services/presence-service/internal/store"
 )
 
@@ -18,6 +19,14 @@ type Server struct {
 
 func New(s *store.Store) *Server {
 	return &Server{store: s}
+}
+
+func Methods() map[string]auth.Class {
+	return map[string]auth.Class{
+		presencev1.PresenceService_Join_FullMethodName:  auth.Internal,
+		presencev1.PresenceService_Apply_FullMethodName: auth.Internal,
+		presencev1.PresenceService_List_FullMethodName:  auth.Internal,
+	}
 }
 
 func (s *Server) Join(ctx context.Context, req *presencev1.JoinRequest) (*presencev1.ListResponse, error) {

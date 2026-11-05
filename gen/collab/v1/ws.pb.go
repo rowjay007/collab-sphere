@@ -87,21 +87,33 @@ const (
 	ErrorMessage_CODE_SUPERSEDED ErrorMessage_Code = 8
 	// The requested replica is homed in another document in this fork tree.
 	ErrorMessage_CODE_UNKNOWN_REPLICA ErrorMessage_Code = 9
+	// The sender's role cannot apply the batch. The socket stays open.
+	ErrorMessage_CODE_FORBIDDEN ErrorMessage_Code = 10
+	// The replica id is bound to another user.
+	ErrorMessage_CODE_REPLICA_FORBIDDEN ErrorMessage_Code = 11
+	// The member was removed. The socket closes.
+	ErrorMessage_CODE_REVOKED ErrorMessage_Code = 12
+	// Editors stay connected while a new epoch is pending.
+	ErrorMessage_CODE_KEY_ROTATION ErrorMessage_Code = 13
 )
 
 // Enum value maps for ErrorMessage_Code.
 var (
 	ErrorMessage_Code_name = map[int32]string{
-		0: "CODE_UNSPECIFIED",
-		1: "CODE_MALFORMED_MESSAGE",
-		2: "CODE_INVALID_OPERATION",
-		3: "CODE_CLIENT_MISMATCH",
-		4: "CODE_MISSING_DEPENDENCY",
-		5: "CODE_INTERNAL",
-		6: "CODE_INVALID_RESUME",
-		7: "CODE_UNAVAILABLE",
-		8: "CODE_SUPERSEDED",
-		9: "CODE_UNKNOWN_REPLICA",
+		0:  "CODE_UNSPECIFIED",
+		1:  "CODE_MALFORMED_MESSAGE",
+		2:  "CODE_INVALID_OPERATION",
+		3:  "CODE_CLIENT_MISMATCH",
+		4:  "CODE_MISSING_DEPENDENCY",
+		5:  "CODE_INTERNAL",
+		6:  "CODE_INVALID_RESUME",
+		7:  "CODE_UNAVAILABLE",
+		8:  "CODE_SUPERSEDED",
+		9:  "CODE_UNKNOWN_REPLICA",
+		10: "CODE_FORBIDDEN",
+		11: "CODE_REPLICA_FORBIDDEN",
+		12: "CODE_REVOKED",
+		13: "CODE_KEY_ROTATION",
 	}
 	ErrorMessage_Code_value = map[string]int32{
 		"CODE_UNSPECIFIED":        0,
@@ -114,6 +126,10 @@ var (
 		"CODE_UNAVAILABLE":        7,
 		"CODE_SUPERSEDED":         8,
 		"CODE_UNKNOWN_REPLICA":    9,
+		"CODE_FORBIDDEN":          10,
+		"CODE_REPLICA_FORBIDDEN":  11,
+		"CODE_REVOKED":            12,
+		"CODE_KEY_ROTATION":       13,
 	}
 )
 
@@ -1250,10 +1266,10 @@ const file_collab_v1_ws_proto_rawDesc = "" +
 	"\n" +
 	"operations\x18\x03 \x03(\v2\x12.crdt.v1.OperationR\n" +
 	"operations\x12\x10\n" +
-	"\x03seq\x18\x04 \x01(\x04R\x03seq\"\xd9\x02\n" +
+	"\x03seq\x18\x04 \x01(\x04R\x03seq\"\xb2\x03\n" +
 	"\fErrorMessage\x120\n" +
 	"\x04code\x18\x01 \x01(\x0e2\x1c.collab.v1.ErrorMessage.CodeR\x04code\x12\x18\n" +
-	"\amessage\x18\x02 \x01(\tR\amessage\"\xfc\x01\n" +
+	"\amessage\x18\x02 \x01(\tR\amessage\"\xd5\x02\n" +
 	"\x04Code\x12\x14\n" +
 	"\x10CODE_UNSPECIFIED\x10\x00\x12\x1a\n" +
 	"\x16CODE_MALFORMED_MESSAGE\x10\x01\x12\x1a\n" +
@@ -1264,7 +1280,12 @@ const file_collab_v1_ws_proto_rawDesc = "" +
 	"\x13CODE_INVALID_RESUME\x10\x06\x12\x14\n" +
 	"\x10CODE_UNAVAILABLE\x10\a\x12\x13\n" +
 	"\x0fCODE_SUPERSEDED\x10\b\x12\x18\n" +
-	"\x14CODE_UNKNOWN_REPLICA\x10\tB;Z9github.com/rowjay007/collab-sphere/gen/collab/v1;collabv1b\x06proto3"
+	"\x14CODE_UNKNOWN_REPLICA\x10\t\x12\x12\n" +
+	"\x0eCODE_FORBIDDEN\x10\n" +
+	"\x12\x1a\n" +
+	"\x16CODE_REPLICA_FORBIDDEN\x10\v\x12\x10\n" +
+	"\fCODE_REVOKED\x10\f\x12\x15\n" +
+	"\x11CODE_KEY_ROTATION\x10\rB;Z9github.com/rowjay007/collab-sphere/gen/collab/v1;collabv1b\x06proto3"
 
 var (
 	file_collab_v1_ws_proto_rawDescOnce sync.Once

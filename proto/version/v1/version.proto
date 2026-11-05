@@ -12,6 +12,8 @@ service VersionService {
   rpc ListVersions(ListVersionsRequest) returns (ListVersionsResponse);
   rpc GetVersion(GetVersionRequest) returns (Version);
   rpc GetBlob(GetBlobRequest) returns (GetBlobResponse);
+  // Head materializes to op_seq and returns the tip version.
+  rpc Head(HeadRequest) returns (Version);
   // Checkpoint names the node at the document's current op_seq. The name is an
   // immutable ref: the same name on the same node is a no-op, on another node
   // AlreadyExists.
@@ -65,6 +67,10 @@ message GetBlobRequest {
 message GetBlobResponse {
   // The canonical snapshot bytes of ADR 0010; their SHA-256 is the hash.
   bytes bytes = 1;
+}
+
+message HeadRequest {
+  string doc_id = 1;
 }
 
 message CheckpointRequest {

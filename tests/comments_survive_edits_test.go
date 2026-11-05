@@ -10,6 +10,7 @@ import (
 
 	commentv1 "github.com/rowjay007/collab-sphere/gen/comment/v1"
 	crdtv1 "github.com/rowjay007/collab-sphere/gen/crdt/v1"
+	permissionv1 "github.com/rowjay007/collab-sphere/gen/permission/v1"
 	versionv1 "github.com/rowjay007/collab-sphere/gen/version/v1"
 	"github.com/rowjay007/collab-sphere/pkg/collabclient"
 	"github.com/rowjay007/collab-sphere/pkg/crdt"
@@ -24,6 +25,7 @@ func TestCommentsSurviveEdits(t *testing.T) {
 	vs := stack.StartVersionService(s, 0)
 	cs := stack.StartCommentService(s, vs)
 	docID := s.CreateDocument(ctx)
+	grantEditors(s, ctx, docID)
 	home := uuid.MustParse(docID)
 
 	ann := s.Dial(ctx, docID, 1001)
@@ -51,7 +53,7 @@ func TestCommentsSurviveEdits(t *testing.T) {
 		}
 	})
 
-	created, err := cs.CreateThread(ctx, &commentv1.CreateThreadRequest{
+	created, err := cs.CreateThread(s.AuthCtx(ctx, "ann"), &commentv1.CreateThreadRequest{
 		DocumentId: docID,
 		Anchor:     &commentv1.Anchor{Start: opID(start), End: opID(end)},
 		Author:     "ann",
@@ -117,7 +119,7 @@ func TestCommentsSurviveEdits(t *testing.T) {
 	}
 	assertOracle(t, cs, home, clients, start, end, true)
 
-	if _, err := cs.Reply(ctx, &commentv1.ReplyRequest{
+	if _, err := cs.Reply(s.AuthCtx(ctx, "carol"), &commentv1.ReplyRequest{
 		ThreadId:  created.GetId(),
 		Author:    "carol",
 		Body:      "looks good @bob",
@@ -125,7 +127,7 @@ func TestCommentsSurviveEdits(t *testing.T) {
 	}); err != nil {
 		t.Fatal(err)
 	}
-	notes, err := cs.ListNotifications(ctx, &commentv1.ListNotificationsRequest{User: "bob"})
+	notes, err := cs.ListNotifications(s.AuthCtx(ctx, "bob"), &commentv1.ListNotificationsRequest{User: "bob"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -133,7 +135,7 @@ func TestCommentsSurviveEdits(t *testing.T) {
 		t.Fatalf("bob notes %+v", notes)
 	}
 
-	if _, err := cs.SetResolved(ctx, &commentv1.SetResolvedRequest{
+	if _, err := cs.SetResolved(s.AuthCtx(ctx, "bob"), &commentv1.SetResolvedRequest{
 		ThreadId:  created.GetId(),
 		Resolved:  true,
 		Actor:     "bob",
@@ -141,7 +143,7 @@ func TestCommentsSurviveEdits(t *testing.T) {
 	}); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := cs.SetResolved(ctx, &commentv1.SetResolvedRequest{
+	if _, err := cs.SetResolved(s.AuthCtx(ctx, "bob"), &commentv1.SetResolvedRequest{
 		ThreadId:  created.GetId(),
 		Resolved:  false,
 		Actor:     "bob",
@@ -149,7 +151,7 @@ func TestCommentsSurviveEdits(t *testing.T) {
 	}); err != nil {
 		t.Fatal(err)
 	}
-	annNotes, err := cs.ListNotifications(ctx, &commentv1.ListNotificationsRequest{User: "ann"})
+	annNotes, err := cs.ListNotifications(s.AuthCtx(ctx, "ann"), &commentv1.ListNotificationsRequest{User: "ann"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -206,6 +208,7 @@ func TestCommentsCrossBranch(t *testing.T) {
 	cs := stack.StartCommentService(s, vs)
 
 	d := s.CreateDocument(ctx)
+	grantEditors(s, ctx, d)
 	ann := s.DialAllocated(ctx, d, 0)
 	for _, ch := range "abcdef" {
 		if err := ann.InsertAt(len([]rune(ann.Text())), ch); err != nil {
@@ -214,7 +217,7 @@ func TestCommentsCrossBranch(t *testing.T) {
 	}
 	stack.Settle(t, ctx, s.Docs, d, []*collabclient.Client{ann})
 	dStart, dEnd := idRange(t, ann, 0, 2)
-	before := createThread(t, ctx, cs, d, dStart, dEnd, "ann", "on D before branch", "cb-d-before")
+	before := createThread(t, s, ctx, cs, d, dStart, dEnd, "ann", "on D before branch", "cb-d-before")
 
 	v := checkpoint(t, ctx, vs.Client, d, "v")
 	br, err := vs.Client.Branch(ctx, &versionv1.BranchRequest{VersionId: v.GetId(), Title: "alt", RequestId: t.Name() + "-branch"})
@@ -233,14 +236,14 @@ func TestCommentsCrossBranch(t *testing.T) {
 	}
 	stack.Settle(t, ctx, s.Docs, d, []*collabclient.Client{ann})
 	lateStart, lateEnd := idRange(t, ann, len([]rune(ann.Text()))-1, len([]rune(ann.Text()))-1)
-	lateD := createThread(t, ctx, cs, d, lateStart, lateEnd, "ann", "on D after branch", "cb-d-after")
+	lateD := createThread(t, s, ctx, cs, d, lateStart, lateEnd, "ann", "on D after branch", "cb-d-after")
 
 	if err := bob.InsertAt(len([]rune(bob.Text())), 'Y'); err != nil {
 		t.Fatal(err)
 	}
 	stack.Settle(t, ctx, s.Docs, b, []*collabclient.Client{bob})
 	bStart, bEnd := idRange(t, bob, len([]rune(bob.Text()))-1, len([]rune(bob.Text()))-1)
-	onB := createThread(t, ctx, cs, b, bStart, bEnd, "bob", "on B", "cb-b")
+	onB := createThread(t, s, ctx, cs, b, bStart, bEnd, "bob", "on B", "cb-b")
 
 	if hasThread(t, ctx, cs, d, onB.GetId(), true) {
 		t.Fatal("thread on B listed on D before Merge")
@@ -264,7 +267,7 @@ func TestCommentsCrossBranch(t *testing.T) {
 		t.Fatalf("D resolution=%+v oracle=%+v", got, want)
 	}
 
-	if _, err := cs.SetResolved(ctx, &commentv1.SetResolvedRequest{
+	if _, err := cs.SetResolved(s.AuthCtx(ctx, "ann"), &commentv1.SetResolvedRequest{
 		ThreadId:  onB.GetId(),
 		Resolved:  true,
 		Actor:     "ann",
@@ -281,6 +284,7 @@ func TestCommentsCrossBranch(t *testing.T) {
 	}
 
 	restoreDoc := s.CreateDocument(ctx)
+	grantEditors(s, ctx, restoreDoc)
 	carol := s.DialAllocated(ctx, restoreDoc, 0)
 	for _, ch := range "hello" {
 		if err := carol.InsertAt(len([]rune(carol.Text())), ch); err != nil {
@@ -289,7 +293,7 @@ func TestCommentsCrossBranch(t *testing.T) {
 	}
 	stack.Settle(t, ctx, s.Docs, restoreDoc, []*collabclient.Client{carol})
 	rStart, rEnd := idRange(t, carol, 1, 3)
-	restored := createThread(t, ctx, cs, restoreDoc, rStart, rEnd, "carol", "keep me", "cb-restore")
+	restored := createThread(t, s, ctx, cs, restoreDoc, rStart, rEnd, "carol", "keep me", "cb-restore")
 	wantText := "ell"
 	rv := checkpoint(t, ctx, vs.Client, restoreDoc, "keep")
 	for i := 0; i < 3; i++ {
@@ -352,9 +356,15 @@ func checkpoint(t *testing.T, ctx context.Context, vs versionv1.VersionServiceCl
 	return v
 }
 
-func createThread(t *testing.T, ctx context.Context, cs commentv1.CommentServiceClient, docID string, start, end crdt.ID, author, body, req string) *commentv1.Thread {
+func grantEditors(s *stack.Stack, ctx context.Context, docID string) {
+	for _, user := range []string{"ann", "bob", "carol"} {
+		s.Grant(ctx, docID, user, permissionv1.Role_ROLE_EDITOR)
+	}
+}
+
+func createThread(t *testing.T, s *stack.Stack, ctx context.Context, cs commentv1.CommentServiceClient, docID string, start, end crdt.ID, author, body, req string) *commentv1.Thread {
 	t.Helper()
-	th, err := cs.CreateThread(ctx, &commentv1.CreateThreadRequest{
+	th, err := cs.CreateThread(s.AuthCtx(ctx, author), &commentv1.CreateThreadRequest{
 		DocumentId: docID,
 		Anchor:     &commentv1.Anchor{Start: opID(start), End: opID(end)},
 		Author:     author,

@@ -52,7 +52,7 @@ func TestForkCopiesPrefixAndStaysIndependent(t *testing.T) {
 		}
 	}
 
-	if _, err := st.ClaimReplica(ctx, src.ID, 21, false); err != nil {
+	if _, err := st.ClaimReplica(ctx, src.ID, 21, false, ""); err != nil {
 		t.Fatal(err)
 	}
 
@@ -140,7 +140,7 @@ func TestForkCopiesPrefixAndStaysIndependent(t *testing.T) {
 		t.Fatalf("fork moved to %d", forkMeta.OpSeq)
 	}
 
-	if _, err := st.ClaimReplica(ctx, fork.ID, 21, false); !errors.Is(err, domain.ErrReplicaHomedElsewhere) {
+	if _, err := st.ClaimReplica(ctx, fork.ID, 21, false, ""); !errors.Is(err, domain.ErrReplicaHomedElsewhere) {
 		t.Fatalf("source replica on fork: %v", err)
 	}
 	var replicaRows int

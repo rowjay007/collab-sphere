@@ -15,6 +15,7 @@ import (
 
 	crdtv1 "github.com/rowjay007/collab-sphere/gen/crdt/v1"
 	documentv1 "github.com/rowjay007/collab-sphere/gen/document/v1"
+	"github.com/rowjay007/collab-sphere/pkg/auth"
 	"github.com/rowjay007/collab-sphere/pkg/crdt"
 	docgrpc "github.com/rowjay007/collab-sphere/services/document-service/internal/grpc"
 	"github.com/rowjay007/collab-sphere/services/document-service/internal/store"
@@ -435,7 +436,9 @@ func TestGRPCForkAndListChanged(t *testing.T) {
 func startGRPC(t *testing.T, st *store.Store) (documentv1.DocumentServiceClient, func()) {
 	t.Helper()
 	lis := bufconn.Listen(1024 * 1024)
-	server := grpc.NewServer()
+	server := grpc.NewServer(grpc.UnaryInterceptor(func(ctx context.Context, req any, _ *grpc.UnaryServerInfo, handler grpc.UnaryHandler) (any, error) {
+		return handler(auth.WithInternal(ctx), req)
+	}))
 	documentv1.RegisterDocumentServiceServer(server, docgrpc.New(st))
 	go server.Serve(lis)
 

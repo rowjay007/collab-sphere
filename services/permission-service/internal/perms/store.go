@@ -204,6 +204,14 @@ func (s *store) redeem(ctx context.Context, doc uuid.UUID, user string, role Rol
 	return Grant{DocID: doc, UserID: user, Role: role}, nil
 }
 
+func (s *store) copyGrants(ctx context.Context, src, dst uuid.UUID) error {
+	_, err := s.pool.Exec(ctx, `
+		INSERT INTO grants (doc_id, user_id, role)
+		SELECT $2, user_id, role FROM grants WHERE doc_id = $1
+		ON CONFLICT (doc_id, user_id) DO NOTHING`, src, dst)
+	return err
+}
+
 func (s *store) policy(ctx context.Context, doc uuid.UUID) (Policy, error) {
 	rows, err := s.pool.Query(ctx, `SELECT user_id, role FROM grants WHERE doc_id = $1`, doc)
 	if err != nil {

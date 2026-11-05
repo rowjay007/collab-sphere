@@ -7,12 +7,15 @@ import (
 	"strconv"
 	"time"
 
+	"strings"
+
 	"github.com/coder/websocket"
 	"github.com/google/uuid"
 	"google.golang.org/protobuf/proto"
 
 	collabv1 "github.com/rowjay007/collab-sphere/gen/collab/v1"
 	crdtv1 "github.com/rowjay007/collab-sphere/gen/crdt/v1"
+	"github.com/rowjay007/collab-sphere/pkg/auth"
 	"github.com/rowjay007/collab-sphere/pkg/crdt"
 	"github.com/rowjay007/collab-sphere/services/collab-hub/internal/hub"
 )
@@ -54,6 +57,24 @@ func Handler(reg *hub.Registry) http.Handler {
 			}
 		}
 
+		var subject string
+		if pub := reg.PublicKey(); pub != nil {
+			subject, err = auth.Verify(pub, bearerToken(r), time.Now())
+			if err != nil {
+				http.Error(w, "unauthorized", http.StatusUnauthorized)
+				return
+			}
+			ok, err := granted(r.Context(), reg, docID, subject)
+			if err != nil {
+				http.Error(w, "permission service unavailable", http.StatusServiceUnavailable)
+				return
+			}
+			if !ok {
+				http.Error(w, "forbidden", http.StatusForbidden)
+				return
+			}
+		}
+
 		conn, err := websocket.Accept(w, r, nil)
 		if err != nil {
 			return
@@ -65,11 +86,14 @@ func Handler(reg *hub.Registry) http.Handler {
 			refuse(r.Context(), conn, collabv1.ErrorMessage_CODE_INVALID_RESUME, "resume requires a client")
 			return
 		}
-		clientID, err = reg.Replica(r.Context(), docID, clientID)
+		clientID, err = reg.Replica(r.Context(), docID, subject, clientID)
 		if err != nil {
-			if errors.Is(err, hub.ErrUnknownReplica) {
+			switch {
+			case errors.Is(err, hub.ErrReplicaForbidden):
+				refuse(r.Context(), conn, collabv1.ErrorMessage_CODE_REPLICA_FORBIDDEN, "replica owned by another user")
+			case errors.Is(err, hub.ErrUnknownReplica):
 				refuse(r.Context(), conn, collabv1.ErrorMessage_CODE_UNKNOWN_REPLICA, "unknown replica")
-			} else {
+			default:
 				refuse(r.Context(), conn, collabv1.ErrorMessage_CODE_UNAVAILABLE, "replica service unavailable")
 			}
 			return
@@ -77,6 +101,7 @@ func Handler(reg *hub.Registry) http.Handler {
 
 		epoch, _ := strconv.ParseUint(query.Get("conn"), 10, 64)
 		peer := hub.NewPeer(clientID, epoch)
+		peer.SetUser(subject)
 		ctx, cancel := context.WithCancel(r.Context())
 		defer cancel()
 
@@ -102,6 +127,30 @@ func Handler(reg *hub.Registry) http.Handler {
 		peer.Close()
 		<-writeDone
 	})
+}
+
+func bearerToken(r *http.Request) string {
+	h := r.Header.Get("Authorization")
+	const prefix = "Bearer "
+	if !strings.HasPrefix(h, prefix) {
+		return ""
+	}
+	return strings.TrimSpace(h[len(prefix):])
+}
+
+func granted(ctx context.Context, reg *hub.Registry, docID, subject string) (bool, error) {
+	policy := reg.Policy()
+	if policy == nil {
+		return false, errors.New("permission service unavailable")
+	}
+	ctx, cancel := context.WithTimeout(ctx, 2*time.Second)
+	defer cancel()
+	roles, _, _, err := policy.Dump(ctx, docID)
+	if err != nil {
+		return false, err
+	}
+	_, ok := roles[subject]
+	return ok, nil
 }
 
 func parseClient(s string, present bool) (crdt.ClientID, error) {

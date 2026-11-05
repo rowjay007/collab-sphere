@@ -13,23 +13,69 @@ import (
 	"google.golang.org/protobuf/types/known/timestamppb"
 
 	documentv1 "github.com/rowjay007/collab-sphere/gen/document/v1"
+	permissionv1 "github.com/rowjay007/collab-sphere/gen/permission/v1"
+	"github.com/rowjay007/collab-sphere/pkg/auth"
 	"github.com/rowjay007/collab-sphere/services/document-service/internal/domain"
 	"github.com/rowjay007/collab-sphere/services/document-service/internal/store"
 )
 
+type permissions interface {
+	EnsureOwner(ctx context.Context, docID, userID string) error
+	Require(ctx context.Context, docID, userID string, min permissionv1.Role) error
+	CopyGrants(ctx context.Context, src, dst string) error
+}
+
 type Server struct {
 	documentv1.UnimplementedDocumentServiceServer
 	store *store.Store
+	perm  permissions
 }
 
 func New(s *store.Store) *Server {
 	return &Server{store: s}
 }
 
+func (s *Server) UsePermissions(p permissions) { s.perm = p }
+
+func Methods() map[string]auth.Class {
+	return map[string]auth.Class{
+		documentv1.DocumentService_CreateDocument_FullMethodName:       auth.User,
+		documentv1.DocumentService_GetDocument_FullMethodName:          auth.Either,
+		documentv1.DocumentService_ArchiveDocument_FullMethodName:      auth.User,
+		documentv1.DocumentService_LoadState_FullMethodName:            auth.Internal,
+		documentv1.DocumentService_AppendOperations_FullMethodName:     auth.Internal,
+		documentv1.DocumentService_ReadOperations_FullMethodName:       auth.Internal,
+		documentv1.DocumentService_ClaimReplica_FullMethodName:         auth.Internal,
+		documentv1.DocumentService_ForkDocument_FullMethodName:         auth.Internal,
+		documentv1.DocumentService_ListChangedDocuments_FullMethodName: auth.Internal,
+	}
+}
+
 func (s *Server) CreateDocument(ctx context.Context, req *documentv1.CreateDocumentRequest) (*documentv1.Document, error) {
-	doc, err := s.store.Create(ctx, req.GetTitle(), req.GetOwnerId())
+	owner := req.GetOwnerId()
+	subject := auth.Subject(ctx)
+	if subject != "" {
+		if owner != "" && owner != subject {
+			return nil, status.Error(codes.InvalidArgument, "owner_id does not match token")
+		}
+		owner = subject
+	} else if !auth.IsInternal(ctx) {
+		return nil, status.Error(codes.Unauthenticated, "unauthenticated")
+	}
+	doc, err := s.store.Create(ctx, req.GetTitle(), owner)
 	if err != nil {
 		return nil, mapError(err)
+	}
+	if auth.IsInternal(ctx) {
+		return toProto(doc), nil
+	}
+	if s.perm == nil {
+		_ = s.store.Delete(ctx, doc.ID)
+		return nil, status.Error(codes.Unavailable, "permission service unavailable")
+	}
+	if err := s.perm.EnsureOwner(ctx, doc.ID.String(), owner); err != nil {
+		_ = s.store.Delete(ctx, doc.ID)
+		return nil, err
 	}
 	return toProto(doc), nil
 }
@@ -43,12 +89,18 @@ func (s *Server) GetDocument(ctx context.Context, req *documentv1.GetDocumentReq
 	if err != nil {
 		return nil, mapError(err)
 	}
+	if err := s.allow(ctx, id, permissionv1.Role_ROLE_VIEWER); err != nil {
+		return nil, err
+	}
 	return toProto(doc), nil
 }
 
 func (s *Server) ArchiveDocument(ctx context.Context, req *documentv1.ArchiveDocumentRequest) (*documentv1.Document, error) {
 	id, err := parseID(req.GetId())
 	if err != nil {
+		return nil, err
+	}
+	if err := s.allow(ctx, id, permissionv1.Role_ROLE_OWNER); err != nil {
 		return nil, err
 	}
 	doc, err := s.store.Archive(ctx, id)
@@ -111,7 +163,7 @@ func (s *Server) ClaimReplica(ctx context.Context, req *documentv1.ClaimReplicaR
 	if err != nil {
 		return nil, err
 	}
-	client, err := s.store.ClaimReplica(ctx, id, req.GetClient(), req.GetSystem())
+	client, err := s.store.ClaimReplica(ctx, id, req.GetClient(), req.GetSystem(), req.GetUserId())
 	if err != nil {
 		return nil, mapError(err)
 	}
@@ -127,7 +179,26 @@ func (s *Server) ForkDocument(ctx context.Context, req *documentv1.ForkDocumentR
 	if err != nil {
 		return nil, mapError(err)
 	}
+	if s.perm != nil {
+		if err := s.perm.CopyGrants(ctx, id.String(), doc.ID.String()); err != nil {
+			return nil, err
+		}
+	}
 	return toProto(doc), nil
+}
+
+func (s *Server) allow(ctx context.Context, id uuid.UUID, min permissionv1.Role) error {
+	if auth.IsInternal(ctx) {
+		return nil
+	}
+	subject := auth.Subject(ctx)
+	if subject == "" {
+		return status.Error(codes.Unauthenticated, "unauthenticated")
+	}
+	if s.perm == nil {
+		return status.Error(codes.PermissionDenied, "permission denied")
+	}
+	return s.perm.Require(ctx, id.String(), subject, min)
 }
 
 func (s *Server) ListChangedDocuments(ctx context.Context, req *documentv1.ListChangedRequest) (*documentv1.ListChangedResponse, error) {
@@ -175,6 +246,8 @@ const ConflictReason = "OP_CONFLICT"
 
 const ReplicaHomedElsewhereReason = "REPLICA_HOMED_ELSEWHERE"
 
+const ReplicaOwnedReason = "REPLICA_OWNED"
+
 func mapError(err error) error {
 	var conflict *domain.ConflictError
 	switch {
@@ -196,14 +269,9 @@ func mapError(err error) error {
 	case errors.Is(err, domain.ErrArchived):
 		return status.Error(codes.FailedPrecondition, err.Error())
 	case errors.Is(err, domain.ErrReplicaHomedElsewhere):
-		st, detailErr := status.New(codes.FailedPrecondition, err.Error()).WithDetails(&errdetails.ErrorInfo{
-			Reason: ReplicaHomedElsewhereReason,
-			Domain: "document-service",
-		})
-		if detailErr != nil {
-			return status.Error(codes.Internal, "internal error")
-		}
-		return st.Err()
+		return failedPrecondition(err, ReplicaHomedElsewhereReason)
+	case errors.Is(err, domain.ErrReplicaOwned):
+		return failedPrecondition(err, ReplicaOwnedReason)
 	case errors.Is(err, domain.ErrInvalidArgument):
 		return status.Error(codes.InvalidArgument, err.Error())
 	case errors.Is(err, domain.ErrOutOfRange):
@@ -213,6 +281,17 @@ func mapError(err error) error {
 	default:
 		return status.Error(codes.Internal, "internal error")
 	}
+}
+
+func failedPrecondition(err error, reason string) error {
+	st, detailErr := status.New(codes.FailedPrecondition, err.Error()).WithDetails(&errdetails.ErrorInfo{
+		Reason: reason,
+		Domain: "document-service",
+	})
+	if detailErr != nil {
+		return status.Error(codes.Internal, "internal error")
+	}
+	return st.Err()
 }
 
 func toProto(doc domain.Document) *documentv1.Document {

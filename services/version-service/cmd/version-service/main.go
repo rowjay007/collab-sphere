@@ -15,6 +15,8 @@ import (
 
 	documentv1 "github.com/rowjay007/collab-sphere/gen/document/v1"
 	versionv1 "github.com/rowjay007/collab-sphere/gen/version/v1"
+	"github.com/rowjay007/collab-sphere/pkg/access"
+	"github.com/rowjay007/collab-sphere/pkg/auth"
 	"github.com/rowjay007/collab-sphere/services/version-service/internal/docs"
 	versiongrpc "github.com/rowjay007/collab-sphere/services/version-service/internal/grpc"
 	"github.com/rowjay007/collab-sphere/services/version-service/internal/history"
@@ -26,8 +28,20 @@ func main() {
 
 	dbURL := os.Getenv("DATABASE_URL")
 	docAddr := os.Getenv("DOCUMENT_ADDR")
-	if dbURL == "" || docAddr == "" {
-		slog.Error("DATABASE_URL and DOCUMENT_ADDR are required")
+	pubB64 := os.Getenv("AUTH_PUBLIC_KEY")
+	internal := os.Getenv("INTERNAL_TOKEN")
+	permAddr := os.Getenv("PERMISSION_ADDR")
+	if dbURL == "" || docAddr == "" || pubB64 == "" || internal == "" || permAddr == "" {
+		slog.Error("DATABASE_URL, DOCUMENT_ADDR, AUTH_PUBLIC_KEY, INTERNAL_TOKEN, and PERMISSION_ADDR are required")
+		os.Exit(1)
+	}
+	pub, err := auth.ParsePublicKey(pubB64)
+	if err != nil {
+		slog.Error("AUTH_PUBLIC_KEY", "err", err)
+		os.Exit(1)
+	}
+	if _, err := auth.ParseInternal(internal); err != nil {
+		slog.Error("INTERNAL_TOKEN", "err", err)
 		os.Exit(1)
 	}
 	addr := os.Getenv("GRPC_ADDR")
@@ -57,12 +71,21 @@ func main() {
 		os.Exit(1)
 	}
 
-	conn, err := grpc.NewClient(docAddr, grpc.WithTransportCredentials(insecure.NewCredentials()))
+	conn, err := grpc.NewClient(docAddr,
+		grpc.WithTransportCredentials(insecure.NewCredentials()),
+		grpc.WithUnaryInterceptor(auth.InternalUnary(internal)),
+	)
 	if err != nil {
 		slog.Error("dial document-service", "err", err)
 		os.Exit(1)
 	}
 	defer conn.Close()
+	perms, err := access.Dial(permAddr, internal)
+	if err != nil {
+		slog.Error("dial permission-service", "err", err)
+		os.Exit(1)
+	}
+	defer perms.Close()
 	h := history.New(store.New(pool), docs.New(documentv1.NewDocumentServiceClient(conn)))
 
 	lis, err := net.Listen("tcp", addr)
@@ -70,8 +93,13 @@ func main() {
 		slog.Error("listen", "err", err, "addr", addr)
 		os.Exit(1)
 	}
-	server := grpc.NewServer()
-	versionv1.RegisterVersionServiceServer(server, versiongrpc.New(h))
+	server := grpc.NewServer(
+		grpc.UnaryInterceptor(auth.UnaryInterceptor(pub, internal, versiongrpc.Methods())),
+		grpc.StreamInterceptor(auth.StreamInterceptor(pub, internal, versiongrpc.Methods())),
+	)
+	svc := versiongrpc.New(h)
+	svc.UsePermissions(perms)
+	versionv1.RegisterVersionServiceServer(server, svc)
 
 	swept := make(chan struct{})
 	if sweep > 0 {

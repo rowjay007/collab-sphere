@@ -71,6 +71,10 @@ func (s *Service) SetResolved(ctx context.Context, threadID uuid.UUID, resolved 
 	return s.db.setResolved(ctx, threadID, resolved, actor, reqID)
 }
 
+func (s *Service) Lookup(ctx context.Context, threadID uuid.UUID) (Thread, error) {
+	return s.db.loadThread(ctx, threadID)
+}
+
 func (s *Service) List(ctx context.Context, docID uuid.UUID, includeResolved bool) ([]ResolvedThread, error) {
 	frontier, err := s.versions.Frontier(ctx, docID)
 	if err != nil {

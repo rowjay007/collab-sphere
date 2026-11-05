@@ -26,6 +26,7 @@ const (
 	PermissionService_RevokeLink_FullMethodName  = "/permission.v1.PermissionService/RevokeLink"
 	PermissionService_Redeem_FullMethodName      = "/permission.v1.PermissionService/Redeem"
 	PermissionService_PolicyDump_FullMethodName  = "/permission.v1.PermissionService/PolicyDump"
+	PermissionService_CopyGrants_FullMethodName  = "/permission.v1.PermissionService/CopyGrants"
 )
 
 // PermissionServiceClient is the client API for PermissionService service.
@@ -39,6 +40,7 @@ type PermissionServiceClient interface {
 	RevokeLink(ctx context.Context, in *RevokeLinkRequest, opts ...grpc.CallOption) (*RevokeLinkResponse, error)
 	Redeem(ctx context.Context, in *RedeemRequest, opts ...grpc.CallOption) (*GrantRecord, error)
 	PolicyDump(ctx context.Context, in *PolicyDumpRequest, opts ...grpc.CallOption) (*PolicyDumpResponse, error)
+	CopyGrants(ctx context.Context, in *CopyGrantsRequest, opts ...grpc.CallOption) (*CopyGrantsResponse, error)
 }
 
 type permissionServiceClient struct {
@@ -119,6 +121,16 @@ func (c *permissionServiceClient) PolicyDump(ctx context.Context, in *PolicyDump
 	return out, nil
 }
 
+func (c *permissionServiceClient) CopyGrants(ctx context.Context, in *CopyGrantsRequest, opts ...grpc.CallOption) (*CopyGrantsResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(CopyGrantsResponse)
+	err := c.cc.Invoke(ctx, PermissionService_CopyGrants_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 // PermissionServiceServer is the server API for PermissionService service.
 // All implementations must embed UnimplementedPermissionServiceServer
 // for forward compatibility.
@@ -130,6 +142,7 @@ type PermissionServiceServer interface {
 	RevokeLink(context.Context, *RevokeLinkRequest) (*RevokeLinkResponse, error)
 	Redeem(context.Context, *RedeemRequest) (*GrantRecord, error)
 	PolicyDump(context.Context, *PolicyDumpRequest) (*PolicyDumpResponse, error)
+	CopyGrants(context.Context, *CopyGrantsRequest) (*CopyGrantsResponse, error)
 	mustEmbedUnimplementedPermissionServiceServer()
 }
 
@@ -160,6 +173,9 @@ func (UnimplementedPermissionServiceServer) Redeem(context.Context, *RedeemReque
 }
 func (UnimplementedPermissionServiceServer) PolicyDump(context.Context, *PolicyDumpRequest) (*PolicyDumpResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method PolicyDump not implemented")
+}
+func (UnimplementedPermissionServiceServer) CopyGrants(context.Context, *CopyGrantsRequest) (*CopyGrantsResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method CopyGrants not implemented")
 }
 func (UnimplementedPermissionServiceServer) mustEmbedUnimplementedPermissionServiceServer() {}
 func (UnimplementedPermissionServiceServer) testEmbeddedByValue()                           {}
@@ -308,6 +324,24 @@ func _PermissionService_PolicyDump_Handler(srv interface{}, ctx context.Context,
 	return interceptor(ctx, in, info, handler)
 }
 
+func _PermissionService_CopyGrants_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(CopyGrantsRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(PermissionServiceServer).CopyGrants(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: PermissionService_CopyGrants_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(PermissionServiceServer).CopyGrants(ctx, req.(*CopyGrantsRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 // PermissionService_ServiceDesc is the grpc.ServiceDesc for PermissionService service.
 // It's only intended for direct use with grpc.RegisterService,
 // and not to be introspected or modified (even as a copy)
@@ -342,6 +376,10 @@ var PermissionService_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "PolicyDump",
 			Handler:    _PermissionService_PolicyDump_Handler,
+		},
+		{
+			MethodName: "CopyGrants",
+			Handler:    _PermissionService_CopyGrants_Handler,
 		},
 	},
 	Streams:  []grpc.StreamDesc{},

@@ -38,7 +38,7 @@ func TestBranchMergeLive(t *testing.T) {
 	if xD.ID() == 0 || xD.ID() == xB.ID() {
 		t.Fatalf("device X ids D=%d B=%d", xD.ID(), xB.ID())
 	}
-	_, err := collabclient.DialWith(ctx, b, collabclient.Options{URLs: s.HubURLs(), Client: xD.ID()})
+	_, err := collabclient.DialWith(ctx, b, collabclient.Options{URLs: s.HubURLs(), Client: xD.ID(), Token: s.Token(s.Owner())})
 	if err == nil || !strings.Contains(err.Error(), "CODE_UNKNOWN_REPLICA") {
 		t.Fatalf("D replica on B: %v", err)
 	}
@@ -313,7 +313,7 @@ func TestHubRefusesSystemReplica(t *testing.T) {
 	if err := vs.DB().QueryRow(ctx, `SELECT system_replica FROM version_docs WHERE doc = $1`, docID).Scan(&replica); err != nil {
 		t.Fatal(err)
 	}
-	_, err = collabclient.DialWith(ctx, d, collabclient.Options{URLs: s.HubURLs(), Client: crdt.ClientID(replica)})
+	_, err = collabclient.DialWith(ctx, d, collabclient.Options{URLs: s.HubURLs(), Client: crdt.ClientID(replica), Token: s.Token(s.Owner())})
 	if err == nil || !strings.Contains(err.Error(), "CODE_UNKNOWN_REPLICA") {
 		t.Fatalf("system replica on hub: %v", err)
 	}

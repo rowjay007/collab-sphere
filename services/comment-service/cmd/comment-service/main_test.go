@@ -12,6 +12,9 @@ func TestLoadConfigRequiresVersionAddr(t *testing.T) {
 	}
 
 	t.Setenv("VERSION_ADDR", "127.0.0.1:1")
+	t.Setenv("AUTH_PUBLIC_KEY", "pub")
+	t.Setenv("INTERNAL_TOKEN", "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef")
+	t.Setenv("PERMISSION_ADDR", "127.0.0.1:9094")
 	cfg, err := loadConfig()
 	if err != nil {
 		t.Fatal(err)
