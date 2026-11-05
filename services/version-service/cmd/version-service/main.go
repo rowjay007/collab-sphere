@@ -17,6 +17,7 @@ import (
 	versionv1 "github.com/rowjay007/collab-sphere/gen/version/v1"
 	"github.com/rowjay007/collab-sphere/pkg/access"
 	"github.com/rowjay007/collab-sphere/pkg/auth"
+	"github.com/rowjay007/collab-sphere/pkg/metrics"
 	"github.com/rowjay007/collab-sphere/services/version-service/internal/docs"
 	versiongrpc "github.com/rowjay007/collab-sphere/services/version-service/internal/grpc"
 	"github.com/rowjay007/collab-sphere/services/version-service/internal/history"
@@ -46,7 +47,7 @@ func main() {
 	}
 	addr := os.Getenv("GRPC_ADDR")
 	if addr == "" {
-		addr = ":9092"
+		addr = ":9093"
 	}
 	sweep := 5 * time.Second
 	if raw := os.Getenv("SWEEP_INTERVAL"); raw != "" {
@@ -93,8 +94,18 @@ func main() {
 		slog.Error("listen", "err", err, "addr", addr)
 		os.Exit(1)
 	}
+	prom := metrics.NewRegistry()
+	stopMetrics, err := metrics.Serve(metrics.Addr(":9193"), prom)
+	if err != nil {
+		slog.Error("metrics", "err", err)
+		os.Exit(1)
+	}
+	defer stopMetrics()
 	server := grpc.NewServer(
-		grpc.UnaryInterceptor(auth.UnaryInterceptor(pub, internal, versiongrpc.Methods())),
+		grpc.ChainUnaryInterceptor(
+			metrics.UnaryServer(metrics.NewGRPC(prom)),
+			auth.UnaryInterceptor(pub, internal, versiongrpc.Methods()),
+		),
 		grpc.StreamInterceptor(auth.StreamInterceptor(pub, internal, versiongrpc.Methods())),
 	)
 	svc := versiongrpc.New(h)

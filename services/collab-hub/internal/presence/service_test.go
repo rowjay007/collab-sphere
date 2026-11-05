@@ -155,7 +155,7 @@ func presenceService(t *testing.T) (presencev1.PresenceServiceClient, func(doc s
 	addr := l.Addr().String()
 	l.Close()
 	cmd := exec.Command(bin)
-	cmd.Env = append(os.Environ(), "REDIS_URL="+redisURL, "GRPC_ADDR="+addr, "INTERNAL_TOKEN="+testInternalToken)
+	cmd.Env = append(os.Environ(), "REDIS_URL="+redisURL, "GRPC_ADDR="+addr, "INTERNAL_TOKEN="+testInternalToken, "METRICS_ADDR=")
 	if err := cmd.Start(); err != nil {
 		t.Fatal(err)
 	}

@@ -18,6 +18,7 @@ import (
 	"github.com/rowjay007/collab-sphere/pkg/access"
 	"github.com/rowjay007/collab-sphere/pkg/auth"
 	"github.com/rowjay007/collab-sphere/pkg/crdt"
+	"github.com/rowjay007/collab-sphere/pkg/metrics"
 	"github.com/rowjay007/collab-sphere/pkg/render"
 )
 
@@ -30,10 +31,18 @@ type Service struct {
 	perms    *access.Client
 	bucket   *Bucket
 	crash    string
+	counts   interface{ Set(state string, v float64) }
+	seconds  interface{ Observe(float64) }
 }
 
 func New(poolStore *Store, docs documentv1.DocumentServiceClient, versions versionv1.VersionServiceClient, perms *access.Client, bucket *Bucket, crash string) *Service {
 	return &Service{store: poolStore, docs: docs, versions: versions, perms: perms, bucket: bucket, crash: crash}
+}
+
+// UseMetrics records job counts and terminal durations. counts may be nil.
+func (s *Service) UseMetrics(counts interface{ Set(state string, v float64) }, seconds interface{ Observe(float64) }) {
+	s.counts = counts
+	s.seconds = seconds
 }
 
 func (s *Service) Request(ctx context.Context, in Request) (Job, error) {
@@ -152,6 +161,7 @@ func (s *Service) Run(ctx context.Context) error {
 			continue
 		}
 		if job.State == Failed {
+			s.observeTerminal(job.ID)
 			continue
 		}
 		s.crashAt("claimed")
@@ -172,14 +182,14 @@ func (s *Service) render(ctx context.Context, job Job) error {
 	text, err := render.Text(blob)
 	if err != nil {
 		if errors.Is(err, crdt.ErrEncrypted) {
-			return s.store.MarkFailed(ctx, job.ID, err.Error())
+			return s.fail(ctx, job.ID, err.Error())
 		}
 		return err
 	}
 	body, err := renderFormat(job.Format, text)
 	if err != nil {
 		if errors.Is(err, render.ErrCharset) {
-			return s.store.MarkFailed(ctx, job.ID, err.Error())
+			return s.fail(ctx, job.ID, err.Error())
 		}
 		return err
 	}
@@ -197,7 +207,60 @@ func (s *Service) render(ctx context.Context, job Job) error {
 		return err
 	}
 	s.crashAt("upload")
-	return s.store.MarkReady(ctx, job.ID)
+	if err := s.store.MarkReady(ctx, job.ID); err != nil {
+		return err
+	}
+	s.observeTerminal(job.ID)
+	return nil
+}
+
+func (s *Service) fail(ctx context.Context, id uuid.UUID, reason string) error {
+	if err := s.store.MarkFailed(ctx, id, reason); err != nil {
+		return err
+	}
+	s.observeTerminal(id)
+	return nil
+}
+
+// PollJobCounts sets collab_export_jobs from count(*) grouped by state, every 5s.
+func (s *Service) PollJobCounts(ctx context.Context) {
+	s.publishJobCounts(ctx)
+	ticker := time.NewTicker(5 * time.Second)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			s.publishJobCounts(ctx)
+		}
+	}
+}
+
+func (s *Service) publishJobCounts(ctx context.Context) {
+	if s.counts == nil {
+		return
+	}
+	ctx, cancel := context.WithTimeout(ctx, 2*time.Second)
+	defer cancel()
+	got, err := s.store.CountByState(ctx)
+	if err != nil {
+		if ctx.Err() == nil {
+			slog.Error("export job counts", "err", err)
+		}
+		return
+	}
+	for _, state := range []State{Queued, Running, Ready, Failed} {
+		s.counts.Set(string(state), float64(got[state]))
+	}
+}
+
+func (s *Service) observeTerminal(id uuid.UUID) {
+	if s.seconds == nil || id.Version() != 7 {
+		return
+	}
+	sec, nsec := id.Time().UnixTime()
+	metrics.ObserveSince(s.seconds, time.Unix(sec, nsec))
 }
 
 func (s *Service) resolve(ctx context.Context, in Request) (nodeID, hash []byte, err error) {

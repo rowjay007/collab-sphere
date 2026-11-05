@@ -671,9 +671,11 @@ func (x *Pong) GetNonce() uint64 {
 // Operations hold the contiguous seqs first_seq..first_seq+len-1. Each frame
 // starts one past the last seq the connection has received.
 type OperationBroadcast struct {
-	state         protoimpl.MessageState `protogen:"open.v1"`
-	Operations    []*v1.Operation        `protobuf:"bytes,1,rep,name=operations,proto3" json:"operations,omitempty"`
-	FirstSeq      uint64                 `protobuf:"varint,2,opt,name=first_seq,json=firstSeq,proto3" json:"first_seq,omitempty"`
+	state      protoimpl.MessageState `protogen:"open.v1"`
+	Operations []*v1.Operation        `protobuf:"bytes,1,rep,name=operations,proto3" json:"operations,omitempty"`
+	FirstSeq   uint64                 `protobuf:"varint,2,opt,name=first_seq,json=firstSeq,proto3" json:"first_seq,omitempty"`
+	// Accepting hub's read-pump wall clock. Zero means the stamp is absent.
+	ReadUnixNano  int64 `protobuf:"varint,3,opt,name=read_unix_nano,json=readUnixNano,proto3" json:"read_unix_nano,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -718,6 +720,13 @@ func (x *OperationBroadcast) GetOperations() []*v1.Operation {
 func (x *OperationBroadcast) GetFirstSeq() uint64 {
 	if x != nil {
 		return x.FirstSeq
+	}
+	return 0
+}
+
+func (x *OperationBroadcast) GetReadUnixNano() int64 {
+	if x != nil {
+		return x.ReadUnixNano
 	}
 	return 0
 }
@@ -1226,12 +1235,13 @@ const file_collab_v1_ws_proto_rawDesc = "" +
 	"\x04Ping\x12\x14\n" +
 	"\x05nonce\x18\x01 \x01(\x04R\x05nonce\"\x1c\n" +
 	"\x04Pong\x12\x14\n" +
-	"\x05nonce\x18\x01 \x01(\x04R\x05nonce\"e\n" +
+	"\x05nonce\x18\x01 \x01(\x04R\x05nonce\"\x8b\x01\n" +
 	"\x12OperationBroadcast\x122\n" +
 	"\n" +
 	"operations\x18\x01 \x03(\v2\x12.crdt.v1.OperationR\n" +
 	"operations\x12\x1b\n" +
-	"\tfirst_seq\x18\x02 \x01(\x04R\bfirstSeq\"\x8e\x01\n" +
+	"\tfirst_seq\x18\x02 \x01(\x04R\bfirstSeq\x12$\n" +
+	"\x0eread_unix_nano\x18\x03 \x01(\x03R\freadUnixNano\"\x8e\x01\n" +
 	"\fPresenceLeft\x126\n" +
 	"\x06reason\x18\x01 \x01(\x0e2\x1e.collab.v1.PresenceLeft.ReasonR\x06reason\"F\n" +
 	"\x06Reason\x12\x16\n" +

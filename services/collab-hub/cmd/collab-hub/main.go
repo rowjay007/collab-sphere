@@ -19,6 +19,7 @@ import (
 	presencev1 "github.com/rowjay007/collab-sphere/gen/presence/v1"
 	"github.com/rowjay007/collab-sphere/pkg/access"
 	"github.com/rowjay007/collab-sphere/pkg/auth"
+	"github.com/rowjay007/collab-sphere/pkg/metrics"
 	"github.com/rowjay007/collab-sphere/services/collab-hub/internal/client"
 	"github.com/rowjay007/collab-sphere/services/collab-hub/internal/docstore"
 	"github.com/rowjay007/collab-sphere/services/collab-hub/internal/fanout"
@@ -112,7 +113,16 @@ func main() {
 	}
 
 	reg := hub.NewRegistry(docstore.New(documentv1.NewDocumentServiceClient(conn)), bus, pres)
-	reg.SetSecurity(pub, permPolicy{c: perms})
+	prom := metrics.NewRegistry()
+	hubMetrics := metrics.NewHub(prom)
+	reg.SetMetrics(hubMetrics)
+	stopMetrics, err := metrics.Serve(metrics.Addr(":9196"), prom)
+	if err != nil {
+		slog.Error("metrics", "err", err)
+		os.Exit(1)
+	}
+	defer stopMetrics()
+	reg.SetSecurity(pub, hub.ObservePolicy(permPolicy{c: perms}, hubMetrics.PolicyDump))
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusOK)

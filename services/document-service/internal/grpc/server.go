@@ -15,6 +15,7 @@ import (
 	documentv1 "github.com/rowjay007/collab-sphere/gen/document/v1"
 	permissionv1 "github.com/rowjay007/collab-sphere/gen/permission/v1"
 	"github.com/rowjay007/collab-sphere/pkg/auth"
+	"github.com/rowjay007/collab-sphere/pkg/metrics"
 	"github.com/rowjay007/collab-sphere/services/document-service/internal/domain"
 	"github.com/rowjay007/collab-sphere/services/document-service/internal/store"
 )
@@ -27,8 +28,9 @@ type permissions interface {
 
 type Server struct {
 	documentv1.UnimplementedDocumentServiceServer
-	store *store.Store
-	perm  permissions
+	store     *store.Store
+	perm      permissions
+	appendObs interface{ Observe(float64) }
 }
 
 func New(s *store.Store) *Server {
@@ -36,6 +38,8 @@ func New(s *store.Store) *Server {
 }
 
 func (s *Server) UsePermissions(p permissions) { s.perm = p }
+
+func (s *Server) UseAppend(obs interface{ Observe(float64) }) { s.appendObs = obs }
 
 func Methods() map[string]auth.Class {
 	return map[string]auth.Class{
@@ -137,7 +141,9 @@ func (s *Server) AppendOperations(ctx context.Context, req *documentv1.AppendOpe
 	if err != nil {
 		return nil, err
 	}
+	start := time.Now()
 	result, err := s.store.Append(ctx, id, req.GetOperations())
+	metrics.ObserveSince(s.appendObs, start)
 	if err != nil {
 		return nil, mapError(err)
 	}

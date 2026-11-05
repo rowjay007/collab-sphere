@@ -14,6 +14,7 @@ import (
 
 	permissionv1 "github.com/rowjay007/collab-sphere/gen/permission/v1"
 	"github.com/rowjay007/collab-sphere/pkg/auth"
+	"github.com/rowjay007/collab-sphere/pkg/metrics"
 	permdocs "github.com/rowjay007/collab-sphere/services/permission-service/internal/docs"
 	permgrpc "github.com/rowjay007/collab-sphere/services/permission-service/internal/grpc"
 	"github.com/rowjay007/collab-sphere/services/permission-service/internal/perms"
@@ -112,8 +113,18 @@ func main() {
 	syncCtx, syncCancel := context.WithCancel(context.Background())
 	defer syncCancel()
 	go svc.RunEpochSync(syncCtx)
+	prom := metrics.NewRegistry()
+	stopMetrics, err := metrics.Serve(metrics.Addr(":9194"), prom)
+	if err != nil {
+		slog.Error("metrics", "err", err)
+		os.Exit(1)
+	}
+	defer stopMetrics()
 	server := grpc.NewServer(
-		grpc.UnaryInterceptor(auth.UnaryInterceptor(pub, cfg.internal, permgrpc.Methods())),
+		grpc.ChainUnaryInterceptor(
+			metrics.UnaryServer(metrics.NewGRPC(prom)),
+			auth.UnaryInterceptor(pub, cfg.internal, permgrpc.Methods()),
+		),
 		grpc.StreamInterceptor(auth.StreamInterceptor(pub, cfg.internal, permgrpc.Methods())),
 	)
 	permissionv1.RegisterPermissionServiceServer(server, permgrpc.New(svc))

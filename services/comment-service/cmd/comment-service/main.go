@@ -18,6 +18,7 @@ import (
 	versionv1 "github.com/rowjay007/collab-sphere/gen/version/v1"
 	"github.com/rowjay007/collab-sphere/pkg/access"
 	"github.com/rowjay007/collab-sphere/pkg/auth"
+	"github.com/rowjay007/collab-sphere/pkg/metrics"
 	"github.com/rowjay007/collab-sphere/services/comment-service/internal/comments"
 	"github.com/rowjay007/collab-sphere/services/comment-service/internal/docs"
 	commentgrpc "github.com/rowjay007/collab-sphere/services/comment-service/internal/grpc"
@@ -135,8 +136,18 @@ func main() {
 	svc := comments.New(pool, docs.New(documentv1.NewDocumentServiceClient(docConn)), versions.NewFrontierClient(versionv1.NewVersionServiceClient(verConn)))
 	api := commentgrpc.New(svc)
 	api.UsePermissions(perms)
+	prom := metrics.NewRegistry()
+	stopMetrics, err := metrics.Serve(metrics.Addr(":9192"), prom)
+	if err != nil {
+		slog.Error("metrics", "err", err)
+		os.Exit(1)
+	}
+	defer stopMetrics()
 	server := grpc.NewServer(
-		grpc.UnaryInterceptor(auth.UnaryInterceptor(pub, cfg.internal, commentgrpc.Methods())),
+		grpc.ChainUnaryInterceptor(
+			metrics.UnaryServer(metrics.NewGRPC(prom)),
+			auth.UnaryInterceptor(pub, cfg.internal, commentgrpc.Methods()),
+		),
 		grpc.StreamInterceptor(auth.StreamInterceptor(pub, cfg.internal, commentgrpc.Methods())),
 	)
 	commentv1.RegisterCommentServiceServer(server, api)

@@ -14,6 +14,7 @@ import (
 
 	presencev1 "github.com/rowjay007/collab-sphere/gen/presence/v1"
 	"github.com/rowjay007/collab-sphere/pkg/auth"
+	"github.com/rowjay007/collab-sphere/pkg/metrics"
 	presgrpc "github.com/rowjay007/collab-sphere/services/presence-service/internal/grpc"
 	"github.com/rowjay007/collab-sphere/services/presence-service/internal/store"
 )
@@ -66,8 +67,18 @@ func main() {
 	}
 
 	st := store.New(rdb, ttl)
+	prom := metrics.NewRegistry()
+	stopMetrics, err := metrics.Serve(metrics.Addr(":9191"), prom)
+	if err != nil {
+		slog.Error("metrics", "err", err)
+		os.Exit(1)
+	}
+	defer stopMetrics()
 	server := grpc.NewServer(
-		grpc.UnaryInterceptor(auth.UnaryInterceptor(nil, internal, presgrpc.Methods())),
+		grpc.ChainUnaryInterceptor(
+			metrics.UnaryServer(metrics.NewGRPC(prom)),
+			auth.UnaryInterceptor(nil, internal, presgrpc.Methods()),
+		),
 		grpc.StreamInterceptor(auth.StreamInterceptor(nil, internal, presgrpc.Methods())),
 	)
 	presencev1.RegisterPresenceServiceServer(server, presgrpc.New(st))

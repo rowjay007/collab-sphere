@@ -13,6 +13,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"strings"
 	"sync"
 	"syscall"
 	"testing"
@@ -140,10 +141,23 @@ func (l *lockedBuffer) String() string {
 	return l.b.String()
 }
 
+func envSet(env []string, key string) bool {
+	prefix := key + "="
+	for _, item := range env {
+		if strings.HasPrefix(item, prefix) {
+			return true
+		}
+	}
+	return false
+}
+
 func start(t *testing.T, name, bin string, env ...string) *process {
 	t.Helper()
 	p := &process{t: t, name: name, cmd: exec.Command(bin), out: &lockedBuffer{}, done: make(chan struct{})}
 	p.cmd.Env = append(os.Environ(), env...)
+	if !envSet(env, "METRICS_ADDR") {
+		p.cmd.Env = append(p.cmd.Env, "METRICS_ADDR=")
+	}
 	p.cmd.Stdout = p.out
 	p.cmd.Stderr = p.out
 	if err := p.cmd.Start(); err != nil {

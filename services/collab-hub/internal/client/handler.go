@@ -79,6 +79,8 @@ func Handler(reg *hub.Registry) http.Handler {
 		if err != nil {
 			return
 		}
+		reg.AddConnection()
+		defer reg.RemoveConnection()
 		conn.SetReadLimit(readLimit)
 		defer conn.CloseNow()
 
@@ -229,6 +231,7 @@ func writeFrame(ctx context.Context, conn *websocket.Conn, frame []byte) error {
 func readPump(ctx context.Context, conn *websocket.Conn, session *hub.Session, peer *hub.Peer) {
 	for {
 		typ, data, err := conn.Read(ctx)
+		readAt := time.Now().UnixNano()
 		if err != nil {
 			return
 		}
@@ -241,13 +244,13 @@ func readPump(ctx context.Context, conn *websocket.Conn, session *hub.Session, p
 			peer.TrySend(hub.EncodeError(collabv1.ErrorMessage_CODE_MALFORMED_MESSAGE, "malformed message"))
 			return
 		}
-		if !handleClientMessage(ctx, session, peer, msg) {
+		if !handleClientMessage(ctx, session, peer, msg, readAt) {
 			return
 		}
 	}
 }
 
-func handleClientMessage(ctx context.Context, session *hub.Session, peer *hub.Peer, msg *collabv1.ClientMessage) bool {
+func handleClientMessage(ctx context.Context, session *hub.Session, peer *hub.Peer, msg *collabv1.ClientMessage, readAt int64) bool {
 	switch p := msg.GetPayload().(type) {
 	case *collabv1.ClientMessage_OperationBatch:
 		ops, ok := parseBatch(peer, p.OperationBatch)
@@ -255,7 +258,7 @@ func handleClientMessage(ctx context.Context, session *hub.Session, peer *hub.Pe
 			return false
 		}
 		if len(ops) > 0 {
-			session.SubmitOps(ctx, ops)
+			session.SubmitOpsAt(ctx, ops, readAt)
 		}
 		return true
 	case *collabv1.ClientMessage_CursorMove:

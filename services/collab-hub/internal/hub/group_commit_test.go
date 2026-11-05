@@ -238,7 +238,7 @@ func TestHubGroupsQueuedClientBatches(t *testing.T) {
 		}
 		select {
 		case <-peer.Done():
-		default:
+		case <-ctx.Done():
 			t.Fatalf("client %d was not dropped", i+1)
 		}
 	}

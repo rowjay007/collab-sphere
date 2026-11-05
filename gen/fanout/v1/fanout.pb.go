@@ -25,10 +25,14 @@ const (
 // SequencedOps is the Redis payload on doc:{id}, never sent on the WebSocket.
 // It holds the ops one Append newly stored, at seqs first_seq onward.
 type SequencedOps struct {
-	state         protoimpl.MessageState `protogen:"open.v1"`
-	Origin        string                 `protobuf:"bytes,1,opt,name=origin,proto3" json:"origin,omitempty"`
-	FirstSeq      uint64                 `protobuf:"varint,2,opt,name=first_seq,json=firstSeq,proto3" json:"first_seq,omitempty"`
-	Operations    []*v1.Operation        `protobuf:"bytes,3,rep,name=operations,proto3" json:"operations,omitempty"`
+	state      protoimpl.MessageState `protogen:"open.v1"`
+	Origin     string                 `protobuf:"bytes,1,opt,name=origin,proto3" json:"origin,omitempty"`
+	FirstSeq   uint64                 `protobuf:"varint,2,opt,name=first_seq,json=firstSeq,proto3" json:"first_seq,omitempty"`
+	Operations []*v1.Operation        `protobuf:"bytes,3,rep,name=operations,proto3" json:"operations,omitempty"`
+	// Wall clock at Publish. Zero means the stamp is absent.
+	OriginUnixNano int64 `protobuf:"varint,4,opt,name=origin_unix_nano,json=originUnixNano,proto3" json:"origin_unix_nano,omitempty"`
+	// Accepting hub's read-pump wall clock. Zero means the stamp is absent.
+	ReadUnixNano  int64 `protobuf:"varint,5,opt,name=read_unix_nano,json=readUnixNano,proto3" json:"read_unix_nano,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -84,17 +88,33 @@ func (x *SequencedOps) GetOperations() []*v1.Operation {
 	return nil
 }
 
+func (x *SequencedOps) GetOriginUnixNano() int64 {
+	if x != nil {
+		return x.OriginUnixNano
+	}
+	return 0
+}
+
+func (x *SequencedOps) GetReadUnixNano() int64 {
+	if x != nil {
+		return x.ReadUnixNano
+	}
+	return 0
+}
+
 var File_fanout_v1_fanout_proto protoreflect.FileDescriptor
 
 const file_fanout_v1_fanout_proto_rawDesc = "" +
 	"\n" +
-	"\x16fanout/v1/fanout.proto\x12\tfanout.v1\x1a\x16crdt/v1/snapshot.proto\"w\n" +
+	"\x16fanout/v1/fanout.proto\x12\tfanout.v1\x1a\x16crdt/v1/snapshot.proto\"\xc7\x01\n" +
 	"\fSequencedOps\x12\x16\n" +
 	"\x06origin\x18\x01 \x01(\tR\x06origin\x12\x1b\n" +
 	"\tfirst_seq\x18\x02 \x01(\x04R\bfirstSeq\x122\n" +
 	"\n" +
 	"operations\x18\x03 \x03(\v2\x12.crdt.v1.OperationR\n" +
-	"operationsB;Z9github.com/rowjay007/collab-sphere/gen/fanout/v1;fanoutv1b\x06proto3"
+	"operations\x12(\n" +
+	"\x10origin_unix_nano\x18\x04 \x01(\x03R\x0eoriginUnixNano\x12$\n" +
+	"\x0eread_unix_nano\x18\x05 \x01(\x03R\freadUnixNanoB;Z9github.com/rowjay007/collab-sphere/gen/fanout/v1;fanoutv1b\x06proto3"
 
 var (
 	file_fanout_v1_fanout_proto_rawDescOnce sync.Once

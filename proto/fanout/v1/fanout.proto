@@ -12,4 +12,8 @@ message SequencedOps {
   string origin = 1;
   uint64 first_seq = 2;
   repeated crdt.v1.Operation operations = 3;
+  // Wall clock at Publish. Zero means the stamp is absent.
+  int64 origin_unix_nano = 4;
+  // Accepting hub's read-pump wall clock. Zero means the stamp is absent.
+  int64 read_unix_nano = 5;
 }

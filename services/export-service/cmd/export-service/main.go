@@ -20,6 +20,7 @@ import (
 	versionv1 "github.com/rowjay007/collab-sphere/gen/version/v1"
 	"github.com/rowjay007/collab-sphere/pkg/access"
 	"github.com/rowjay007/collab-sphere/pkg/auth"
+	"github.com/rowjay007/collab-sphere/pkg/metrics"
 	"github.com/rowjay007/collab-sphere/services/export-service/internal/export"
 	exportgrpc "github.com/rowjay007/collab-sphere/services/export-service/internal/grpc"
 )
@@ -182,7 +183,17 @@ func main() {
 		}()
 	}
 
+	prom := metrics.NewRegistry()
+	exportMetrics := metrics.NewExport(prom)
+	stopMetrics, err := metrics.Serve(metrics.Addr(":9195"), prom)
+	if err != nil {
+		slog.Error("metrics", "err", err)
+		os.Exit(1)
+	}
+	defer stopMetrics()
 	svc := export.New(export.NewStore(pool), documentv1.NewDocumentServiceClient(docConn), versionv1.NewVersionServiceClient(verConn), perms, bucket, cfg.crash)
+	svc.UseMetrics(exportMetrics.Counts, exportMetrics.Seconds)
+	go svc.PollJobCounts(ctx)
 	go func() {
 		if err := svc.Run(ctx); err != nil && !errors.Is(err, context.Canceled) {
 			slog.Error("worker", "err", err)
@@ -195,7 +206,10 @@ func main() {
 		os.Exit(1)
 	}
 	server := grpc.NewServer(
-		grpc.UnaryInterceptor(auth.UnaryInterceptor(pub, cfg.internal, exportgrpc.Methods())),
+		grpc.ChainUnaryInterceptor(
+			metrics.UnaryServer(metrics.NewGRPC(prom)),
+			auth.UnaryInterceptor(pub, cfg.internal, exportgrpc.Methods()),
+		),
 		grpc.StreamInterceptor(auth.StreamInterceptor(pub, cfg.internal, exportgrpc.Methods())),
 	)
 	exportv1.RegisterExportServiceServer(server, exportgrpc.New(svc))

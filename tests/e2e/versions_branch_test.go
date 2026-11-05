@@ -169,7 +169,10 @@ func TestBranchFromCheckpointOnLiveDocument(t *testing.T) {
 	edit(t, ctx, s, d, dClients, 4, 60)
 	dHead := headSeq(t, ctx, s, d)
 	baseSeq := dHead - 7
-	if baseSeq%100 == 0 || baseSeq <= v.GetSeq() {
+	if baseSeq%100 == 0 {
+		baseSeq--
+	}
+	if baseSeq <= v.GetSeq() {
 		t.Fatalf("pick another base seq than %d", baseSeq)
 	}
 	e, err := s.Docs.ForkDocument(ctx, &documentv1.ForkDocumentRequest{SourceId: d, Seq: baseSeq, Title: "direct", RequestId: t.Name() + "direct"})

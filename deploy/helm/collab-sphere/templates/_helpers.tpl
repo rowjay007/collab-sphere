@@ -73,6 +73,11 @@ app.kubernetes.io/instance: {{ .Release.Name }}
       key: {{ .key }}
 {{- end -}}
 
+{{- define "collab-sphere.metricsAnnotations" -}}
+prometheus.io/scrape: "true"
+prometheus.io/port: {{ . | quote }}
+{{- end -}}
+
 {{- define "collab-sphere.extraEnv" -}}
 - name: METRICS_ADDR
   value: {{ .metrics | quote }}

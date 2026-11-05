@@ -369,7 +369,13 @@ func encodeBatch(origin string, b Batch) ([]byte, error) {
 	for i, op := range b.Ops {
 		ops[i] = crdt.OpToProto(op)
 	}
-	return proto.Marshal(&fanoutv1.SequencedOps{Origin: origin, FirstSeq: b.FirstSeq, Operations: ops})
+	return proto.Marshal(&fanoutv1.SequencedOps{
+		Origin:         origin,
+		FirstSeq:       b.FirstSeq,
+		Operations:     ops,
+		OriginUnixNano: b.OriginUnixNano,
+		ReadUnixNano:   b.ReadUnixNano,
+	})
 }
 
 func decodeBatch(payload []byte) (string, Batch, error) {
@@ -388,7 +394,12 @@ func decodeBatch(payload []byte) (string, Batch, error) {
 		}
 		ops[i] = op
 	}
-	return msg.GetOrigin(), Batch{FirstSeq: msg.GetFirstSeq(), Ops: ops}, nil
+	return msg.GetOrigin(), Batch{
+		FirstSeq:       msg.GetFirstSeq(),
+		Ops:            ops,
+		OriginUnixNano: msg.GetOriginUnixNano(),
+		ReadUnixNano:   msg.GetReadUnixNano(),
+	}, nil
 }
 
 func parseChannel(channel string) (docID string, presence bool, ok bool) {

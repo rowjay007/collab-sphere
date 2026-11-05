@@ -75,6 +75,24 @@ func (s *Store) Claim(ctx context.Context) (Job, bool, error) {
 	return j, true, nil
 }
 
+func (s *Store) CountByState(ctx context.Context) (map[State]int64, error) {
+	rows, err := s.pool.Query(ctx, `SELECT state, count(*) FROM export_jobs GROUP BY state`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := map[State]int64{}
+	for rows.Next() {
+		var state string
+		var n int64
+		if err := rows.Scan(&state, &n); err != nil {
+			return nil, err
+		}
+		out[State(state)] = n
+	}
+	return out, rows.Err()
+}
+
 func (s *Store) MarkReady(ctx context.Context, id uuid.UUID) error {
 	_, err := s.pool.Exec(ctx, `
 		UPDATE export_jobs

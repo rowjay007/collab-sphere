@@ -14,6 +14,7 @@ import (
 	documentv1 "github.com/rowjay007/collab-sphere/gen/document/v1"
 	"github.com/rowjay007/collab-sphere/pkg/access"
 	"github.com/rowjay007/collab-sphere/pkg/auth"
+	"github.com/rowjay007/collab-sphere/pkg/metrics"
 	docgrpc "github.com/rowjay007/collab-sphere/services/document-service/internal/grpc"
 	"github.com/rowjay007/collab-sphere/services/document-service/internal/store"
 )
@@ -72,13 +73,25 @@ func main() {
 		os.Exit(1)
 	}
 
+	prom := metrics.NewRegistry()
+	docMetrics := metrics.NewDoc(prom)
+	stopMetrics, err := metrics.Serve(metrics.Addr(":9190"), prom)
+	if err != nil {
+		slog.Error("metrics", "err", err)
+		os.Exit(1)
+	}
+	defer stopMetrics()
 	server := grpc.NewServer(
-		grpc.UnaryInterceptor(auth.UnaryInterceptor(pub, internal, docgrpc.Methods())),
+		grpc.ChainUnaryInterceptor(
+			metrics.UnaryServer(metrics.NewGRPC(prom)),
+			auth.UnaryInterceptor(pub, internal, docgrpc.Methods()),
+		),
 		grpc.StreamInterceptor(auth.StreamInterceptor(pub, internal, docgrpc.Methods())),
 	)
 	st := store.New(pool)
 	doc := docgrpc.New(st)
 	doc.UsePermissions(perms)
+	doc.UseAppend(docMetrics.Append)
 	documentv1.RegisterDocumentServiceServer(server, doc)
 
 	errCh := make(chan error, 1)

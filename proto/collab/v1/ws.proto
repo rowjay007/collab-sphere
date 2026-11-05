@@ -57,6 +57,8 @@ message Pong {
 message OperationBroadcast {
   repeated crdt.v1.Operation operations = 1;
   uint64 first_seq = 2;
+  // Accepting hub's read-pump wall clock. Zero means the stamp is absent.
+  int64 read_unix_nano = 3;
 }
 
 message PresenceLeft {

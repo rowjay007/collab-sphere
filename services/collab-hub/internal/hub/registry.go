@@ -9,6 +9,7 @@ import (
 
 	permissionv1 "github.com/rowjay007/collab-sphere/gen/permission/v1"
 	"github.com/rowjay007/collab-sphere/pkg/crdt"
+	"github.com/rowjay007/collab-sphere/pkg/metrics"
 	"github.com/rowjay007/collab-sphere/services/collab-hub/internal/fanout"
 )
 
@@ -37,6 +38,7 @@ type Registry struct {
 
 	loops         sync.WaitGroup
 	presenceCalls sync.WaitGroup
+	met           *metrics.Hub
 }
 
 // NewRegistry starts with no hubs. The first join for a document creates one,
@@ -58,6 +60,25 @@ func NewRegistry(store Store, bus fanout.Bus, pres Presence) *Registry {
 func (r *Registry) SetSecurity(pub ed25519.PublicKey, policy Policy) {
 	r.pub = pub
 	r.policy = policy
+}
+
+// SetMetrics installs process collectors. Call it before Join.
+func (r *Registry) SetMetrics(m metrics.Hub) {
+	r.met = &m
+}
+
+// AddConnection counts one open socket.
+func (r *Registry) AddConnection() {
+	if r.met != nil && r.met.Connections != nil {
+		r.met.Connections.Inc()
+	}
+}
+
+// RemoveConnection counts one socket closing.
+func (r *Registry) RemoveConnection() {
+	if r.met != nil && r.met.Connections != nil {
+		r.met.Connections.Dec()
+	}
 }
 
 func (r *Registry) PublicKey() ed25519.PublicKey { return r.pub }
@@ -181,7 +202,13 @@ func (r *Registry) Join(ctx context.Context, docID string, peer *Peer, resume bo
 
 // SubmitOps delivers an already-parsed operation batch to the session's hub.
 func (s *Session) SubmitOps(ctx context.Context, ops []crdt.Op) {
-	_ = s.hub.send(ctx, opsEvent{id: s.peer.id, ops: ops})
+	s.SubmitOpsAt(ctx, ops, time.Now().UnixNano())
+}
+
+// SubmitOpsAt delivers ops stamped with the accepting read-pump time.
+// A zero readUnixNano records no deliver sample.
+func (s *Session) SubmitOpsAt(ctx context.Context, ops []crdt.Op, readUnixNano int64) {
+	_ = s.hub.send(ctx, opsEvent{id: s.peer.id, ops: ops, readUnixNano: readUnixNano})
 }
 
 // MoveCursor delivers a cursor update to the session's hub.

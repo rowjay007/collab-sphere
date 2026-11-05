@@ -14,6 +14,7 @@ import (
 	crdtv1 "github.com/rowjay007/collab-sphere/gen/crdt/v1"
 	presencev1 "github.com/rowjay007/collab-sphere/gen/presence/v1"
 	"github.com/rowjay007/collab-sphere/pkg/crdt"
+	"github.com/rowjay007/collab-sphere/pkg/metrics"
 	"github.com/rowjay007/collab-sphere/services/collab-hub/internal/fanout"
 )
 
@@ -85,8 +86,9 @@ type leaveEvent struct {
 func (leaveEvent) isEvent() {}
 
 type opsEvent struct {
-	id  crdt.ClientID
-	ops []crdt.Op
+	id           crdt.ClientID
+	ops          []crdt.Op
+	readUnixNano int64
 }
 
 func (opsEvent) isEvent() {}
@@ -793,25 +795,42 @@ func (h *Hub) handleLeave(ev leaveEvent) {
 }
 
 func (h *Hub) handleOpsGroup(first opsEvent) (event, bool) {
+	start := time.Now()
 	accepted := h.applyOps(first)
+	readAt := int64(0)
+	if len(accepted) > 0 {
+		readAt = first.readUnixNano
+	}
 	opCount := len(first.ops)
 	for opCount < maxOpsPerGroup {
 		select {
 		case next := <-h.events:
 			ev, ok := next.(opsEvent)
 			if !ok {
-				return next, h.persist(accepted)
+				return next, h.finishOps(start, accepted, readAt)
 			}
 			if len(ev.ops) > maxOpsPerGroup-opCount {
-				return ev, h.persist(accepted)
+				return ev, h.finishOps(start, accepted, readAt)
 			}
 			opCount += len(ev.ops)
-			accepted = append(accepted, h.applyOps(ev)...)
+			more := h.applyOps(ev)
+			if readAt == 0 && len(more) > 0 {
+				readAt = ev.readUnixNano
+			}
+			accepted = append(accepted, more...)
 		default:
-			return nil, h.persist(accepted)
+			return nil, h.finishOps(start, accepted, readAt)
 		}
 	}
-	return nil, h.persist(accepted)
+	return nil, h.finishOps(start, accepted, readAt)
+}
+
+func (h *Hub) finishOps(start time.Time, accepted []crdt.Op, readAt int64) bool {
+	stop := h.persist(accepted, readAt)
+	if len(accepted) > 0 && h.registry.met != nil {
+		metrics.ObserveSince(h.registry.met.Apply, start)
+	}
+	return stop
 }
 
 func (h *Hub) opProblem(op crdt.Op) string {
@@ -920,13 +939,17 @@ func (h *Hub) rejectOperation(p *Peer, code collabv1.ErrorMessage_Code, message 
 // persist appends the group, publishes what the log newly stored, and offers
 // every seq run to the Sequencer. A run can hold ops the log already had
 // above D, which reveals a gap. It reports whether the hub fail-stopped.
-func (h *Hub) persist(accepted []crdt.Op) bool {
+func (h *Hub) persist(accepted []crdt.Op, readAt int64) bool {
 	if len(accepted) == 0 {
 		return false
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), appendTimeout)
+	appendStart := time.Now()
 	res, err := h.store.Append(ctx, h.docID, accepted)
 	cancel()
+	if h.registry.met != nil {
+		metrics.ObserveSince(h.registry.met.Append, appendStart)
+	}
 	if h.stopApply.Load() {
 		h.failStop(collabv1.ErrorMessage_CODE_UNAVAILABLE, "permission service unavailable")
 		return true
@@ -942,9 +965,12 @@ func (h *Hub) persist(accepted []crdt.Op) bool {
 		return true
 	}
 	if b, ok := newlyStored(accepted, res); ok {
+		b.ReadUnixNano = readAt
+		b.OriginUnixNano = time.Now().UnixNano()
 		h.registry.bus.Publish(h.docID, b)
 	}
 	for _, run := range seqRuns(accepted, res.Seqs) {
+		run.ReadUnixNano = readAt
 		if err := h.deliver(h.seq.Offer(run)); err != nil {
 			h.failStop(collabv1.ErrorMessage_CODE_INTERNAL, "internal error")
 			return true
@@ -956,6 +982,9 @@ func (h *Hub) persist(accepted []crdt.Op) bool {
 func (h *Hub) handleRemote(b fanout.Batch) bool {
 	if h.dead || h.seq == nil {
 		return false
+	}
+	if h.registry.met != nil {
+		metrics.ObserveUnix(h.registry.met.FanoutLag, b.OriginUnixNano)
 	}
 	if err := h.deliver(h.seq.Offer(b)); err != nil {
 		h.failStop(collabv1.ErrorMessage_CODE_INTERNAL, "internal error")
@@ -1019,11 +1048,12 @@ func (h *Hub) deliver(ready []fanout.Batch) error {
 		}
 		frame := mustMarshal(&collabv1.ServerMessage{
 			Payload: &collabv1.ServerMessage_OperationBroadcast{OperationBroadcast: &collabv1.OperationBroadcast{
-				Operations: pb,
-				FirstSeq:   b.FirstSeq,
+				Operations:   pb,
+				FirstSeq:     b.FirstSeq,
+				ReadUnixNano: b.ReadUnixNano,
 			}},
 		})
-		h.broadcast(frame, 0, true)
+		h.broadcast(frame, 0, true, b.ReadUnixNano)
 	}
 	return nil
 }
@@ -1230,7 +1260,12 @@ func trimDelivered(b fanout.Batch, delivered uint64) fanout.Batch {
 	if b.FirstSeq >= next {
 		return b
 	}
-	return fanout.Batch{FirstSeq: next, Ops: b.Ops[next-b.FirstSeq:]}
+	return fanout.Batch{
+		FirstSeq:       next,
+		Ops:            b.Ops[next-b.FirstSeq:],
+		OriginUnixNano: b.OriginUnixNano,
+		ReadUnixNano:   b.ReadUnixNano,
+	}
 }
 
 func (h *Hub) caughtUp(target uint64) bool {
@@ -1265,7 +1300,7 @@ func (h *Hub) handlePresence(ev *presencev1.Event) {
 		return
 	}
 	if frame, ok := encodePresenceBroadcast(ev); ok {
-		h.broadcast(frame, crdt.ClientID(ev.GetClient()), false)
+		h.broadcast(frame, crdt.ClientID(ev.GetClient()), false, 0)
 	}
 }
 
@@ -1303,7 +1338,7 @@ func (h *Hub) sendOrDrop(p *Peer, frame []byte) bool {
 	return false
 }
 
-func (h *Hub) broadcast(frame []byte, except crdt.ClientID, includeExcept bool) {
+func (h *Hub) broadcast(frame []byte, except crdt.ClientID, includeExcept bool, readUnixNano int64) {
 	var dead []*Peer
 	for id, p := range h.peers {
 		if !includeExcept && id == except {
@@ -1321,6 +1356,10 @@ func (h *Hub) broadcast(frame []byte, except crdt.ClientID, includeExcept bool) 
 		if !p.TrySend(frame) {
 			p.CloseWithReason("slow consumer")
 			dead = append(dead, p)
+			continue
+		}
+		if h.registry.met != nil {
+			metrics.ObserveUnix(h.registry.met.Deliver, readUnixNano)
 		}
 	}
 	for id, op := range h.opening {

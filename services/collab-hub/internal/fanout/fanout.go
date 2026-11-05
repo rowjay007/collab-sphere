@@ -8,9 +8,12 @@ import (
 )
 
 // Batch holds ops with the contiguous seqs FirstSeq..FirstSeq+len(Ops)-1.
+// A zero unix-nano stamp is absent and must not be recorded.
 type Batch struct {
-	FirstSeq uint64
-	Ops      []crdt.Op
+	FirstSeq       uint64
+	Ops            []crdt.Op
+	OriginUnixNano int64
+	ReadUnixNano   int64
 }
 
 // Next returns the seq after the batch's last op.
@@ -22,7 +25,12 @@ func (b Batch) clip(lo, hi uint64) Batch {
 	if lo >= hi {
 		return Batch{}
 	}
-	return Batch{FirstSeq: lo, Ops: b.Ops[lo-b.FirstSeq : hi-b.FirstSeq]}
+	return Batch{
+		FirstSeq:       lo,
+		Ops:            b.Ops[lo-b.FirstSeq : hi-b.FirstSeq],
+		OriginUnixNano: b.OriginUnixNano,
+		ReadUnixNano:   b.ReadUnixNano,
+	}
 }
 
 // Sink receives what a Bus learns for one document.

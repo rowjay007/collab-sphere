@@ -9,6 +9,50 @@ import (
 	permissionv1 "github.com/rowjay007/collab-sphere/gen/permission/v1"
 )
 
+type observedPolicy struct {
+	next Policy
+	dump interface{ Observe(float64) }
+}
+
+// ObservePolicy times each Dump. A nil dump returns p unchanged.
+func ObservePolicy(p Policy, dump interface{ Observe(float64) }) Policy {
+	if p == nil || dump == nil {
+		return p
+	}
+	return observedPolicy{next: p, dump: dump}
+}
+
+func (o observedPolicy) Dump(ctx context.Context, docID string) (map[string]permissionv1.Role, uint32, string, error) {
+	start := time.Now()
+	roles, epoch, state, err := o.next.Dump(ctx, docID)
+	o.dump.Observe(time.Since(start).Seconds())
+	return roles, epoch, state, err
+}
+
+func (r *Registry) noteStale(now time.Time) {
+	if r.met == nil || r.met.PolicyStale == nil {
+		return
+	}
+	r.met.PolicyStale.Set(float64(r.staleDocuments(now)))
+}
+
+func (r *Registry) staleDocuments(now time.Time) int {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	n := 0
+	for _, h := range r.hubs {
+		snap := h.peerView.Load()
+		if snap == nil || len(snap.peers) == 0 {
+			continue
+		}
+		view := h.policy.Load()
+		if view != nil && view.ok && now.Sub(view.freshAt) > policyStale {
+			n++
+		}
+	}
+	return n
+}
+
 // policyView is one PolicyDump result. freshAt is when the request was sent.
 // The poller publishes it by swapping the pointer. The loop never writes it.
 type policyView struct {
@@ -31,6 +75,7 @@ func (h *Hub) pollMembers() {
 			return
 		}
 		h.dumpPolicy()
+		h.registry.noteStale(time.Now())
 		if h.stopApply.Load() {
 			return
 		}
