@@ -167,6 +167,15 @@ func (p *process) kill() {
 	<-p.done
 }
 
+func (p *process) waitExit(timeout time.Duration) error {
+	select {
+	case <-p.done:
+		return nil
+	case <-time.After(timeout):
+		return fmt.Errorf("%s still running", p.name)
+	}
+}
+
 func (p *process) stop() {
 	select {
 	case <-p.done:
@@ -202,6 +211,8 @@ type Stack struct {
 	hubs        []*hubInstance
 	Docs        documentv1.DocumentServiceClient
 	Perm        *PermissionService
+	Versions    *VersionService
+	Export      *ExportService
 	pub         ed25519.PublicKey
 	priv        ed25519.PrivateKey
 	pubB64      string
@@ -215,6 +226,7 @@ type config struct {
 	hubs        int
 	presenceTTL time.Duration
 	redisProxy  bool
+	export      bool
 }
 
 // WithRedisProxy routes the hubs' Redis connections, but not
@@ -235,6 +247,12 @@ func WithPresenceTTL(d time.Duration) Option {
 	return func(c *config) { c.presenceTTL = d }
 }
 
+// WithExport starts version-service and a MinIO-backed export-service.
+// The test skips when COLLAB_TEST_S3_URL is unset.
+func WithExport() Option {
+	return func(c *config) { c.export = true }
+}
+
 // New starts document-service and the hubs. With Redis, which more than one
 // hub needs, it also starts presence-service and points every hub at it;
 // a single hub without Redis keeps presence in process.
@@ -243,6 +261,9 @@ func New(t *testing.T, opts ...Option) *Stack {
 	cfg := config{hubs: 1}
 	for _, opt := range opts {
 		opt(&cfg)
+	}
+	if cfg.export && os.Getenv("COLLAB_TEST_S3_URL") == "" {
+		t.Skip("COLLAB_TEST_S3_URL not set; start MinIO with docker compose up -d --wait minio and set COLLAB_TEST_S3_URL=http://localhost:9000")
 	}
 	var redisURL string
 	if cfg.hubs > 1 {
@@ -280,6 +301,10 @@ func New(t *testing.T, opts ...Option) *Stack {
 	}
 	for i := range s.hubs {
 		s.StartHub(i)
+	}
+	if cfg.export {
+		s.Versions = StartVersionService(s, 0)
+		s.Export = StartExportService(s)
 	}
 	return s
 }

@@ -2,7 +2,7 @@ PROTO_FILES := $(shell find proto -name '*.proto')
 TEST_DATABASE_URL ?= postgres://collab:collab@localhost:55432/collab?sslmode=disable
 TEST_REDIS_URL ?= redis://localhost:56379/0
 
-.PHONY: proto test test-integration up down run-docsvc run-hub run-presence run-permission
+.PHONY: proto test test-integration up down run-docsvc run-hub run-presence run-permission run-export
 
 DEV_AUTH_PUBLIC_KEY ?= wBiwn96X59Q0XaGgZIFY1UDnR55L2agldgCbneQFQvM=
 DEV_SHARE_PRIVATE_KEY ?= 1/Phydme/tVCmEdnYd3iDBlvCBEtVvanqFUW10vwMg0=
@@ -43,3 +43,18 @@ run-permission:
 	INTERNAL_TOKEN='$(DEV_INTERNAL_TOKEN)' \
 	DOCUMENT_ADDR=localhost:9090 \
 	go run ./services/permission-service/cmd/permission-service
+
+run-export:
+	DATABASE_URL='postgres://export:export@localhost:55434/export?sslmode=disable' \
+	GRPC_ADDR=:9095 \
+	AUTH_PUBLIC_KEY='$(DEV_AUTH_PUBLIC_KEY)' \
+	INTERNAL_TOKEN='$(DEV_INTERNAL_TOKEN)' \
+	DOCUMENT_ADDR=localhost:9090 \
+	VERSION_ADDR=localhost:9093 \
+	PERMISSION_ADDR=localhost:9094 \
+	S3_ENDPOINT=http://localhost:9000 \
+	S3_BUCKET=exports \
+	S3_ACCESS_KEY=collab \
+	S3_SECRET_KEY=collabsecret \
+	S3_REGION=us-east-1 \
+	go run ./services/export-service/cmd/export-service

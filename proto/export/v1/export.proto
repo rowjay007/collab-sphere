@@ -1,0 +1,37 @@
+syntax = "proto3";
+
+package export.v1;
+
+option go_package = "github.com/rowjay007/collab-sphere/gen/export/v1;exportv1";
+
+service ExportService {
+  rpc RequestExport(RequestExportRequest) returns (ExportJob);
+  rpc GetExport(GetExportRequest) returns (ExportJob);
+}
+
+message RequestExportRequest {
+  string doc_id = 1;
+  // Empty means the current head. Otherwise the 32-byte version node id.
+  bytes version_id = 2;
+  // "pdf", "md", or "docx".
+  string format = 3;
+  string request_id = 4;
+}
+
+message GetExportRequest {
+  string id = 1;
+}
+
+message ExportJob {
+  string id = 1;
+  string request_id = 2;
+  string doc_id = 3;
+  bytes version_id = 4;
+  string format = 5;
+  string user_id = 6;
+  // "queued", "running", "ready", or "failed".
+  string state = 7;
+  string error = 8;
+  // Presigned GET, set only by GetExport while state is ready. Not stored.
+  string url = 9;
+}

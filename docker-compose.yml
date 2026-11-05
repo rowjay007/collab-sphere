@@ -50,3 +50,57 @@ services:
     depends_on:
       permission-db:
         condition: service_healthy
+  export-db:
+    image: postgres:17-alpine
+    environment:
+      POSTGRES_USER: export
+      POSTGRES_PASSWORD: export
+      POSTGRES_DB: export
+    ports:
+      - "55434:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U export -d export"]
+      interval: 2s
+      timeout: 3s
+      retries: 30
+  minio:
+    image: cgr.dev/chainguard/minio:latest
+    user: "0:0"
+    command: server /data --console-address ":9001"
+    environment:
+      MINIO_ROOT_USER: collab
+      MINIO_ROOT_PASSWORD: collabsecret
+    ports:
+      - "9000:9000"
+      - "9001:9001"
+    healthcheck:
+      test: ["CMD", "/usr/bin/minio", "--version"]
+      interval: 2s
+      timeout: 5s
+      retries: 30
+  export-service:
+    build:
+      context: .
+      dockerfile: services/export-service/Dockerfile
+    environment:
+      DATABASE_URL: postgres://export:export@export-db:5432/export?sslmode=disable
+      GRPC_ADDR: ":9095"
+      AUTH_PUBLIC_KEY: wBiwn96X59Q0XaGgZIFY1UDnR55L2agldgCbneQFQvM=
+      INTERNAL_TOKEN: 99555b306395f2318808fdf9d3c6e1262e809d072790eeb91871cdc6c7214ee8
+      DOCUMENT_ADDR: document-service:9090
+      VERSION_ADDR: version-service:9093
+      PERMISSION_ADDR: permission-service:9094
+      S3_ENDPOINT: http://minio:9000
+      S3_BUCKET: exports
+      S3_ACCESS_KEY: collab
+      S3_SECRET_KEY: collabsecret
+      S3_REGION: us-east-1
+    ports:
+      - "9095:9095"
+    depends_on:
+      export-db:
+        condition: service_healthy
+      minio:
+        condition: service_healthy
+      permission-service:
+        condition: service_started
