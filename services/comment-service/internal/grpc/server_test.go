@@ -4,11 +4,13 @@ import (
 	"context"
 	"net"
 	"testing"
+	"time"
 
 	"github.com/google/uuid"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/credentials/insecure"
+	"google.golang.org/grpc/metadata"
 	"google.golang.org/grpc/status"
 	"google.golang.org/grpc/test/bufconn"
 
@@ -31,6 +33,13 @@ func (s stubDocs) LoadState(context.Context, uuid.UUID) (*crdt.Doc, uint64, erro
 		return nil, 0, comments.ErrNotFound
 	}
 	return s.doc, s.seq, nil
+}
+
+func (s stubDocs) ForkRoot(_ context.Context, doc uuid.UUID) (uuid.UUID, error) {
+	if s.doc == nil {
+		return uuid.UUID{}, comments.ErrNotFound
+	}
+	return doc, nil
 }
 
 type stubVersions struct {
@@ -126,6 +135,47 @@ func TestUserMethodRejectsBareContext(t *testing.T) {
 	if status.Code(err) != codes.Unauthenticated {
 		t.Fatalf("bare list: %v", err)
 	}
+}
+
+func TestAnchorPinsRejectsNonInternal(t *testing.T) {
+	pub, priv, err := auth.GenerateKeypair()
+	if err != nil {
+		t.Fatal(err)
+	}
+	const secret = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
+	lis := bufconn.Listen(1024 * 1024)
+	server := grpc.NewServer(grpc.UnaryInterceptor(auth.UnaryInterceptor(pub, secret, commentgrpc.Methods())))
+	commentv1.RegisterCommentServiceServer(server, commentgrpc.New(nil))
+	go server.Serve(lis)
+	t.Cleanup(func() {
+		server.Stop()
+		_ = lis.Close()
+	})
+	conn, err := grpc.NewClient("passthrough://bufnet",
+		grpc.WithContextDialer(func(context.Context, string) (net.Conn, error) { return lis.Dial() }),
+		grpc.WithTransportCredentials(insecure.NewCredentials()),
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { conn.Close() })
+	client := commentv1.NewCommentServiceClient(conn)
+	tok, err := auth.Mint(priv, "ada", time.Now(), time.Now().Add(time.Hour))
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = client.AnchorPins(authCtx(t.Context(), tok), &commentv1.AnchorPinsRequest{ForkRoot: uuid.NewString()})
+	if status.Code(err) != codes.Unauthenticated {
+		t.Fatalf("user token: %v", err)
+	}
+	_, err = client.AnchorPins(authCtx(t.Context(), auth.FormatInternal(secret)), &commentv1.AnchorPinsRequest{ForkRoot: "not-a-uuid"})
+	if status.Code(err) != codes.InvalidArgument {
+		t.Fatalf("internal token: %v", err)
+	}
+}
+
+func authCtx(ctx context.Context, token string) context.Context {
+	return metadata.AppendToOutgoingContext(ctx, "authorization", "Bearer "+token)
 }
 
 func idPB(id crdt.ID) *crdtv1.OpID {

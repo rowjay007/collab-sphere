@@ -521,3 +521,168 @@ func TestRestoreAppendKeyRotationMarksMutationFailed(t *testing.T) {
 		t.Fatalf("new request after open: %v", err)
 	}
 }
+
+func (f *fakeDocs) createEncrypted(t *testing.T) uuid.UUID {
+	t.Helper()
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	id := uuid.New()
+	r, err := crdt.NewReplica(crdt.ClientID(len(f.docs)+1), crdt.NewEncrypted())
+	if err != nil {
+		t.Fatal(err)
+	}
+	f.docs[id] = &fakeDoc{
+		replica: r, forkRoot: id, byBytes: map[string]uint64{}, claimed: 10_000,
+		updated: time.Now(), encrypted: true, epochState: "open",
+	}
+	return id
+}
+
+func (f *fakeDocs) editEncrypted(t *testing.T, id uuid.UUID, n int) {
+	t.Helper()
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	d := f.docs[id]
+	parent := crdt.Root
+	if d.replica.Len() > 0 {
+		var err error
+		parent, err = d.replica.IDAt(d.replica.Len() - 1)
+		if err != nil {
+			t.Fatal(err)
+		}
+	}
+	for i := range n {
+		op := crdt.Insert{
+			ID:     crdt.ID{Client: d.replica.Client(), Clock: d.replica.Clock() + 1},
+			Parent: parent,
+			Cipher: &crdt.Ciphertext{Epoch: 1, Bytes: bytes.Repeat([]byte{byte(i + 1)}, 17)},
+		}
+		if _, err := d.replica.Apply(op); err != nil {
+			t.Fatal(err)
+		}
+		d.ops = append(d.ops, op)
+		if raw, err := proto.Marshal(crdt.OpToProto(op)); err == nil {
+			d.byBytes[string(raw)] = uint64(len(d.ops))
+		}
+		parent = op.ID
+	}
+}
+
+func loadVector(t *testing.T, h *history.History, v store.Version) crdt.VersionVector {
+	t.Helper()
+	b, err := h.Blob(t.Context(), v.Node.Content)
+	if err != nil {
+		t.Fatal(err)
+	}
+	doc, err := crdt.FromCanonical(b)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return doc.Vector()
+}
+
+func TestRestoreFloorHorizonAndEncrypted(t *testing.T) {
+	t.Setenv("RESTORE_HORIZON", "1h")
+	st, _ := testdb.Open(t)
+	docs := newFakeDocs()
+	h := history.New(st, docs)
+	ctx := t.Context()
+	start := time.Now()
+	h.SetNow(func() time.Time { return start })
+
+	doc := docs.create(t)
+	docs.edit(t, doc, 5)
+	if _, err := h.Checkpoint(ctx, doc, "early", "cp-early"); err != nil {
+		t.Fatal(err)
+	}
+	docs.edit(t, doc, 5)
+	if _, err := h.Checkpoint(ctx, doc, "late", "cp-late"); err != nil {
+		t.Fatal(err)
+	}
+
+	h.SetNow(func() time.Time { return start.Add(30 * time.Minute) })
+	vec, seq, err := h.RestoreFloor(ctx, doc)
+	if err != nil {
+		t.Fatal(err)
+	}
+	genesis, err := st.VersionAt(ctx, doc, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if seq != 0 || !maps.Equal(vec, loadVector(t, h, genesis)) {
+		t.Fatalf("in-horizon floor seq=%d vec=%v", seq, vec)
+	}
+
+	h.SetNow(func() time.Time { return start.Add(2 * time.Hour) })
+	vec, seq, err = h.RestoreFloor(ctx, doc)
+	if err != nil {
+		t.Fatal(err)
+	}
+	tip, err := h.Head(ctx, doc)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if seq != tip.Node.Seq || !maps.Equal(vec, loadVector(t, h, tip)) {
+		t.Fatalf("aged floor seq=%d want %d vec=%v", seq, tip.Node.Seq, vec)
+	}
+
+	enc := docs.createEncrypted(t)
+	docs.editEncrypted(t, enc, 3)
+	if _, err := h.Checkpoint(ctx, enc, "enc", "cp-enc"); err != nil {
+		t.Fatal(err)
+	}
+	h.SetNow(func() time.Time { return start.Add(30 * time.Minute) })
+	encVec, encSeq, err := h.RestoreFloor(ctx, enc)
+	if err != nil {
+		t.Fatal(err)
+	}
+	encGenesis, err := st.VersionAt(ctx, enc, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if encSeq != 0 || !maps.Equal(encVec, loadVector(t, h, encGenesis)) {
+		t.Fatalf("encrypted floor seq=%d vec=%v", encSeq, encVec)
+	}
+}
+
+func TestRestoreAndBranchHonorHorizon(t *testing.T) {
+	t.Setenv("RESTORE_HORIZON", "1h")
+	st, _ := testdb.Open(t)
+	docs := newFakeDocs()
+	h := history.New(st, docs)
+	ctx := t.Context()
+	start := time.Now()
+	h.SetNow(func() time.Time { return start })
+
+	doc := docs.create(t)
+	docs.edit(t, doc, 8)
+	old, err := h.Checkpoint(ctx, doc, "old", "cp-old")
+	if err != nil {
+		t.Fatal(err)
+	}
+	docs.edit(t, doc, 8)
+	head, err := h.Checkpoint(ctx, doc, "head", "cp-head")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	h.SetNow(func() time.Time { return start.Add(30 * time.Minute) })
+	if _, err := h.Restore(ctx, doc, old.ID, "restore-in"); err != nil {
+		t.Fatal(err)
+	}
+
+	h.SetNow(func() time.Time { return start.Add(2 * time.Hour) })
+	if _, err := h.Restore(ctx, doc, old.ID, "restore-aged"); !errors.Is(err, history.ErrRestoreHorizon) {
+		t.Fatalf("aged restore: %v", err)
+	}
+	if _, _, err := h.Branch(ctx, old.ID, "aged", "branch-aged"); !errors.Is(err, history.ErrRestoreHorizon) {
+		t.Fatalf("aged branch: %v", err)
+	}
+	spans, err := h.Diff(ctx, old.ID, head.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(spans) == 0 {
+		t.Fatal("aged diff returned no spans")
+	}
+}

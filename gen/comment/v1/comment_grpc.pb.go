@@ -24,6 +24,7 @@ const (
 	CommentService_SetResolved_FullMethodName       = "/comment.v1.CommentService/SetResolved"
 	CommentService_ListThreads_FullMethodName       = "/comment.v1.CommentService/ListThreads"
 	CommentService_ListNotifications_FullMethodName = "/comment.v1.CommentService/ListNotifications"
+	CommentService_AnchorPins_FullMethodName        = "/comment.v1.CommentService/AnchorPins"
 )
 
 // CommentServiceClient is the client API for CommentService service.
@@ -35,6 +36,9 @@ type CommentServiceClient interface {
 	SetResolved(ctx context.Context, in *SetResolvedRequest, opts ...grpc.CallOption) (*Thread, error)
 	ListThreads(ctx context.Context, in *ListThreadsRequest, opts ...grpc.CallOption) (*ListThreadsResponse, error)
 	ListNotifications(ctx context.Context, in *ListNotificationsRequest, opts ...grpc.CallOption) (*ListNotificationsResponse, error)
+	// AnchorPins is internal. It returns start and end of every thread whose
+	// home is any document in the fork tree.
+	AnchorPins(ctx context.Context, in *AnchorPinsRequest, opts ...grpc.CallOption) (*AnchorPinsResponse, error)
 }
 
 type commentServiceClient struct {
@@ -95,6 +99,16 @@ func (c *commentServiceClient) ListNotifications(ctx context.Context, in *ListNo
 	return out, nil
 }
 
+func (c *commentServiceClient) AnchorPins(ctx context.Context, in *AnchorPinsRequest, opts ...grpc.CallOption) (*AnchorPinsResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(AnchorPinsResponse)
+	err := c.cc.Invoke(ctx, CommentService_AnchorPins_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 // CommentServiceServer is the server API for CommentService service.
 // All implementations must embed UnimplementedCommentServiceServer
 // for forward compatibility.
@@ -104,6 +118,9 @@ type CommentServiceServer interface {
 	SetResolved(context.Context, *SetResolvedRequest) (*Thread, error)
 	ListThreads(context.Context, *ListThreadsRequest) (*ListThreadsResponse, error)
 	ListNotifications(context.Context, *ListNotificationsRequest) (*ListNotificationsResponse, error)
+	// AnchorPins is internal. It returns start and end of every thread whose
+	// home is any document in the fork tree.
+	AnchorPins(context.Context, *AnchorPinsRequest) (*AnchorPinsResponse, error)
 	mustEmbedUnimplementedCommentServiceServer()
 }
 
@@ -128,6 +145,9 @@ func (UnimplementedCommentServiceServer) ListThreads(context.Context, *ListThrea
 }
 func (UnimplementedCommentServiceServer) ListNotifications(context.Context, *ListNotificationsRequest) (*ListNotificationsResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method ListNotifications not implemented")
+}
+func (UnimplementedCommentServiceServer) AnchorPins(context.Context, *AnchorPinsRequest) (*AnchorPinsResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method AnchorPins not implemented")
 }
 func (UnimplementedCommentServiceServer) mustEmbedUnimplementedCommentServiceServer() {}
 func (UnimplementedCommentServiceServer) testEmbeddedByValue()                        {}
@@ -240,6 +260,24 @@ func _CommentService_ListNotifications_Handler(srv interface{}, ctx context.Cont
 	return interceptor(ctx, in, info, handler)
 }
 
+func _CommentService_AnchorPins_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(AnchorPinsRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(CommentServiceServer).AnchorPins(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: CommentService_AnchorPins_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(CommentServiceServer).AnchorPins(ctx, req.(*AnchorPinsRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 // CommentService_ServiceDesc is the grpc.ServiceDesc for CommentService service.
 // It's only intended for direct use with grpc.RegisterService,
 // and not to be introspected or modified (even as a copy)
@@ -266,6 +304,10 @@ var CommentService_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "ListNotifications",
 			Handler:    _CommentService_ListNotifications_Handler,
+		},
+		{
+			MethodName: "AnchorPins",
+			Handler:    _CommentService_AnchorPins_Handler,
 		},
 	},
 	Streams:  []grpc.StreamDesc{},

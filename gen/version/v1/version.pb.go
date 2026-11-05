@@ -1123,6 +1123,102 @@ func (x *RestoreRequest) GetRequestId() string {
 	return ""
 }
 
+type RestoreFloorRequest struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	DocumentId    string                 `protobuf:"bytes,1,opt,name=document_id,json=documentId,proto3" json:"document_id,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *RestoreFloorRequest) Reset() {
+	*x = RestoreFloorRequest{}
+	mi := &file_version_v1_version_proto_msgTypes[19]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *RestoreFloorRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*RestoreFloorRequest) ProtoMessage() {}
+
+func (x *RestoreFloorRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_version_v1_version_proto_msgTypes[19]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use RestoreFloorRequest.ProtoReflect.Descriptor instead.
+func (*RestoreFloorRequest) Descriptor() ([]byte, []int) {
+	return file_version_v1_version_proto_rawDescGZIP(), []int{19}
+}
+
+func (x *RestoreFloorRequest) GetDocumentId() string {
+	if x != nil {
+		return x.DocumentId
+	}
+	return ""
+}
+
+type RestoreFloorResponse struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Vector        []*v1.VectorEntry      `protobuf:"bytes,1,rep,name=vector,proto3" json:"vector,omitempty"`
+	HorizonSeq    uint64                 `protobuf:"varint,2,opt,name=horizon_seq,json=horizonSeq,proto3" json:"horizon_seq,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *RestoreFloorResponse) Reset() {
+	*x = RestoreFloorResponse{}
+	mi := &file_version_v1_version_proto_msgTypes[20]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *RestoreFloorResponse) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*RestoreFloorResponse) ProtoMessage() {}
+
+func (x *RestoreFloorResponse) ProtoReflect() protoreflect.Message {
+	mi := &file_version_v1_version_proto_msgTypes[20]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use RestoreFloorResponse.ProtoReflect.Descriptor instead.
+func (*RestoreFloorResponse) Descriptor() ([]byte, []int) {
+	return file_version_v1_version_proto_rawDescGZIP(), []int{20}
+}
+
+func (x *RestoreFloorResponse) GetVector() []*v1.VectorEntry {
+	if x != nil {
+		return x.Vector
+	}
+	return nil
+}
+
+func (x *RestoreFloorResponse) GetHorizonSeq() uint64 {
+	if x != nil {
+		return x.HorizonSeq
+	}
+	return 0
+}
+
 // Persisted mutation plan: the exact ops that will be Appended.
 type OpPlan struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
@@ -1133,7 +1229,7 @@ type OpPlan struct {
 
 func (x *OpPlan) Reset() {
 	*x = OpPlan{}
-	mi := &file_version_v1_version_proto_msgTypes[19]
+	mi := &file_version_v1_version_proto_msgTypes[21]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1145,7 +1241,7 @@ func (x *OpPlan) String() string {
 func (*OpPlan) ProtoMessage() {}
 
 func (x *OpPlan) ProtoReflect() protoreflect.Message {
-	mi := &file_version_v1_version_proto_msgTypes[19]
+	mi := &file_version_v1_version_proto_msgTypes[21]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1158,7 +1254,7 @@ func (x *OpPlan) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use OpPlan.ProtoReflect.Descriptor instead.
 func (*OpPlan) Descriptor() ([]byte, []int) {
-	return file_version_v1_version_proto_rawDescGZIP(), []int{19}
+	return file_version_v1_version_proto_rawDescGZIP(), []int{21}
 }
 
 func (x *OpPlan) GetOperations() []*v1.Operation {
@@ -1252,11 +1348,18 @@ const file_version_v1_version_proto_rawDesc = "" +
 	"\n" +
 	"version_id\x18\x02 \x01(\fR\tversionId\x12\x1d\n" +
 	"\n" +
-	"request_id\x18\x03 \x01(\tR\trequestId\"<\n" +
+	"request_id\x18\x03 \x01(\tR\trequestId\"6\n" +
+	"\x13RestoreFloorRequest\x12\x1f\n" +
+	"\vdocument_id\x18\x01 \x01(\tR\n" +
+	"documentId\"e\n" +
+	"\x14RestoreFloorResponse\x12,\n" +
+	"\x06vector\x18\x01 \x03(\v2\x14.crdt.v1.VectorEntryR\x06vector\x12\x1f\n" +
+	"\vhorizon_seq\x18\x02 \x01(\x04R\n" +
+	"horizonSeq\"<\n" +
 	"\x06OpPlan\x122\n" +
 	"\n" +
 	"operations\x18\x01 \x03(\v2\x12.crdt.v1.OperationR\n" +
-	"operations2\x9e\x05\n" +
+	"operations2\xf1\x05\n" +
 	"\x0eVersionService\x12Q\n" +
 	"\fListVersions\x12\x1f.version.v1.ListVersionsRequest\x1a .version.v1.ListVersionsResponse\x12@\n" +
 	"\n" +
@@ -1269,7 +1372,8 @@ const file_version_v1_version_proto_rawDesc = "" +
 	"\x04Diff\x12\x17.version.v1.DiffRequest\x1a\x18.version.v1.DiffResponse\x12E\n" +
 	"\bFrontier\x12\x1b.version.v1.FrontierRequest\x1a\x1c.version.v1.FrontierResponse\x12<\n" +
 	"\x05Merge\x12\x18.version.v1.MergeRequest\x1a\x19.version.v1.MergeResponse\x12:\n" +
-	"\aRestore\x12\x1a.version.v1.RestoreRequest\x1a\x13.version.v1.VersionB=Z;github.com/rowjay007/collab-sphere/gen/version/v1;versionv1b\x06proto3"
+	"\aRestore\x12\x1a.version.v1.RestoreRequest\x1a\x13.version.v1.Version\x12Q\n" +
+	"\fRestoreFloor\x12\x1f.version.v1.RestoreFloorRequest\x1a .version.v1.RestoreFloorResponseB=Z;github.com/rowjay007/collab-sphere/gen/version/v1;versionv1b\x06proto3"
 
 var (
 	file_version_v1_version_proto_rawDescOnce sync.Once
@@ -1284,7 +1388,7 @@ func file_version_v1_version_proto_rawDescGZIP() []byte {
 }
 
 var file_version_v1_version_proto_enumTypes = make([]protoimpl.EnumInfo, 1)
-var file_version_v1_version_proto_msgTypes = make([]protoimpl.MessageInfo, 20)
+var file_version_v1_version_proto_msgTypes = make([]protoimpl.MessageInfo, 22)
 var file_version_v1_version_proto_goTypes = []any{
 	(Span_Kind)(0),                // 0: version.v1.Span.Kind
 	(*Version)(nil),               // 1: version.v1.Version
@@ -1306,47 +1410,53 @@ var file_version_v1_version_proto_goTypes = []any{
 	(*MergeRequest)(nil),          // 17: version.v1.MergeRequest
 	(*MergeResponse)(nil),         // 18: version.v1.MergeResponse
 	(*RestoreRequest)(nil),        // 19: version.v1.RestoreRequest
-	(*OpPlan)(nil),                // 20: version.v1.OpPlan
-	(*timestamppb.Timestamp)(nil), // 21: google.protobuf.Timestamp
-	(*v1.OpID)(nil),               // 22: crdt.v1.OpID
-	(*v1.Operation)(nil),          // 23: crdt.v1.Operation
+	(*RestoreFloorRequest)(nil),   // 20: version.v1.RestoreFloorRequest
+	(*RestoreFloorResponse)(nil),  // 21: version.v1.RestoreFloorResponse
+	(*OpPlan)(nil),                // 22: version.v1.OpPlan
+	(*timestamppb.Timestamp)(nil), // 23: google.protobuf.Timestamp
+	(*v1.OpID)(nil),               // 24: crdt.v1.OpID
+	(*v1.VectorEntry)(nil),        // 25: crdt.v1.VectorEntry
+	(*v1.Operation)(nil),          // 26: crdt.v1.Operation
 }
 var file_version_v1_version_proto_depIdxs = []int32{
-	21, // 0: version.v1.Version.created_at:type_name -> google.protobuf.Timestamp
+	23, // 0: version.v1.Version.created_at:type_name -> google.protobuf.Timestamp
 	1,  // 1: version.v1.ListVersionsResponse.versions:type_name -> version.v1.Version
 	1,  // 2: version.v1.BranchResponse.version:type_name -> version.v1.Version
 	0,  // 3: version.v1.Span.kind:type_name -> version.v1.Span.Kind
-	22, // 4: version.v1.Span.first:type_name -> crdt.v1.OpID
-	22, // 5: version.v1.Span.last:type_name -> crdt.v1.OpID
+	24, // 4: version.v1.Span.first:type_name -> crdt.v1.OpID
+	24, // 5: version.v1.Span.last:type_name -> crdt.v1.OpID
 	12, // 6: version.v1.DiffResponse.spans:type_name -> version.v1.Span
 	15, // 7: version.v1.FrontierResponse.entries:type_name -> version.v1.FrontierEntry
 	1,  // 8: version.v1.MergeResponse.version:type_name -> version.v1.Version
-	23, // 9: version.v1.OpPlan.operations:type_name -> crdt.v1.Operation
-	2,  // 10: version.v1.VersionService.ListVersions:input_type -> version.v1.ListVersionsRequest
-	4,  // 11: version.v1.VersionService.GetVersion:input_type -> version.v1.GetVersionRequest
-	5,  // 12: version.v1.VersionService.GetBlob:input_type -> version.v1.GetBlobRequest
-	7,  // 13: version.v1.VersionService.Head:input_type -> version.v1.HeadRequest
-	8,  // 14: version.v1.VersionService.Checkpoint:input_type -> version.v1.CheckpointRequest
-	9,  // 15: version.v1.VersionService.Branch:input_type -> version.v1.BranchRequest
-	11, // 16: version.v1.VersionService.Diff:input_type -> version.v1.DiffRequest
-	14, // 17: version.v1.VersionService.Frontier:input_type -> version.v1.FrontierRequest
-	17, // 18: version.v1.VersionService.Merge:input_type -> version.v1.MergeRequest
-	19, // 19: version.v1.VersionService.Restore:input_type -> version.v1.RestoreRequest
-	3,  // 20: version.v1.VersionService.ListVersions:output_type -> version.v1.ListVersionsResponse
-	1,  // 21: version.v1.VersionService.GetVersion:output_type -> version.v1.Version
-	6,  // 22: version.v1.VersionService.GetBlob:output_type -> version.v1.GetBlobResponse
-	1,  // 23: version.v1.VersionService.Head:output_type -> version.v1.Version
-	1,  // 24: version.v1.VersionService.Checkpoint:output_type -> version.v1.Version
-	10, // 25: version.v1.VersionService.Branch:output_type -> version.v1.BranchResponse
-	13, // 26: version.v1.VersionService.Diff:output_type -> version.v1.DiffResponse
-	16, // 27: version.v1.VersionService.Frontier:output_type -> version.v1.FrontierResponse
-	18, // 28: version.v1.VersionService.Merge:output_type -> version.v1.MergeResponse
-	1,  // 29: version.v1.VersionService.Restore:output_type -> version.v1.Version
-	20, // [20:30] is the sub-list for method output_type
-	10, // [10:20] is the sub-list for method input_type
-	10, // [10:10] is the sub-list for extension type_name
-	10, // [10:10] is the sub-list for extension extendee
-	0,  // [0:10] is the sub-list for field type_name
+	25, // 9: version.v1.RestoreFloorResponse.vector:type_name -> crdt.v1.VectorEntry
+	26, // 10: version.v1.OpPlan.operations:type_name -> crdt.v1.Operation
+	2,  // 11: version.v1.VersionService.ListVersions:input_type -> version.v1.ListVersionsRequest
+	4,  // 12: version.v1.VersionService.GetVersion:input_type -> version.v1.GetVersionRequest
+	5,  // 13: version.v1.VersionService.GetBlob:input_type -> version.v1.GetBlobRequest
+	7,  // 14: version.v1.VersionService.Head:input_type -> version.v1.HeadRequest
+	8,  // 15: version.v1.VersionService.Checkpoint:input_type -> version.v1.CheckpointRequest
+	9,  // 16: version.v1.VersionService.Branch:input_type -> version.v1.BranchRequest
+	11, // 17: version.v1.VersionService.Diff:input_type -> version.v1.DiffRequest
+	14, // 18: version.v1.VersionService.Frontier:input_type -> version.v1.FrontierRequest
+	17, // 19: version.v1.VersionService.Merge:input_type -> version.v1.MergeRequest
+	19, // 20: version.v1.VersionService.Restore:input_type -> version.v1.RestoreRequest
+	20, // 21: version.v1.VersionService.RestoreFloor:input_type -> version.v1.RestoreFloorRequest
+	3,  // 22: version.v1.VersionService.ListVersions:output_type -> version.v1.ListVersionsResponse
+	1,  // 23: version.v1.VersionService.GetVersion:output_type -> version.v1.Version
+	6,  // 24: version.v1.VersionService.GetBlob:output_type -> version.v1.GetBlobResponse
+	1,  // 25: version.v1.VersionService.Head:output_type -> version.v1.Version
+	1,  // 26: version.v1.VersionService.Checkpoint:output_type -> version.v1.Version
+	10, // 27: version.v1.VersionService.Branch:output_type -> version.v1.BranchResponse
+	13, // 28: version.v1.VersionService.Diff:output_type -> version.v1.DiffResponse
+	16, // 29: version.v1.VersionService.Frontier:output_type -> version.v1.FrontierResponse
+	18, // 30: version.v1.VersionService.Merge:output_type -> version.v1.MergeResponse
+	1,  // 31: version.v1.VersionService.Restore:output_type -> version.v1.Version
+	21, // 32: version.v1.VersionService.RestoreFloor:output_type -> version.v1.RestoreFloorResponse
+	22, // [22:33] is the sub-list for method output_type
+	11, // [11:22] is the sub-list for method input_type
+	11, // [11:11] is the sub-list for extension type_name
+	11, // [11:11] is the sub-list for extension extendee
+	0,  // [0:11] is the sub-list for field type_name
 }
 
 func init() { file_version_v1_version_proto_init() }
@@ -1360,7 +1470,7 @@ func file_version_v1_version_proto_init() {
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_version_v1_version_proto_rawDesc), len(file_version_v1_version_proto_rawDesc)),
 			NumEnums:      1,
-			NumMessages:   20,
+			NumMessages:   22,
 			NumExtensions: 0,
 			NumServices:   1,
 		},

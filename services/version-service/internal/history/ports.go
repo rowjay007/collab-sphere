@@ -18,6 +18,7 @@ var (
 	ErrOutOfRange         = errors.New("history: out of range")
 	ErrFailedPrecondition = errors.New("history: failed precondition")
 	ErrKeyRotation        = fmt.Errorf("%w: key rotation", ErrFailedPrecondition)
+	ErrRestoreHorizon     = fmt.Errorf("%w: restore horizon", ErrFailedPrecondition)
 	ErrConflict           = errors.New("history: op conflict")
 	ErrEncrypted          = errors.New("history: encrypted")
 )

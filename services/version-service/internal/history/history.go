@@ -7,6 +7,8 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"os"
+	"time"
 
 	"github.com/google/uuid"
 
@@ -25,6 +27,8 @@ const (
 	LabelForkBase = "fork-base"
 	LabelMerge    = "merge"
 	LabelRestore  = "restore"
+
+	defaultRestoreHorizon = 720 * time.Hour
 )
 
 func CheckpointLabel(name string) string { return "checkpoint:" + name }
@@ -33,10 +37,57 @@ type History struct {
 	store *store.Store
 	docs  Docs
 	hooks map[string]func() error
+	now   func() time.Time
 }
 
 func New(st *store.Store, docs Docs) *History {
-	return &History{store: st, docs: docs}
+	return &History{store: st, docs: docs, now: time.Now}
+}
+
+func (h *History) SetNow(now func() time.Time) {
+	if now == nil {
+		h.now = time.Now
+		return
+	}
+	h.now = now
+}
+
+func restoreHorizon() time.Duration {
+	raw := os.Getenv("RESTORE_HORIZON")
+	if raw == "" {
+		return defaultRestoreHorizon
+	}
+	d, err := time.ParseDuration(raw)
+	if err != nil {
+		return defaultRestoreHorizon
+	}
+	return d
+}
+
+func (h *History) pastHorizon(v store.Version) bool {
+	return h.now().Sub(v.CreatedAt) > restoreHorizon()
+}
+
+func (h *History) RestoreFloor(ctx context.Context, doc uuid.UUID) (crdt.VersionVector, uint64, error) {
+	cutoff := h.now().Add(-restoreHorizon())
+	v, ok, err := h.store.OldestSince(ctx, doc, cutoff)
+	if err != nil {
+		return nil, 0, err
+	}
+	if !ok {
+		v, ok, err = h.store.Tip(ctx, doc)
+		if err != nil {
+			return nil, 0, err
+		}
+		if !ok {
+			return nil, 0, fmt.Errorf("%w: no versions of %s", ErrNotFound, doc)
+		}
+	}
+	state, err := h.load(ctx, v.Node.Content)
+	if err != nil {
+		return nil, 0, err
+	}
+	return state.Vector(), v.Node.Seq, nil
 }
 
 // state caches the document state of one node across consecutive puts.
@@ -344,6 +395,9 @@ func (h *History) Branch(ctx context.Context, vid dag.NodeID, title, requestID s
 	v, err := h.version(ctx, vid)
 	if err != nil {
 		return uuid.UUID{}, store.Version{}, err
+	}
+	if h.pastHorizon(v) {
+		return uuid.UUID{}, store.Version{}, ErrRestoreHorizon
 	}
 	if enc, lookupErr := h.encryptionOf(ctx, v.Node.Doc); enc {
 		return uuid.UUID{}, store.Version{}, ErrEncrypted

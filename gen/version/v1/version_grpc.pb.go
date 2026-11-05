@@ -29,6 +29,7 @@ const (
 	VersionService_Frontier_FullMethodName     = "/version.v1.VersionService/Frontier"
 	VersionService_Merge_FullMethodName        = "/version.v1.VersionService/Merge"
 	VersionService_Restore_FullMethodName      = "/version.v1.VersionService/Restore"
+	VersionService_RestoreFloor_FullMethodName = "/version.v1.VersionService/RestoreFloor"
 )
 
 // VersionServiceClient is the client API for VersionService service.
@@ -58,6 +59,10 @@ type VersionServiceClient interface {
 	// Restore appends ops that make the document's visible text equal the
 	// version's. The returned node is new and names restored_from.
 	Restore(ctx context.Context, in *RestoreRequest, opts ...grpc.CallOption) (*Version, error)
+	// RestoreFloor is internal. It returns the version vector in the blob of
+	// the oldest node still inside RESTORE_HORIZON, or the tip blob's vector
+	// when every node is older.
+	RestoreFloor(ctx context.Context, in *RestoreFloorRequest, opts ...grpc.CallOption) (*RestoreFloorResponse, error)
 }
 
 type versionServiceClient struct {
@@ -168,6 +173,16 @@ func (c *versionServiceClient) Restore(ctx context.Context, in *RestoreRequest, 
 	return out, nil
 }
 
+func (c *versionServiceClient) RestoreFloor(ctx context.Context, in *RestoreFloorRequest, opts ...grpc.CallOption) (*RestoreFloorResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(RestoreFloorResponse)
+	err := c.cc.Invoke(ctx, VersionService_RestoreFloor_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 // VersionServiceServer is the server API for VersionService service.
 // All implementations must embed UnimplementedVersionServiceServer
 // for forward compatibility.
@@ -195,6 +210,10 @@ type VersionServiceServer interface {
 	// Restore appends ops that make the document's visible text equal the
 	// version's. The returned node is new and names restored_from.
 	Restore(context.Context, *RestoreRequest) (*Version, error)
+	// RestoreFloor is internal. It returns the version vector in the blob of
+	// the oldest node still inside RESTORE_HORIZON, or the tip blob's vector
+	// when every node is older.
+	RestoreFloor(context.Context, *RestoreFloorRequest) (*RestoreFloorResponse, error)
 	mustEmbedUnimplementedVersionServiceServer()
 }
 
@@ -234,6 +253,9 @@ func (UnimplementedVersionServiceServer) Merge(context.Context, *MergeRequest) (
 }
 func (UnimplementedVersionServiceServer) Restore(context.Context, *RestoreRequest) (*Version, error) {
 	return nil, status.Error(codes.Unimplemented, "method Restore not implemented")
+}
+func (UnimplementedVersionServiceServer) RestoreFloor(context.Context, *RestoreFloorRequest) (*RestoreFloorResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method RestoreFloor not implemented")
 }
 func (UnimplementedVersionServiceServer) mustEmbedUnimplementedVersionServiceServer() {}
 func (UnimplementedVersionServiceServer) testEmbeddedByValue()                        {}
@@ -436,6 +458,24 @@ func _VersionService_Restore_Handler(srv interface{}, ctx context.Context, dec f
 	return interceptor(ctx, in, info, handler)
 }
 
+func _VersionService_RestoreFloor_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(RestoreFloorRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(VersionServiceServer).RestoreFloor(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: VersionService_RestoreFloor_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(VersionServiceServer).RestoreFloor(ctx, req.(*RestoreFloorRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 // VersionService_ServiceDesc is the grpc.ServiceDesc for VersionService service.
 // It's only intended for direct use with grpc.RegisterService,
 // and not to be introspected or modified (even as a copy)
@@ -482,6 +522,10 @@ var VersionService_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "Restore",
 			Handler:    _VersionService_Restore_Handler,
+		},
+		{
+			MethodName: "RestoreFloor",
+			Handler:    _VersionService_RestoreFloor_Handler,
 		},
 	},
 	Streams:  []grpc.StreamDesc{},

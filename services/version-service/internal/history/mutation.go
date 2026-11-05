@@ -199,6 +199,9 @@ func (h *History) Restore(ctx context.Context, doc uuid.UUID, vid dag.NodeID, re
 	if err != nil {
 		return store.Version{}, err
 	}
+	if h.pastHorizon(target) {
+		return store.Version{}, ErrRestoreHorizon
+	}
 	dstDoc, err := h.docs.Get(ctx, doc)
 	if err != nil {
 		return store.Version{}, err

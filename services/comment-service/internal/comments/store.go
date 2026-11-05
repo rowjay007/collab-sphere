@@ -63,7 +63,7 @@ func isUnique(err error) bool {
 	return errors.As(err, &pgErr) && pgErr.Code == uniqueViolation
 }
 
-func (s *store) createThread(ctx context.Context, home uuid.UUID, createdSeq uint64, a Anchor, author, body, reqID string, mentions []string, notes []Notification) (Thread, error) {
+func (s *store) createThread(ctx context.Context, home, forkRoot uuid.UUID, createdSeq uint64, a Anchor, author, body, reqID string, mentions []string, notes []Notification) (Thread, error) {
 	fp := createFingerprint(home, a, author, body)
 	threadID := uuid.New()
 	commentID := uuid.New()
@@ -74,10 +74,10 @@ func (s *store) createThread(ctx context.Context, home uuid.UUID, createdSeq uin
 	defer tx.Rollback(ctx)
 
 	if _, err := tx.Exec(ctx, `
-		INSERT INTO threads (id, home, created_seq, start_client, start_clock, end_client, end_clock, author)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`,
+		INSERT INTO threads (id, home, created_seq, start_client, start_clock, end_client, end_clock, author, fork_root)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)`,
 		threadID, home, int64(createdSeq),
-		uint64(a.Start.Client), a.Start.Clock, uint64(a.End.Client), a.End.Clock, author,
+		uint64(a.Start.Client), a.Start.Clock, uint64(a.End.Client), a.End.Clock, author, forkRoot,
 	); err != nil {
 		return Thread{}, err
 	}
@@ -339,6 +339,50 @@ func (s *store) loadMentions(ctx context.Context, commentID uuid.UUID) ([]string
 		out = append(out, name)
 	}
 	return out, rows.Err()
+}
+
+func (s *store) listAnchors(ctx context.Context, forkRoot uuid.UUID) ([]Thread, error) {
+	rows, err := s.pool.Query(ctx, `
+		SELECT id, home, created_seq, start_client, start_clock, end_client, end_clock, resolved, author, created_at
+		FROM threads WHERE fork_root = $1 ORDER BY created_at, id`, forkRoot)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []Thread
+	for rows.Next() {
+		th, err := scanThread(rows)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, th)
+	}
+	return out, rows.Err()
+}
+
+func (s *store) homesMissingForkRoot(ctx context.Context) ([]uuid.UUID, error) {
+	rows, err := s.pool.Query(ctx, `SELECT DISTINCT home FROM threads WHERE fork_root IS NULL`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []uuid.UUID
+	for rows.Next() {
+		var home uuid.UUID
+		if err := rows.Scan(&home); err != nil {
+			return nil, err
+		}
+		out = append(out, home)
+	}
+	return out, rows.Err()
+}
+
+func (s *store) setForkRoot(ctx context.Context, home, root uuid.UUID) (int, error) {
+	tag, err := s.pool.Exec(ctx, `UPDATE threads SET fork_root = $1 WHERE home = $2 AND fork_root IS NULL`, root, home)
+	if err != nil {
+		return 0, err
+	}
+	return int(tag.RowsAffected()), nil
 }
 
 func (s *store) listThreads(ctx context.Context, homes []uuid.UUID) ([]Thread, error) {

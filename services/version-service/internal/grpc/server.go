@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"log/slog"
+	"sort"
 	"strconv"
 
 	"github.com/google/uuid"
@@ -44,6 +45,7 @@ type versionHistory interface {
 	Merge(ctx context.Context, src, dst uuid.UUID, requestID string) (history.MergeResult, error)
 	Restore(ctx context.Context, doc uuid.UUID, vid dag.NodeID, requestID string) (store.Version, error)
 	Frontier(ctx context.Context, id uuid.UUID) (map[uuid.UUID]uint64, error)
+	RestoreFloor(ctx context.Context, id uuid.UUID) (crdt.VersionVector, uint64, error)
 }
 
 type Server struct {
@@ -74,6 +76,7 @@ func Methods() map[string]auth.Class {
 		versionv1.VersionService_Frontier_FullMethodName:     auth.Internal,
 		versionv1.VersionService_Merge_FullMethodName:        auth.User,
 		versionv1.VersionService_Restore_FullMethodName:      auth.User,
+		versionv1.VersionService_RestoreFloor_FullMethodName: auth.Internal,
 	}
 }
 
@@ -276,6 +279,18 @@ func (s *Server) Restore(ctx context.Context, req *versionv1.RestoreRequest) (*v
 	return toProto(v), nil
 }
 
+func (s *Server) RestoreFloor(ctx context.Context, req *versionv1.RestoreFloorRequest) (*versionv1.RestoreFloorResponse, error) {
+	doc, err := parseDoc(req.GetDocumentId())
+	if err != nil {
+		return nil, err
+	}
+	vector, seq, err := s.history.RestoreFloor(ctx, doc)
+	if err != nil {
+		return nil, mapError(err)
+	}
+	return &versionv1.RestoreFloorResponse{Vector: vectorToProto(vector), HorizonSeq: seq}, nil
+}
+
 func (s *Server) Frontier(ctx context.Context, req *versionv1.FrontierRequest) (*versionv1.FrontierResponse, error) {
 	doc, err := parseDoc(req.GetDocId())
 	if err != nil {
@@ -389,12 +404,30 @@ func failedPrecondition(err error, reason string) error {
 	return st.Err()
 }
 
+func vectorToProto(vector crdt.VersionVector) []*crdtv1.VectorEntry {
+	clients := make([]crdt.ClientID, 0, len(vector))
+	for client, clock := range vector {
+		if client != 0 && clock != 0 {
+			clients = append(clients, client)
+		}
+	}
+	sort.Slice(clients, func(i, j int) bool { return clients[i] < clients[j] })
+	out := make([]*crdtv1.VectorEntry, 0, len(clients))
+	for _, client := range clients {
+		out = append(out, &crdtv1.VectorEntry{Client: uint64(client), Clock: vector[client]})
+	}
+	return out
+}
+
 func mapError(err error) error {
 	if errors.Is(err, history.ErrEncrypted) {
 		return failedPrecondition(err, "ENCRYPTED")
 	}
 	if errors.Is(err, history.ErrKeyRotation) {
 		return failedPrecondition(err, "KEY_ROTATION")
+	}
+	if errors.Is(err, history.ErrRestoreHorizon) {
+		return failedPrecondition(err, "RESTORE_HORIZON")
 	}
 	for sentinel, code := range map[error]codes.Code{
 		history.ErrNotFound:           codes.NotFound,

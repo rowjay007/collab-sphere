@@ -40,7 +40,24 @@ func Methods() map[string]auth.Class {
 		commentv1.CommentService_SetResolved_FullMethodName:       auth.User,
 		commentv1.CommentService_ListThreads_FullMethodName:       auth.User,
 		commentv1.CommentService_ListNotifications_FullMethodName: auth.User,
+		commentv1.CommentService_AnchorPins_FullMethodName:        auth.Internal,
 	}
+}
+
+func (s *Server) AnchorPins(ctx context.Context, req *commentv1.AnchorPinsRequest) (*commentv1.AnchorPinsResponse, error) {
+	root, err := parseID(req.GetForkRoot(), "fork root")
+	if err != nil {
+		return nil, err
+	}
+	pins, err := s.svc.AnchorPins(ctx, root)
+	if err != nil {
+		return nil, mapError(err)
+	}
+	out := make([]*crdtv1.OpID, len(pins))
+	for i, id := range pins {
+		out[i] = idToProto(id)
+	}
+	return &commentv1.AnchorPinsResponse{Pins: out}, nil
 }
 
 func (s *Server) CreateThread(ctx context.Context, req *commentv1.CreateThreadRequest) (*commentv1.Thread, error) {

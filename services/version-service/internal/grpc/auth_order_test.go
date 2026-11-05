@@ -5,6 +5,7 @@ import (
 	"testing"
 
 	"github.com/google/uuid"
+	"google.golang.org/genproto/googleapis/rpc/errdetails"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 
@@ -91,6 +92,9 @@ func (p *probeHistory) Restore(context.Context, uuid.UUID, dag.NodeID, string) (
 func (p *probeHistory) Frontier(context.Context, uuid.UUID) (map[uuid.UUID]uint64, error) {
 	panic("unused")
 }
+func (p *probeHistory) RestoreFloor(context.Context, uuid.UUID) (crdt.VersionVector, uint64, error) {
+	panic("unused")
+}
 
 func TestReadRPCsSameCodeForMissingAndForbidden(t *testing.T) {
 	known := uuid.New()
@@ -137,4 +141,52 @@ func TestReadRPCsSameCodeForMissingAndForbidden(t *testing.T) {
 	if status.Code(err) != codes.NotFound || h.blobs != 1 {
 		t.Fatalf("internal blob %v calls %d", err, h.blobs)
 	}
+}
+
+type horizonStub struct{ probeHistory }
+
+func (horizonStub) Restore(context.Context, uuid.UUID, dag.NodeID, string) (store.Version, error) {
+	return store.Version{}, history.ErrRestoreHorizon
+}
+
+func (horizonStub) Branch(context.Context, dag.NodeID, string, string) (uuid.UUID, store.Version, error) {
+	return uuid.UUID{}, store.Version{}, history.ErrRestoreHorizon
+}
+
+func (h *horizonStub) Version(_ context.Context, id dag.NodeID) (store.Version, error) {
+	if id != h.version {
+		return store.Version{}, history.ErrNotFound
+	}
+	return store.Version{Node: dag.Node{Doc: h.known}}, nil
+}
+
+func TestRestoreAndBranchMapRestoreHorizon(t *testing.T) {
+	var version dag.NodeID
+	version[0] = 1
+	h := &horizonStub{probeHistory: probeHistory{known: uuid.New(), version: version}}
+	s := &Server{history: h}
+	internal := auth.WithInternal(context.Background())
+	_, err := s.Restore(internal, &versionv1.RestoreRequest{
+		DocId: h.known.String(), VersionId: version[:], RequestId: "r",
+	})
+	if status.Code(err) != codes.FailedPrecondition || reasonOf(err) != "RESTORE_HORIZON" {
+		t.Fatalf("restore: %v reason %q", err, reasonOf(err))
+	}
+	_, err = s.Branch(internal, &versionv1.BranchRequest{VersionId: version[:], Title: "b", RequestId: "b"})
+	if status.Code(err) != codes.FailedPrecondition || reasonOf(err) != "RESTORE_HORIZON" {
+		t.Fatalf("branch: %v reason %q", err, reasonOf(err))
+	}
+}
+
+func reasonOf(err error) string {
+	st, ok := status.FromError(err)
+	if !ok {
+		return ""
+	}
+	for _, d := range st.Details() {
+		if info, ok := d.(*errdetails.ErrorInfo); ok {
+			return info.GetReason()
+		}
+	}
+	return ""
 }

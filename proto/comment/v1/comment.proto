@@ -13,6 +13,9 @@ service CommentService {
   rpc SetResolved(SetResolvedRequest) returns (Thread);
   rpc ListThreads(ListThreadsRequest) returns (ListThreadsResponse);
   rpc ListNotifications(ListNotificationsRequest) returns (ListNotificationsResponse);
+  // AnchorPins is internal. It returns start and end of every thread whose
+  // home is any document in the fork tree.
+  rpc AnchorPins(AnchorPinsRequest) returns (AnchorPinsResponse);
 }
 
 message Anchor {
@@ -108,4 +111,12 @@ message ListNotificationsRequest {
 
 message ListNotificationsResponse {
   repeated Notification notifications = 1;
+}
+
+message AnchorPinsRequest {
+  string fork_root = 1;
+}
+
+message AnchorPinsResponse {
+  repeated crdt.v1.OpID pins = 1;
 }

@@ -935,6 +935,94 @@ func (x *ListNotificationsResponse) GetNotifications() []*Notification {
 	return nil
 }
 
+type AnchorPinsRequest struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	ForkRoot      string                 `protobuf:"bytes,1,opt,name=fork_root,json=forkRoot,proto3" json:"fork_root,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *AnchorPinsRequest) Reset() {
+	*x = AnchorPinsRequest{}
+	mi := &file_comment_v1_comment_proto_msgTypes[12]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *AnchorPinsRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*AnchorPinsRequest) ProtoMessage() {}
+
+func (x *AnchorPinsRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_comment_v1_comment_proto_msgTypes[12]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use AnchorPinsRequest.ProtoReflect.Descriptor instead.
+func (*AnchorPinsRequest) Descriptor() ([]byte, []int) {
+	return file_comment_v1_comment_proto_rawDescGZIP(), []int{12}
+}
+
+func (x *AnchorPinsRequest) GetForkRoot() string {
+	if x != nil {
+		return x.ForkRoot
+	}
+	return ""
+}
+
+type AnchorPinsResponse struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Pins          []*v1.OpID             `protobuf:"bytes,1,rep,name=pins,proto3" json:"pins,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *AnchorPinsResponse) Reset() {
+	*x = AnchorPinsResponse{}
+	mi := &file_comment_v1_comment_proto_msgTypes[13]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *AnchorPinsResponse) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*AnchorPinsResponse) ProtoMessage() {}
+
+func (x *AnchorPinsResponse) ProtoReflect() protoreflect.Message {
+	mi := &file_comment_v1_comment_proto_msgTypes[13]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use AnchorPinsResponse.ProtoReflect.Descriptor instead.
+func (*AnchorPinsResponse) Descriptor() ([]byte, []int) {
+	return file_comment_v1_comment_proto_rawDescGZIP(), []int{13}
+}
+
+func (x *AnchorPinsResponse) GetPins() []*v1.OpID {
+	if x != nil {
+		return x.Pins
+	}
+	return nil
+}
+
 var File_comment_v1_comment_proto protoreflect.FileDescriptor
 
 const file_comment_v1_comment_proto_rawDesc = "" +
@@ -1024,13 +1112,19 @@ const file_comment_v1_comment_proto_rawDesc = "" +
 	"\bafter_id\x18\x02 \x01(\x04R\aafterId\x12\x14\n" +
 	"\x05limit\x18\x03 \x01(\rR\x05limit\"[\n" +
 	"\x19ListNotificationsResponse\x12>\n" +
-	"\rnotifications\x18\x01 \x03(\v2\x18.comment.v1.NotificationR\rnotifications2\x82\x03\n" +
+	"\rnotifications\x18\x01 \x03(\v2\x18.comment.v1.NotificationR\rnotifications\"0\n" +
+	"\x11AnchorPinsRequest\x12\x1b\n" +
+	"\tfork_root\x18\x01 \x01(\tR\bforkRoot\"7\n" +
+	"\x12AnchorPinsResponse\x12!\n" +
+	"\x04pins\x18\x01 \x03(\v2\r.crdt.v1.OpIDR\x04pins2\xcf\x03\n" +
 	"\x0eCommentService\x12C\n" +
 	"\fCreateThread\x12\x1f.comment.v1.CreateThreadRequest\x1a\x12.comment.v1.Thread\x126\n" +
 	"\x05Reply\x12\x18.comment.v1.ReplyRequest\x1a\x13.comment.v1.Comment\x12A\n" +
 	"\vSetResolved\x12\x1e.comment.v1.SetResolvedRequest\x1a\x12.comment.v1.Thread\x12N\n" +
 	"\vListThreads\x12\x1e.comment.v1.ListThreadsRequest\x1a\x1f.comment.v1.ListThreadsResponse\x12`\n" +
-	"\x11ListNotifications\x12$.comment.v1.ListNotificationsRequest\x1a%.comment.v1.ListNotificationsResponseB=Z;github.com/rowjay007/collab-sphere/gen/comment/v1;commentv1b\x06proto3"
+	"\x11ListNotifications\x12$.comment.v1.ListNotificationsRequest\x1a%.comment.v1.ListNotificationsResponse\x12K\n" +
+	"\n" +
+	"AnchorPins\x12\x1d.comment.v1.AnchorPinsRequest\x1a\x1e.comment.v1.AnchorPinsResponseB=Z;github.com/rowjay007/collab-sphere/gen/comment/v1;commentv1b\x06proto3"
 
 var (
 	file_comment_v1_comment_proto_rawDescOnce sync.Once
@@ -1045,7 +1139,7 @@ func file_comment_v1_comment_proto_rawDescGZIP() []byte {
 }
 
 var file_comment_v1_comment_proto_enumTypes = make([]protoimpl.EnumInfo, 2)
-var file_comment_v1_comment_proto_msgTypes = make([]protoimpl.MessageInfo, 12)
+var file_comment_v1_comment_proto_msgTypes = make([]protoimpl.MessageInfo, 14)
 var file_comment_v1_comment_proto_goTypes = []any{
 	(Resolution_State)(0),             // 0: comment.v1.Resolution.State
 	(Notification_Kind)(0),            // 1: comment.v1.Notification.Kind
@@ -1061,40 +1155,45 @@ var file_comment_v1_comment_proto_goTypes = []any{
 	(*ListThreadsResponse)(nil),       // 11: comment.v1.ListThreadsResponse
 	(*ListNotificationsRequest)(nil),  // 12: comment.v1.ListNotificationsRequest
 	(*ListNotificationsResponse)(nil), // 13: comment.v1.ListNotificationsResponse
-	(*v1.OpID)(nil),                   // 14: crdt.v1.OpID
-	(*timestamppb.Timestamp)(nil),     // 15: google.protobuf.Timestamp
+	(*AnchorPinsRequest)(nil),         // 14: comment.v1.AnchorPinsRequest
+	(*AnchorPinsResponse)(nil),        // 15: comment.v1.AnchorPinsResponse
+	(*v1.OpID)(nil),                   // 16: crdt.v1.OpID
+	(*timestamppb.Timestamp)(nil),     // 17: google.protobuf.Timestamp
 }
 var file_comment_v1_comment_proto_depIdxs = []int32{
-	14, // 0: comment.v1.Anchor.start:type_name -> crdt.v1.OpID
-	14, // 1: comment.v1.Anchor.end:type_name -> crdt.v1.OpID
+	16, // 0: comment.v1.Anchor.start:type_name -> crdt.v1.OpID
+	16, // 1: comment.v1.Anchor.end:type_name -> crdt.v1.OpID
 	0,  // 2: comment.v1.Resolution.state:type_name -> comment.v1.Resolution.State
-	14, // 3: comment.v1.Resolution.first:type_name -> crdt.v1.OpID
-	14, // 4: comment.v1.Resolution.last:type_name -> crdt.v1.OpID
-	15, // 5: comment.v1.Comment.created_at:type_name -> google.protobuf.Timestamp
+	16, // 3: comment.v1.Resolution.first:type_name -> crdt.v1.OpID
+	16, // 4: comment.v1.Resolution.last:type_name -> crdt.v1.OpID
+	17, // 5: comment.v1.Comment.created_at:type_name -> google.protobuf.Timestamp
 	2,  // 6: comment.v1.Thread.anchor:type_name -> comment.v1.Anchor
 	4,  // 7: comment.v1.Thread.comments:type_name -> comment.v1.Comment
 	3,  // 8: comment.v1.Thread.resolution:type_name -> comment.v1.Resolution
-	15, // 9: comment.v1.Thread.created_at:type_name -> google.protobuf.Timestamp
+	17, // 9: comment.v1.Thread.created_at:type_name -> google.protobuf.Timestamp
 	1,  // 10: comment.v1.Notification.kind:type_name -> comment.v1.Notification.Kind
-	15, // 11: comment.v1.Notification.created_at:type_name -> google.protobuf.Timestamp
+	17, // 11: comment.v1.Notification.created_at:type_name -> google.protobuf.Timestamp
 	2,  // 12: comment.v1.CreateThreadRequest.anchor:type_name -> comment.v1.Anchor
 	5,  // 13: comment.v1.ListThreadsResponse.threads:type_name -> comment.v1.Thread
 	6,  // 14: comment.v1.ListNotificationsResponse.notifications:type_name -> comment.v1.Notification
-	7,  // 15: comment.v1.CommentService.CreateThread:input_type -> comment.v1.CreateThreadRequest
-	8,  // 16: comment.v1.CommentService.Reply:input_type -> comment.v1.ReplyRequest
-	9,  // 17: comment.v1.CommentService.SetResolved:input_type -> comment.v1.SetResolvedRequest
-	10, // 18: comment.v1.CommentService.ListThreads:input_type -> comment.v1.ListThreadsRequest
-	12, // 19: comment.v1.CommentService.ListNotifications:input_type -> comment.v1.ListNotificationsRequest
-	5,  // 20: comment.v1.CommentService.CreateThread:output_type -> comment.v1.Thread
-	4,  // 21: comment.v1.CommentService.Reply:output_type -> comment.v1.Comment
-	5,  // 22: comment.v1.CommentService.SetResolved:output_type -> comment.v1.Thread
-	11, // 23: comment.v1.CommentService.ListThreads:output_type -> comment.v1.ListThreadsResponse
-	13, // 24: comment.v1.CommentService.ListNotifications:output_type -> comment.v1.ListNotificationsResponse
-	20, // [20:25] is the sub-list for method output_type
-	15, // [15:20] is the sub-list for method input_type
-	15, // [15:15] is the sub-list for extension type_name
-	15, // [15:15] is the sub-list for extension extendee
-	0,  // [0:15] is the sub-list for field type_name
+	16, // 15: comment.v1.AnchorPinsResponse.pins:type_name -> crdt.v1.OpID
+	7,  // 16: comment.v1.CommentService.CreateThread:input_type -> comment.v1.CreateThreadRequest
+	8,  // 17: comment.v1.CommentService.Reply:input_type -> comment.v1.ReplyRequest
+	9,  // 18: comment.v1.CommentService.SetResolved:input_type -> comment.v1.SetResolvedRequest
+	10, // 19: comment.v1.CommentService.ListThreads:input_type -> comment.v1.ListThreadsRequest
+	12, // 20: comment.v1.CommentService.ListNotifications:input_type -> comment.v1.ListNotificationsRequest
+	14, // 21: comment.v1.CommentService.AnchorPins:input_type -> comment.v1.AnchorPinsRequest
+	5,  // 22: comment.v1.CommentService.CreateThread:output_type -> comment.v1.Thread
+	4,  // 23: comment.v1.CommentService.Reply:output_type -> comment.v1.Comment
+	5,  // 24: comment.v1.CommentService.SetResolved:output_type -> comment.v1.Thread
+	11, // 25: comment.v1.CommentService.ListThreads:output_type -> comment.v1.ListThreadsResponse
+	13, // 26: comment.v1.CommentService.ListNotifications:output_type -> comment.v1.ListNotificationsResponse
+	15, // 27: comment.v1.CommentService.AnchorPins:output_type -> comment.v1.AnchorPinsResponse
+	22, // [22:28] is the sub-list for method output_type
+	16, // [16:22] is the sub-list for method input_type
+	16, // [16:16] is the sub-list for extension type_name
+	16, // [16:16] is the sub-list for extension extendee
+	0,  // [0:16] is the sub-list for field type_name
 }
 
 func init() { file_comment_v1_comment_proto_init() }
@@ -1108,7 +1207,7 @@ func file_comment_v1_comment_proto_init() {
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_comment_v1_comment_proto_rawDesc), len(file_comment_v1_comment_proto_rawDesc)),
 			NumEnums:      2,
-			NumMessages:   12,
+			NumMessages:   14,
 			NumExtensions: 0,
 			NumServices:   1,
 		},

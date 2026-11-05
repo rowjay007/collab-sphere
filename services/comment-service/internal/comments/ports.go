@@ -10,6 +10,7 @@ import (
 
 type Docs interface {
 	LoadState(ctx context.Context, doc uuid.UUID) (*crdt.Doc, uint64, error)
+	ForkRoot(ctx context.Context, doc uuid.UUID) (uuid.UUID, error)
 }
 
 type Versions interface {

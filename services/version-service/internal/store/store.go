@@ -69,6 +69,18 @@ func (t Tx) Tip(ctx context.Context, doc uuid.UUID) (Version, bool, error) {
 		WHERE n.id = (SELECT tip FROM version_docs WHERE doc = $1)`, doc)))
 }
 
+func (s *Store) Tip(ctx context.Context, doc uuid.UUID) (Version, bool, error) {
+	return optional(scanVersion(s.pool.QueryRow(ctx, selectVersion+`
+		WHERE n.id = (SELECT tip FROM version_docs WHERE doc = $1)`, doc)))
+}
+
+func (s *Store) OldestSince(ctx context.Context, doc uuid.UUID, since time.Time) (Version, bool, error) {
+	return optional(scanVersion(s.pool.QueryRow(ctx, selectVersion+`
+		WHERE n.doc = $1 AND n.created_at >= $2
+		ORDER BY n.created_at ASC, n.seq ASC
+		LIMIT 1`, doc, since)))
+}
+
 func (t Tx) NodeAtOrBelow(ctx context.Context, doc uuid.UUID, seq uint64) (Version, bool, error) {
 	return optional(scanVersion(t.tx.QueryRow(ctx, selectVersion+`
 		WHERE n.doc = $1 AND n.seq <= $2

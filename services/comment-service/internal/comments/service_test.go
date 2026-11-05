@@ -16,6 +16,8 @@ import (
 type memoryDocs struct {
 	mu     sync.Mutex
 	states map[uuid.UUID]docState
+	roots  map[uuid.UUID]uuid.UUID
+	forks  int
 }
 
 type docState struct {
@@ -40,6 +42,40 @@ func (m *memoryDocs) LoadState(ctx context.Context, id uuid.UUID) (*crdt.Doc, ui
 		return nil, 0, comments.ErrNotFound
 	}
 	return s.doc, s.seq, nil
+}
+
+func (m *memoryDocs) setRoot(id, root uuid.UUID) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if m.roots == nil {
+		m.roots = map[uuid.UUID]uuid.UUID{}
+	}
+	m.roots[id] = root
+}
+
+func (m *memoryDocs) ForkRoot(_ context.Context, id uuid.UUID) (uuid.UUID, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.forks++
+	if root, ok := m.roots[id]; ok {
+		return root, nil
+	}
+	if _, ok := m.states[id]; ok {
+		return id, nil
+	}
+	return uuid.UUID{}, comments.ErrNotFound
+}
+
+func (m *memoryDocs) resetForks() {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.forks = 0
+}
+
+func (m *memoryDocs) forkCalls() int {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return m.forks
 }
 
 type memoryVersions struct {
@@ -319,6 +355,155 @@ func TestListFiltersByFrontier(t *testing.T) {
 	}
 	if len(withResolved) != 1 || !withResolved[0].Resolved {
 		t.Fatalf("include_resolved %+v", withResolved)
+	}
+}
+
+func TestAnchorPinsCoversResolvedAndForkTree(t *testing.T) {
+	pool := testdb.Open(t)
+	docs := &memoryDocs{}
+	svc := comments.New(pool, docs, &memoryVersions{})
+	ctx := t.Context()
+
+	root := uuid.New()
+	branch := uuid.New()
+	other := uuid.New()
+	doc, ids := textDoc(t, "abcd")
+	docs.put(root, doc, 4)
+	docs.put(branch, doc, 4)
+	docs.put(other, doc, 4)
+	docs.setRoot(root, root)
+	docs.setRoot(branch, root)
+	docs.setRoot(other, other)
+
+	open, err := svc.Create(ctx, root, comments.Anchor{Start: ids[0], End: ids[1]}, "ann", "open", "pin-open")
+	if err != nil {
+		t.Fatal(err)
+	}
+	resolved, err := svc.Create(ctx, branch, comments.Anchor{Start: ids[2], End: ids[3]}, "ann", "done", "pin-res")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := svc.SetResolved(ctx, resolved.ID, true, "ann", "pin-res-set"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := svc.Create(ctx, other, comments.Anchor{Start: ids[0], End: ids[0]}, "ann", "other", "pin-other"); err != nil {
+		t.Fatal(err)
+	}
+
+	pins, err := svc.AnchorPins(ctx, branch)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []crdt.ID{open.Anchor.Start, open.Anchor.End, resolved.Anchor.Start, resolved.Anchor.End}
+	if len(pins) != len(want) {
+		t.Fatalf("pins %v want %v", pins, want)
+	}
+	got := pinSet(pins)
+	for _, id := range want {
+		if !got[id] {
+			t.Fatalf("missing pin %s in %v", id, pins)
+		}
+	}
+}
+
+func pinSet(ids []crdt.ID) map[crdt.ID]bool {
+	out := map[crdt.ID]bool{}
+	for _, id := range ids {
+		out[id] = true
+	}
+	return out
+}
+
+func TestAnchorPinsExcludesOtherTreeWithOneForkRootCall(t *testing.T) {
+	pool := testdb.Open(t)
+	docs := &memoryDocs{}
+	svc := comments.New(pool, docs, &memoryVersions{})
+	ctx := t.Context()
+
+	root := uuid.New()
+	other := uuid.New()
+	doc, ids := textDoc(t, "ab")
+	docs.put(root, doc, 2)
+	docs.put(other, doc, 2)
+	docs.setRoot(root, root)
+	docs.setRoot(other, other)
+
+	inTree, err := svc.Create(ctx, root, comments.Anchor{Start: ids[0], End: ids[0]}, "ann", "in", "pin-in")
+	if err != nil {
+		t.Fatal(err)
+	}
+	outTree, err := svc.Create(ctx, other, comments.Anchor{Start: ids[1], End: ids[1]}, "ann", "out", "pin-out")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	docs.resetForks()
+	pins, err := svc.AnchorPins(ctx, root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if docs.forkCalls() != 1 {
+		t.Fatalf("ForkRoot calls %d want 1", docs.forkCalls())
+	}
+	got := pinSet(pins)
+	if !got[inTree.Anchor.Start] || !got[inTree.Anchor.End] {
+		t.Fatalf("missing in-tree pins %v", pins)
+	}
+	if got[outTree.Anchor.Start] || got[outTree.Anchor.End] {
+		t.Fatalf("other-tree pins leaked %v", pins)
+	}
+}
+
+func TestBackfillForkRootsFillsNullAndIsIdempotent(t *testing.T) {
+	pool := testdb.Open(t)
+	docs := &memoryDocs{}
+	svc := comments.New(pool, docs, &memoryVersions{})
+	ctx := t.Context()
+
+	home := uuid.New()
+	root := uuid.New()
+	doc, ids := textDoc(t, "ab")
+	docs.put(home, doc, 1)
+	docs.setRoot(home, root)
+
+	threadID := uuid.New()
+	if _, err := pool.Exec(ctx, `
+		INSERT INTO threads (id, home, created_seq, start_client, start_clock, end_client, end_clock, author)
+		VALUES ($1, $2, 1, $3, $4, $5, $6, 'ann')`,
+		threadID, home,
+		uint64(ids[0].Client), int64(ids[0].Clock),
+		uint64(ids[1].Client), int64(ids[1].Clock),
+	); err != nil {
+		t.Fatal(err)
+	}
+
+	n, err := svc.BackfillForkRoots(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if n != 1 {
+		t.Fatalf("filled %d want 1", n)
+	}
+	var stored uuid.UUID
+	if err := pool.QueryRow(ctx, `SELECT fork_root FROM threads WHERE id = $1`, threadID).Scan(&stored); err != nil {
+		t.Fatal(err)
+	}
+	if stored != root {
+		t.Fatalf("fork_root %s want %s", stored, root)
+	}
+
+	again, err := svc.BackfillForkRoots(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if again != 0 {
+		t.Fatalf("second run filled %d", again)
+	}
+	if err := pool.QueryRow(ctx, `SELECT fork_root FROM threads WHERE id = $1`, threadID).Scan(&stored); err != nil {
+		t.Fatal(err)
+	}
+	if stored != root {
+		t.Fatalf("second run changed fork_root to %s", stored)
 	}
 }
 

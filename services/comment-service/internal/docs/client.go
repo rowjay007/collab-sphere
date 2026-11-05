@@ -21,6 +21,24 @@ func New(rpc documentv1.DocumentServiceClient) *Client {
 	return &Client{rpc: rpc}
 }
 
+func (c *Client) ForkRoot(ctx context.Context, docID uuid.UUID) (uuid.UUID, error) {
+	resp, err := c.rpc.GetDocument(ctx, &documentv1.GetDocumentRequest{Id: docID.String()})
+	if err != nil {
+		if status.Code(err) == codes.NotFound {
+			return uuid.UUID{}, comments.ErrNotFound
+		}
+		return uuid.UUID{}, err
+	}
+	if resp.GetForkRoot() == "" {
+		return docID, nil
+	}
+	root, err := uuid.Parse(resp.GetForkRoot())
+	if err != nil {
+		return uuid.UUID{}, fmt.Errorf("fork_root %q: %w", resp.GetForkRoot(), err)
+	}
+	return root, nil
+}
+
 func (c *Client) LoadState(ctx context.Context, docID uuid.UUID) (*crdt.Doc, uint64, error) {
 	resp, err := c.rpc.LoadState(ctx, &documentv1.LoadStateRequest{Id: docID.String()})
 	if err != nil {

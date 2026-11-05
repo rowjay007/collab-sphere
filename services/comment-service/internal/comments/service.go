@@ -40,8 +40,12 @@ func (s *Service) Create(ctx context.Context, home uuid.UUID, a Anchor, author, 
 	if err := validateAnchor(doc, a); err != nil {
 		return Thread{}, err
 	}
+	root, err := s.docs.ForkRoot(ctx, home)
+	if err != nil {
+		return Thread{}, err
+	}
 	mentions := ParseMentions(body)
-	return s.db.createThread(ctx, home, seq, a, author, body, reqID, mentions, mentionNotes(mentions))
+	return s.db.createThread(ctx, home, root, seq, a, author, body, reqID, mentions, mentionNotes(mentions))
 }
 
 func (s *Service) Reply(ctx context.Context, threadID uuid.UUID, author, body, reqID string) (Comment, error) {
@@ -107,6 +111,45 @@ func (s *Service) List(ctx context.Context, docID uuid.UUID, includeResolved boo
 		out = append(out, ResolvedThread{Thread: th, Resolution: res})
 	}
 	return out, nil
+}
+
+func (s *Service) AnchorPins(ctx context.Context, forkRoot uuid.UUID) ([]crdt.ID, error) {
+	root, err := s.docs.ForkRoot(ctx, forkRoot)
+	if err != nil {
+		return nil, err
+	}
+	threads, err := s.db.listAnchors(ctx, root)
+	if err != nil {
+		return nil, err
+	}
+	var pins []crdt.ID
+	for _, th := range threads {
+		pins = append(pins, th.Anchor.Start, th.Anchor.End)
+	}
+	return pins, nil
+}
+
+func (s *Service) BackfillForkRoots(ctx context.Context) (int, error) {
+	homes, err := s.db.homesMissingForkRoot(ctx)
+	if err != nil {
+		return 0, err
+	}
+	updated := 0
+	for _, home := range homes {
+		root, err := s.docs.ForkRoot(ctx, home)
+		if err != nil {
+			if errors.Is(err, ErrNotFound) {
+				continue
+			}
+			return updated, err
+		}
+		n, err := s.db.setForkRoot(ctx, home, root)
+		if err != nil {
+			return updated, err
+		}
+		updated += n
+	}
+	return updated, nil
 }
 
 func (s *Service) ListNotifications(ctx context.Context, user string, afterID uint64, limit int) ([]Notification, error) {

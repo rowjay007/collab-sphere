@@ -134,6 +134,12 @@ func main() {
 	}
 
 	svc := comments.New(pool, docs.New(documentv1.NewDocumentServiceClient(docConn)), versions.NewFrontierClient(versionv1.NewVersionServiceClient(verConn)))
+	filled, err := svc.BackfillForkRoots(ctx)
+	if err != nil {
+		slog.Error("backfill fork_root", "err", err)
+		os.Exit(1)
+	}
+	slog.Info("backfilled fork_root", "threads", filled)
 	api := commentgrpc.New(svc)
 	api.UsePermissions(perms)
 	prom := metrics.NewRegistry()

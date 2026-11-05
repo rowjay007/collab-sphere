@@ -30,6 +30,10 @@ service VersionService {
   // Restore appends ops that make the document's visible text equal the
   // version's. The returned node is new and names restored_from.
   rpc Restore(RestoreRequest) returns (Version);
+  // RestoreFloor is internal. It returns the version vector in the blob of
+  // the oldest node still inside RESTORE_HORIZON, or the tip blob's vector
+  // when every node is older.
+  rpc RestoreFloor(RestoreFloorRequest) returns (RestoreFloorResponse);
 }
 
 message Version {
@@ -142,6 +146,15 @@ message RestoreRequest {
   string doc_id = 1;
   bytes version_id = 2;
   string request_id = 3;
+}
+
+message RestoreFloorRequest {
+  string document_id = 1;
+}
+
+message RestoreFloorResponse {
+  repeated crdt.v1.VectorEntry vector = 1;
+  uint64 horizon_seq = 2;
 }
 
 // Persisted mutation plan: the exact ops that will be Appended.
