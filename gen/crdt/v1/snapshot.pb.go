@@ -75,13 +75,17 @@ func (x *OpID) GetClock() uint64 {
 	return 0
 }
 
-// Insert with copy set re-creates its parent's character under a new ID, so
-// value equals the parent's value. Only version-service writes copies.
+// Insert with copy set re-creates its parent's character under a new ID.
+// A plain insert carries value and leaves cipher empty. An encrypted insert
+// carries cipher and epoch and leaves value at zero. Only version-service
+// writes copies.
 type Insert struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	Parent        *OpID                  `protobuf:"bytes,1,opt,name=parent,proto3" json:"parent,omitempty"`
 	Value         uint32                 `protobuf:"varint,2,opt,name=value,proto3" json:"value,omitempty"`
 	Copy          bool                   `protobuf:"varint,3,opt,name=copy,proto3" json:"copy,omitempty"`
+	Cipher        []byte                 `protobuf:"bytes,4,opt,name=cipher,proto3" json:"cipher,omitempty"`
+	Epoch         uint32                 `protobuf:"varint,5,opt,name=epoch,proto3" json:"epoch,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -135,6 +139,20 @@ func (x *Insert) GetCopy() bool {
 		return x.Copy
 	}
 	return false
+}
+
+func (x *Insert) GetCipher() []byte {
+	if x != nil {
+		return x.Cipher
+	}
+	return nil
+}
+
+func (x *Insert) GetEpoch() uint32 {
+	if x != nil {
+		return x.Epoch
+	}
+	return 0
 }
 
 type Delete struct {
@@ -332,6 +350,8 @@ type Node struct {
 	Value         uint32                 `protobuf:"varint,3,opt,name=value,proto3" json:"value,omitempty"`
 	DeletedBy     []*OpID                `protobuf:"bytes,4,rep,name=deleted_by,json=deletedBy,proto3" json:"deleted_by,omitempty"`
 	Copy          bool                   `protobuf:"varint,5,opt,name=copy,proto3" json:"copy,omitempty"`
+	Cipher        []byte                 `protobuf:"bytes,6,opt,name=cipher,proto3" json:"cipher,omitempty"`
+	Epoch         uint32                 `protobuf:"varint,7,opt,name=epoch,proto3" json:"epoch,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -401,15 +421,31 @@ func (x *Node) GetCopy() bool {
 	return false
 }
 
+func (x *Node) GetCipher() []byte {
+	if x != nil {
+		return x.Cipher
+	}
+	return nil
+}
+
+func (x *Node) GetEpoch() uint32 {
+	if x != nil {
+		return x.Epoch
+	}
+	return 0
+}
+
 // Snapshot is the full replica state. nodes are in document order, so every
 // parent precedes its children. pending holds operations whose dependency has
 // not arrived, ascending by ID. vector and collected are ascending by client.
 type Snapshot struct {
-	state         protoimpl.MessageState `protogen:"open.v1"`
-	Nodes         []*Node                `protobuf:"bytes,1,rep,name=nodes,proto3" json:"nodes,omitempty"`
-	Pending       []*Operation           `protobuf:"bytes,2,rep,name=pending,proto3" json:"pending,omitempty"`
-	Vector        []*VectorEntry         `protobuf:"bytes,3,rep,name=vector,proto3" json:"vector,omitempty"`
-	Collected     []*VectorEntry         `protobuf:"bytes,4,rep,name=collected,proto3" json:"collected,omitempty"`
+	state     protoimpl.MessageState `protogen:"open.v1"`
+	Nodes     []*Node                `protobuf:"bytes,1,rep,name=nodes,proto3" json:"nodes,omitempty"`
+	Pending   []*Operation           `protobuf:"bytes,2,rep,name=pending,proto3" json:"pending,omitempty"`
+	Vector    []*VectorEntry         `protobuf:"bytes,3,rep,name=vector,proto3" json:"vector,omitempty"`
+	Collected []*VectorEntry         `protobuf:"bytes,4,rep,name=collected,proto3" json:"collected,omitempty"`
+	// encrypted is fixed for the life of the document. Unset means plain.
+	Encrypted     bool `protobuf:"varint,5,opt,name=encrypted,proto3" json:"encrypted,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -472,6 +508,13 @@ func (x *Snapshot) GetCollected() []*VectorEntry {
 	return nil
 }
 
+func (x *Snapshot) GetEncrypted() bool {
+	if x != nil {
+		return x.Encrypted
+	}
+	return false
+}
+
 var File_crdt_v1_snapshot_proto protoreflect.FileDescriptor
 
 const file_crdt_v1_snapshot_proto_rawDesc = "" +
@@ -479,11 +522,13 @@ const file_crdt_v1_snapshot_proto_rawDesc = "" +
 	"\x16crdt/v1/snapshot.proto\x12\acrdt.v1\"4\n" +
 	"\x04OpID\x12\x16\n" +
 	"\x06client\x18\x01 \x01(\x04R\x06client\x12\x14\n" +
-	"\x05clock\x18\x02 \x01(\x04R\x05clock\"Y\n" +
+	"\x05clock\x18\x02 \x01(\x04R\x05clock\"\x87\x01\n" +
 	"\x06Insert\x12%\n" +
 	"\x06parent\x18\x01 \x01(\v2\r.crdt.v1.OpIDR\x06parent\x12\x14\n" +
 	"\x05value\x18\x02 \x01(\rR\x05value\x12\x12\n" +
-	"\x04copy\x18\x03 \x01(\bR\x04copy\"/\n" +
+	"\x04copy\x18\x03 \x01(\bR\x04copy\x12\x16\n" +
+	"\x06cipher\x18\x04 \x01(\fR\x06cipher\x12\x14\n" +
+	"\x05epoch\x18\x05 \x01(\rR\x05epoch\"/\n" +
 	"\x06Delete\x12%\n" +
 	"\x06target\x18\x01 \x01(\v2\r.crdt.v1.OpIDR\x06target\"\x88\x01\n" +
 	"\tOperation\x12\x1d\n" +
@@ -493,19 +538,22 @@ const file_crdt_v1_snapshot_proto_rawDesc = "" +
 	"\x04kind\";\n" +
 	"\vVectorEntry\x12\x16\n" +
 	"\x06client\x18\x01 \x01(\x04R\x06client\x12\x14\n" +
-	"\x05clock\x18\x02 \x01(\x04R\x05clock\"\xa4\x01\n" +
+	"\x05clock\x18\x02 \x01(\x04R\x05clock\"\xd2\x01\n" +
 	"\x04Node\x12\x1d\n" +
 	"\x02id\x18\x01 \x01(\v2\r.crdt.v1.OpIDR\x02id\x12%\n" +
 	"\x06parent\x18\x02 \x01(\v2\r.crdt.v1.OpIDR\x06parent\x12\x14\n" +
 	"\x05value\x18\x03 \x01(\rR\x05value\x12,\n" +
 	"\n" +
 	"deleted_by\x18\x04 \x03(\v2\r.crdt.v1.OpIDR\tdeletedBy\x12\x12\n" +
-	"\x04copy\x18\x05 \x01(\bR\x04copy\"\xbf\x01\n" +
+	"\x04copy\x18\x05 \x01(\bR\x04copy\x12\x16\n" +
+	"\x06cipher\x18\x06 \x01(\fR\x06cipher\x12\x14\n" +
+	"\x05epoch\x18\a \x01(\rR\x05epoch\"\xdd\x01\n" +
 	"\bSnapshot\x12#\n" +
 	"\x05nodes\x18\x01 \x03(\v2\r.crdt.v1.NodeR\x05nodes\x12,\n" +
 	"\apending\x18\x02 \x03(\v2\x12.crdt.v1.OperationR\apending\x12,\n" +
 	"\x06vector\x18\x03 \x03(\v2\x14.crdt.v1.VectorEntryR\x06vector\x122\n" +
-	"\tcollected\x18\x04 \x03(\v2\x14.crdt.v1.VectorEntryR\tcollectedB7Z5github.com/rowjay007/collab-sphere/gen/crdt/v1;crdtv1b\x06proto3"
+	"\tcollected\x18\x04 \x03(\v2\x14.crdt.v1.VectorEntryR\tcollected\x12\x1c\n" +
+	"\tencrypted\x18\x05 \x01(\bR\tencryptedB7Z5github.com/rowjay007/collab-sphere/gen/crdt/v1;crdtv1b\x06proto3"
 
 var (
 	file_crdt_v1_snapshot_proto_rawDescOnce sync.Once

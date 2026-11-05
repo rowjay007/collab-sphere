@@ -29,7 +29,7 @@ func Text(canonical []byte) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	return d.Text(), nil
+	return d.Text()
 }
 
 // Markdown returns text plus one trailing newline.

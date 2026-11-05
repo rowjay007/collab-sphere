@@ -13,6 +13,15 @@ import (
 	"github.com/rowjay007/collab-sphere/services/version-service/internal/testdb"
 )
 
+func mustText(t testing.TB, d interface{ Text() (string, error) }) string {
+	t.Helper()
+	s, err := d.Text()
+	if err != nil {
+		t.Fatal(err)
+	}
+	return s
+}
+
 func TestMutationResumeAfterEachCrashPoint(t *testing.T) {
 	for _, point := range []string{history.CrashAfterPersist, history.CrashAfterAppend, history.CrashAfterNode} {
 		t.Run(point, func(t *testing.T) {
@@ -276,8 +285,8 @@ func TestMergeNestedAndSiblingBranches(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			if got.Text() != want {
-				t.Fatalf("text %q, want union %q", got.Text(), want)
+			if mustText(t, got) != want {
+				t.Fatalf("text %q, want union %q", mustText(t, got), want)
 			}
 			second, err := h.Merge(ctx, tc.src, tc.dst, "merge-"+tc.name+"-2")
 			if err != nil {
@@ -325,8 +334,8 @@ func TestRestoreNestedBranch(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got.Text() != want.Text() {
-		t.Fatalf("restored %q, want %q", got.Text(), want.Text())
+	if mustText(t, got) != mustText(t, want) {
+		t.Fatalf("restored %q, want %q", mustText(t, got), mustText(t, want))
 	}
 }
 
@@ -357,8 +366,8 @@ func TestMergeIntoUnstartedFork(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got.Text() != want {
-		t.Fatalf("text %q, want union %q", got.Text(), want)
+	if mustText(t, got) != want {
+		t.Fatalf("text %q, want union %q", mustText(t, got), want)
 	}
 }
 
@@ -507,7 +516,7 @@ func unionText(t *testing.T, docs *fakeDocs, ids ...uuid.UUID) string {
 			}
 		}
 	}
-	return acc.Text()
+	return mustText(t, acc)
 }
 
 func (f *fakeDocs) seq(id uuid.UUID) uint64 {

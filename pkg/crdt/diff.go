@@ -54,6 +54,9 @@ func Diff(a, b *Doc) ([]Span, error) {
 	if a == nil || b == nil {
 		return nil, fmt.Errorf("%w: nil document", ErrInvalidOp)
 	}
+	if a.mode == Encrypted || b.mode == Encrypted {
+		return nil, ErrEncrypted
+	}
 	union := New()
 	if err := union.Merge(a); err != nil {
 		return nil, err

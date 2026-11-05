@@ -359,7 +359,11 @@ func (c *testClient) firstAwareness(ctx context.Context) (*collabv1.AwarenessSyn
 func (c *testClient) text() string {
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	return c.replica.Text()
+	text, err := c.replica.Text()
+	if err != nil {
+		return ""
+	}
+	return text
 }
 
 func (c *testClient) snapshot() *crdtv1.Snapshot {

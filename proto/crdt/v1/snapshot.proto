@@ -11,12 +11,16 @@ message OpID {
   uint64 clock = 2;
 }
 
-// Insert with copy set re-creates its parent's character under a new ID, so
-// value equals the parent's value. Only version-service writes copies.
+// Insert with copy set re-creates its parent's character under a new ID.
+// A plain insert carries value and leaves cipher empty. An encrypted insert
+// carries cipher and epoch and leaves value at zero. Only version-service
+// writes copies.
 message Insert {
   OpID parent = 1;
   uint32 value = 2;
   bool copy = 3;
+  bytes cipher = 4;
+  uint32 epoch = 5;
 }
 
 message Delete {
@@ -44,6 +48,8 @@ message Node {
   uint32 value = 3;
   repeated OpID deleted_by = 4;
   bool copy = 5;
+  bytes cipher = 6;
+  uint32 epoch = 7;
 }
 
 // Snapshot is the full replica state. nodes are in document order, so every
@@ -54,4 +60,6 @@ message Snapshot {
   repeated Operation pending = 2;
   repeated VectorEntry vector = 3;
   repeated VectorEntry collected = 4;
+  // encrypted is fixed for the life of the document. Unset means plain.
+  bool encrypted = 5;
 }

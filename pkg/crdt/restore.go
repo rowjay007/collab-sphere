@@ -23,6 +23,9 @@ func PlanRestore(head, target *Doc, r ClientID) ([]Op, error) {
 	if !head.vector.CoversAll(target.vector) {
 		return nil, fmt.Errorf("%w: head does not contain target", ErrInvalidOp)
 	}
+	if head.mode != target.mode {
+		return nil, fmt.Errorf("%w: restore mode mismatch", ErrInvalidOp)
+	}
 	clock := head.clock
 	next := func() (ID, error) {
 		if clock >= math.MaxUint64-1 {
@@ -49,7 +52,16 @@ func PlanRestore(head, target *Doc, r ClientID) ([]Op, error) {
 		if err != nil {
 			return nil, err
 		}
-		ops = append(ops, Insert{ID: id, Parent: c, Value: target.nodes[c].value, Copy: true})
+		op := Insert{ID: id, Parent: c, Copy: true}
+		if target.mode == Encrypted {
+			if target.nodes[c].cipher == nil {
+				return nil, fmt.Errorf("%w: encrypted character %s lacks a cipher", ErrInvalidOp, c)
+			}
+			op.Cipher = cloneCipher(target.nodes[c].cipher)
+		} else {
+			op.Value = target.nodes[c].value
+		}
+		ops = append(ops, op)
 	}
 	for _, id := range head.nodeIDsDFS() {
 		if !head.visibleNode(id) || kept[id] {

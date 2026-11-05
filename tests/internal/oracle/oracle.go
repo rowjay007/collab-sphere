@@ -15,11 +15,14 @@ import (
 )
 
 // Node is one RGA element. DeletedBy is ascending by (clock, client).
+// Cipher and Epoch are set for an encrypted character and ignored by Encode.
 type Node struct {
 	ID, Parent crdt.ID
 	Value      rune
 	Copy       bool
 	DeletedBy  []crdt.ID
+	Epoch      uint32
+	Cipher     []byte
 }
 
 // Entry is one version vector entry.
@@ -89,7 +92,10 @@ func Replay(ops []crdt.Op) (State, error) {
 		dels := slices.Clone(deletes[id])
 		slices.SortFunc(dels, compareID)
 		delete(deletes, id)
-		s.Nodes = append(s.Nodes, Node{ID: id, Parent: ins.Parent, Value: ins.Value, Copy: ins.Copy, DeletedBy: dels})
+		s.Nodes = append(s.Nodes, Node{
+			ID: id, Parent: ins.Parent, Value: ins.Value, Copy: ins.Copy, DeletedBy: dels,
+			Epoch: cipherEpoch(ins), Cipher: cipherBytes(ins),
+		})
 		kids := slices.Clone(children[id])
 		slices.Reverse(kids)
 		stack = append(stack, kids...)
@@ -106,7 +112,13 @@ func Replay(ops []crdt.Op) (State, error) {
 func FromSnapshot(pb *crdtv1.Snapshot) State {
 	var s State
 	for _, n := range pb.GetNodes() {
-		node := Node{ID: fromProto(n.GetId()), Parent: fromProto(n.GetParent()), Value: rune(n.GetValue()), Copy: n.GetCopy()}
+		node := Node{
+			ID: fromProto(n.GetId()), Parent: fromProto(n.GetParent()), Value: rune(n.GetValue()), Copy: n.GetCopy(),
+			Epoch: n.GetEpoch(), Cipher: append([]byte(nil), n.GetCipher()...),
+		}
+		if len(node.Cipher) == 0 {
+			node.Cipher = nil
+		}
 		for _, d := range n.GetDeletedBy() {
 			node.DeletedBy = append(node.DeletedBy, fromProto(d))
 		}
@@ -140,12 +152,30 @@ func sortedEntries(m map[crdt.ClientID]uint64) []Entry {
 func (s State) Ops() []crdt.Op {
 	var ops, dels []crdt.Op
 	for _, n := range s.Nodes {
-		ops = append(ops, crdt.Insert{ID: n.ID, Parent: n.Parent, Value: n.Value, Copy: n.Copy})
+		ins := crdt.Insert{ID: n.ID, Parent: n.Parent, Value: n.Value, Copy: n.Copy}
+		if len(n.Cipher) > 0 {
+			ins.Cipher = &crdt.Ciphertext{Epoch: n.Epoch, Bytes: append([]byte(nil), n.Cipher...)}
+		}
+		ops = append(ops, ins)
 		for _, d := range n.DeletedBy {
 			dels = append(dels, crdt.Delete{ID: d, Target: n.ID})
 		}
 	}
 	return append(ops, dels...)
+}
+
+func cipherEpoch(ins crdt.Insert) uint32 {
+	if ins.Cipher == nil {
+		return 0
+	}
+	return ins.Cipher.Epoch
+}
+
+func cipherBytes(ins crdt.Insert) []byte {
+	if ins.Cipher == nil {
+		return nil
+	}
+	return append([]byte(nil), ins.Cipher.Bytes...)
 }
 
 func visible(n Node) bool { return len(n.DeletedBy) == 0 }

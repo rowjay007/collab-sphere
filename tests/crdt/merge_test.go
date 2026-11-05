@@ -67,7 +67,7 @@ func TestPartitionedTextBranches(t *testing.T) {
 				}
 			}
 		}
-		if text := doc.Text(); text != "Hello beautiful cruel World" && text != "Hello cruel beautiful World" {
+		if text := mustText(t, doc); text != "Hello beautiful cruel World" && text != "Hello cruel beautiful World" {
 			t.Fatalf("interleaved result %q", text)
 		}
 		if canonical == nil {
@@ -149,7 +149,7 @@ func TestRandomizedConvergence(t *testing.T) {
 		}
 	}
 	for i := 1; i < len(replicas); i++ {
-		if replicas[i].Text() != replicas[0].Text() || !proto.Equal(replicas[i].Snapshot(), replicas[0].Snapshot()) {
+		if mustText(t, replicas[i]) != mustText(t, replicas[0]) || !proto.Equal(replicas[i].Snapshot(), replicas[0].Snapshot()) {
 			t.Fatalf("replica %d diverged", i)
 		}
 	}
@@ -168,11 +168,11 @@ func assertAllPermutations(t *testing.T, ops []crdt.Op) {
 		}
 		if canonical == nil {
 			canonical = doc.Snapshot()
-			text = doc.Text()
+			text = mustText(t, doc)
 			return
 		}
-		if doc.Text() != text || !proto.Equal(doc.Snapshot(), canonical) {
-			t.Fatalf("arrival order diverged: %q != %q", doc.Text(), text)
+		if mustText(t, doc) != text || !proto.Equal(doc.Snapshot(), canonical) {
+			t.Fatalf("arrival order diverged: %q != %q", mustText(t, doc), text)
 		}
 	})
 }

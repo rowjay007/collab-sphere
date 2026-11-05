@@ -16,6 +16,15 @@ import (
 	"google.golang.org/grpc/status"
 )
 
+func mustText(t testing.TB, d interface{ Text() (string, error) }) string {
+	t.Helper()
+	s, err := d.Text()
+	if err != nil {
+		t.Fatal(err)
+	}
+	return s
+}
+
 type archivedClient struct {
 	documentv1.DocumentServiceClient
 }
@@ -68,8 +77,8 @@ func TestLoadReturnsOpSeq(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if seq != 7 || doc.Text() != "a" {
-		t.Fatalf("seq=%d text=%q", seq, doc.Text())
+	if seq != 7 || mustText(t, doc) != "a" {
+		t.Fatalf("seq=%d text=%q", seq, mustText(t, doc))
 	}
 }
 

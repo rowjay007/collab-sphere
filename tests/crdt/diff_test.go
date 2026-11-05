@@ -22,11 +22,11 @@ func TestDiffMatchesBruteForceOracle(t *testing.T) {
 			t.Fatal(err)
 		}
 		for name, spans := range map[string][]crdt.Span{"crdt": got, "oracle": want} {
-			if s := spell(spans, crdt.Retained, crdt.Deleted); s != a.Text() {
-				t.Fatalf("seed %d %s: retained+deleted = %q, want a = %q", seed, name, s, a.Text())
+			if s := spell(spans, crdt.Retained, crdt.Deleted); s != mustText(t, a) {
+				t.Fatalf("seed %d %s: retained+deleted = %q, want a = %q", seed, name, s, mustText(t, a))
 			}
-			if s := spell(spans, crdt.Retained, crdt.Inserted); s != b.Text() {
-				t.Fatalf("seed %d %s: retained+inserted = %q, want b = %q", seed, name, s, b.Text())
+			if s := spell(spans, crdt.Retained, crdt.Inserted); s != mustText(t, b) {
+				t.Fatalf("seed %d %s: retained+inserted = %q, want b = %q", seed, name, s, mustText(t, b))
 			}
 		}
 		for _, kind := range []crdt.SpanKind{crdt.Retained, crdt.Inserted, crdt.Deleted} {

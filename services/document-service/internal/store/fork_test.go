@@ -47,7 +47,7 @@ func TestForkCopiesPrefixAndStaysIndependent(t *testing.T) {
 		}
 		if i == 3 {
 			atSeq = 4
-			textAtSeq = r.Text()
+			textAtSeq = mustText(t, r)
 			vecAtSeq = maps.Clone(r.Vector())
 		}
 	}
@@ -71,11 +71,11 @@ func TestForkCopiesPrefixAndStaysIndependent(t *testing.T) {
 	if meta.OpSeq != atSeq {
 		t.Fatalf("fork op_seq %d", meta.OpSeq)
 	}
-	if got.Text() != textAtSeq || !maps.Equal(got.Vector(), vecAtSeq) {
-		t.Fatalf("fork state %q %v, want %q %v", got.Text(), got.Vector(), textAtSeq, vecAtSeq)
+	if mustText(t, got) != textAtSeq || !maps.Equal(got.Vector(), vecAtSeq) {
+		t.Fatalf("fork state %q %v, want %q %v", mustText(t, got), got.Vector(), textAtSeq, vecAtSeq)
 	}
 	srcHead, _ := loadDoc(t, st, src.ID)
-	if srcHead.Text() == textAtSeq {
+	if mustText(t, srcHead) == textAtSeq {
 		t.Fatal("source was still at the fork seq")
 	}
 
@@ -119,13 +119,13 @@ func TestForkCopiesPrefixAndStaysIndependent(t *testing.T) {
 
 	srcAfter, _ := loadDoc(t, st, src.ID)
 	forkAfter, forkMeta := loadDoc(t, st, fork.ID)
-	if srcAfter.Text() == forkAfter.Text() {
-		t.Fatalf("logs coupled: source %q fork %q", srcAfter.Text(), forkAfter.Text())
+	if mustText(t, srcAfter) == mustText(t, forkAfter) {
+		t.Fatalf("logs coupled: source %q fork %q", mustText(t, srcAfter), mustText(t, forkAfter))
 	}
-	if forkAfter.Text() != textAtSeq+"z" {
-		t.Fatalf("fork text %q", forkAfter.Text())
+	if mustText(t, forkAfter) != textAtSeq+"z" {
+		t.Fatalf("fork text %q", mustText(t, forkAfter))
 	}
-	if srcAfter.Text() == textAtSeq+"z" {
+	if mustText(t, srcAfter) == textAtSeq+"z" {
 		t.Fatal("source absorbed the fork append")
 	}
 
@@ -195,7 +195,7 @@ func TestForkLoadStateUsesCopiedSnapshot(t *testing.T) {
 			t.Fatal(err)
 		}
 		ops = append(ops, testdb.ProtoFromInsert(op))
-		textAt[uint64(len(ops))] = r.Text()
+		textAt[uint64(len(ops))] = mustText(t, r)
 		vecAt[uint64(len(ops))] = maps.Clone(r.Vector())
 	}
 	if _, err := st.Append(ctx, src.ID, ops); err != nil {
@@ -213,7 +213,7 @@ func TestForkLoadStateUsesCopiedSnapshot(t *testing.T) {
 			t.Fatal(err)
 		}
 		n := uint64(len(textAt) + 1)
-		textAt[n] = r.Text()
+		textAt[n] = mustText(t, r)
 		vecAt[n] = maps.Clone(r.Vector())
 	}
 
@@ -225,8 +225,8 @@ func TestForkLoadStateUsesCopiedSnapshot(t *testing.T) {
 		t.Fatalf("below seqs %+v", below)
 	}
 	got, _ := loadDoc(t, st, below.ID)
-	if got.Text() != textAt[120] || !maps.Equal(got.Vector(), vecAt[120]) {
-		t.Fatalf("below state %q, want %q", got.Text(), textAt[120])
+	if mustText(t, got) != textAt[120] || !maps.Equal(got.Vector(), vecAt[120]) {
+		t.Fatalf("below state %q, want %q", mustText(t, got), textAt[120])
 	}
 
 	atSnap, err := st.Fork(ctx, src.ID, 150, "at", "snap-at")
@@ -237,8 +237,8 @@ func TestForkLoadStateUsesCopiedSnapshot(t *testing.T) {
 		t.Fatalf("at-snap seqs %+v", atSnap)
 	}
 	got, meta := loadDoc(t, st, atSnap.ID)
-	if meta.SnapshotSeq != 150 || got.Text() != textAt[150] || !maps.Equal(got.Vector(), vecAt[150]) {
-		t.Fatalf("at-snap state %q snap=%d", got.Text(), meta.SnapshotSeq)
+	if meta.SnapshotSeq != 150 || mustText(t, got) != textAt[150] || !maps.Equal(got.Vector(), vecAt[150]) {
+		t.Fatalf("at-snap state %q snap=%d", mustText(t, got), meta.SnapshotSeq)
 	}
 
 	above, err := st.Fork(ctx, src.ID, 160, "above", "snap-above")
@@ -249,13 +249,13 @@ func TestForkLoadStateUsesCopiedSnapshot(t *testing.T) {
 		t.Fatalf("above seqs %+v", above)
 	}
 	got, _ = loadDoc(t, st, above.ID)
-	if got.Text() != textAt[160] || !maps.Equal(got.Vector(), vecAt[160]) {
-		t.Fatalf("above state %q, want %q", got.Text(), textAt[160])
+	if mustText(t, got) != textAt[160] || !maps.Equal(got.Vector(), vecAt[160]) {
+		t.Fatalf("above state %q, want %q", mustText(t, got), textAt[160])
 	}
 
 	srcHead, srcMeta := loadDoc(t, st, src.ID)
-	if srcMeta.OpSeq != 170 || srcHead.Text() != textAt[170] {
-		t.Fatalf("source head %+v %q", srcMeta, srcHead.Text())
+	if srcMeta.OpSeq != 170 || mustText(t, srcHead) != textAt[170] {
+		t.Fatalf("source head %+v %q", srcMeta, mustText(t, srcHead))
 	}
 }
 

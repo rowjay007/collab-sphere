@@ -18,8 +18,8 @@ func TestGCKeepsTombstonesWithChildren(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if removed != 0 || !r.Has(middle) || r.Text() != "ac" {
-		t.Fatalf("removed=%d has(middle)=%v text=%q", removed, r.Has(middle), r.Text())
+	if removed != 0 || !r.Has(middle) || mustText(t, r) != "ac" {
+		t.Fatalf("removed=%d has(middle)=%v text=%q", removed, r.Has(middle), mustText(t, r))
 	}
 }
 
@@ -37,8 +37,8 @@ func TestGCCascadesUpChains(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if removed != 3 || r.Text() != "x" {
-		t.Fatalf("removed=%d text=%q", removed, r.Text())
+	if removed != 3 || mustText(t, r) != "x" {
+		t.Fatalf("removed=%d text=%q", removed, mustText(t, r))
 	}
 }
 
@@ -63,8 +63,8 @@ func TestDeleteOfCollectedTombstoneIsApplied(t *testing.T) {
 	if err != nil || status == Pending {
 		t.Fatalf("late delete status=%v err=%v", status, err)
 	}
-	if doc.Text() != "" {
-		t.Fatalf("text=%q", doc.Text())
+	if mustText(t, doc) != "" {
+		t.Fatalf("text=%q", mustText(t, doc))
 	}
 	if len(doc.pendingDeletes) != 0 || len(doc.Snapshot().Pending) != 0 {
 		t.Fatalf("pending deletes=%d snapshot pending=%d", len(doc.pendingDeletes), len(doc.Snapshot().Pending))
@@ -113,8 +113,8 @@ func TestGCRequiresFIFOReplicaReports(t *testing.T) {
 				}
 			}
 		}
-		if a.Text() == b.Text() || b.Text() != c.Text() {
-			t.Fatalf("texts after unsafe GC: A=%q B=%q C=%q", a.Text(), b.Text(), c.Text())
+		if mustText(t, a) == mustText(t, b) || mustText(t, b) != mustText(t, c) {
+			t.Fatalf("texts after unsafe GC: A=%q B=%q C=%q", mustText(t, a), mustText(t, b), mustText(t, c))
 		}
 	})
 
@@ -139,8 +139,8 @@ func TestGCRequiresFIFOReplicaReports(t *testing.T) {
 			t.Fatal("GC removed tombstone with a delivered child")
 		}
 		for i, doc := range replicas {
-			if doc.Text() != "x" {
-				t.Fatalf("replica %d text=%q", i, doc.Text())
+			if mustText(t, doc) != "x" {
+				t.Fatalf("replica %d text=%q", i, mustText(t, doc))
 			}
 		}
 	})

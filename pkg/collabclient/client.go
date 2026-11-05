@@ -433,7 +433,11 @@ func (c *Client) ResolveAnchor(start, end crdt.ID) (crdt.Range, error) {
 func (c *Client) Text() string {
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	return c.replica.Text()
+	text, err := c.replica.Text()
+	if err != nil {
+		return ""
+	}
+	return text
 }
 
 // Seq returns the highest seq of the hub's op stream this client has applied.

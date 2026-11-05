@@ -17,6 +17,15 @@ import (
 	"github.com/rowjay007/collab-sphere/services/document-service/internal/testdb"
 )
 
+func mustText(t testing.TB, d interface{ Text() (string, error) }) string {
+	t.Helper()
+	s, err := d.Text()
+	if err != nil {
+		t.Fatal(err)
+	}
+	return s
+}
+
 func TestAppendIdempotentAndConflict(t *testing.T) {
 	st, _ := testdb.Open(t)
 	ctx := t.Context()
@@ -92,7 +101,7 @@ func TestSnapshotCadence(t *testing.T) {
 		if _, err := st.Append(ctx, doc.ID, []*crdtv1.Operation{testdb.ProtoFromInsert(op)}); err != nil {
 			t.Fatalf("append %d: %v", i, err)
 		}
-		textAtSeq[uint64(i+1)] = r.Text()
+		textAtSeq[uint64(i+1)] = mustText(t, r)
 	}
 	st.Close()
 	final, err := st.Get(ctx, doc.ID)
@@ -110,8 +119,8 @@ func TestSnapshotCadence(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if snapshotDoc.Text() != textAtSeq[final.SnapshotSeq] {
-		t.Fatalf("snapshot text %q vs %q at seq %d", snapshotDoc.Text(), textAtSeq[final.SnapshotSeq], final.SnapshotSeq)
+	if mustText(t, snapshotDoc) != textAtSeq[final.SnapshotSeq] {
+		t.Fatalf("snapshot text %q vs %q at seq %d", mustText(t, snapshotDoc), textAtSeq[final.SnapshotSeq], final.SnapshotSeq)
 	}
 
 	batchDoc, err := st.Create(ctx, "batch", "owner")
@@ -151,8 +160,8 @@ func TestSnapshotCadence(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if batchSnapshotDoc.Text() != br.Text() {
-		t.Fatalf("batch snapshot text %q vs %q", batchSnapshotDoc.Text(), br.Text())
+	if mustText(t, batchSnapshotDoc) != mustText(t, br) {
+		t.Fatalf("batch snapshot text %q vs %q", mustText(t, batchSnapshotDoc), mustText(t, br))
 	}
 }
 
@@ -330,8 +339,8 @@ func TestRestoreEquivalence(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	if restored.Text() != r.Text() {
-		t.Fatalf("text %q vs %q", restored.Text(), r.Text())
+	if mustText(t, restored) != mustText(t, r) {
+		t.Fatalf("text %q vs %q", mustText(t, restored), mustText(t, r))
 	}
 	if !proto.Equal(restored.Snapshot(), r.Snapshot()) {
 		t.Fatalf("snapshots differ")
@@ -438,8 +447,8 @@ func TestConcurrentAppends(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	if restored.Text() != merged.Text() {
-		t.Fatalf("merged text %q vs %q", restored.Text(), merged.Text())
+	if mustText(t, restored) != mustText(t, merged) {
+		t.Fatalf("merged text %q vs %q", mustText(t, restored), mustText(t, merged))
 	}
 }
 

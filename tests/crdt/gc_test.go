@@ -19,7 +19,7 @@ func TestGC(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	before := replica.Text()
+	before := mustText(t, replica)
 	if _, err := replica.GC(crdt.VersionVector{1: deleteOp.ID.Clock + 1}); !errors.Is(err, crdt.ErrInvalidOp) {
 		t.Fatalf("uncovered stable vector: %v", err)
 	}
@@ -27,8 +27,8 @@ func TestGC(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if removed != 1 || replica.Text() != before || replica.Has(inserts[1].ID) {
-		t.Fatalf("removed=%d text=%q has=%v", removed, replica.Text(), replica.Has(inserts[1].ID))
+	if removed != 1 || mustText(t, replica) != before || replica.Has(inserts[1].ID) {
+		t.Fatalf("removed=%d text=%q has=%v", removed, mustText(t, replica), replica.Has(inserts[1].ID))
 	}
 	if status, err := replica.Apply(inserts[1]); err != nil || status != crdt.Duplicate {
 		t.Fatalf("late insert: %v, %v", status, err)
@@ -99,10 +99,10 @@ func TestGCReplicasConvergeWithUncollectedReplicas(t *testing.T) {
 			edit(150)
 			syncAll()
 
-			want := replicas[3].Text()
+			want := mustText(t, replicas[3])
 			for i, r := range replicas {
-				if r.Text() != want {
-					t.Fatalf("replica %d (collected %d tombstones) diverged:\n got %q\nwant %q", i, collected, r.Text(), want)
+				if mustText(t, r) != want {
+					t.Fatalf("replica %d (collected %d tombstones) diverged:\n got %q\nwant %q", i, collected, mustText(t, r), want)
 				}
 			}
 		})

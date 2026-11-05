@@ -223,7 +223,7 @@ func TestStaleLeaveAfterFailStopDoesNotStopNewHub(t *testing.T) {
 	bobSession.SubmitOps(ctx, []crdt.Op{crdt.Insert{ID: crdt.ID{Clock: 1, Client: 2}, Parent: crdt.Root, Value: 'b'}})
 	deadline := time.Now().Add(2 * time.Second)
 	for time.Now().Before(deadline) {
-		if doc := store.Doc("doc"); doc != nil && doc.Text() == "b" {
+		if doc := store.Doc("doc"); doc != nil && docText(t, doc) == "b" {
 			break
 		}
 		time.Sleep(10 * time.Millisecond)
@@ -233,7 +233,7 @@ func TestStaleLeaveAfterFailStopDoesNotStopNewHub(t *testing.T) {
 		t.Fatal("alice's stale Leave stopped the hub bob joined")
 	default:
 	}
-	if doc := store.Doc("doc"); doc == nil || doc.Text() != "b" {
+	if doc := store.Doc("doc"); doc == nil || docText(t, doc) != "b" {
 		t.Fatalf("bob's op was not persisted by his hub")
 	}
 }

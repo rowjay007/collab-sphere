@@ -46,7 +46,10 @@ func Settle(t *testing.T, ctx context.Context, docs documentv1.DocumentServiceCl
 	}
 	stored, _ := loadState(t, ctx, docs, docID)
 	want := stored.Snapshot()
-	text := stored.Text()
+	text, err := stored.Text()
+	if err != nil {
+		t.Fatal(err)
+	}
 	for i, c := range clients {
 		for _, err := range c.Errors() {
 			if err.GetCode() != collabv1.ErrorMessage_CODE_UNAVAILABLE {
@@ -69,7 +72,11 @@ func Settle(t *testing.T, ctx context.Context, docs documentv1.DocumentServiceCl
 func LoadText(t *testing.T, ctx context.Context, docs documentv1.DocumentServiceClient, docID string) (string, *documentv1.Document) {
 	t.Helper()
 	doc, meta := loadState(t, ctx, docs, docID)
-	return doc.Text(), meta
+	text, err := doc.Text()
+	if err != nil {
+		t.Fatal(err)
+	}
+	return text, meta
 }
 
 // AssertExactlyOnce checks that the log holds each generated op exactly once:

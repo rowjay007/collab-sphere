@@ -68,8 +68,8 @@ func TestOperationClockBeyondHubFrontierIsRejected(t *testing.T) {
 	case <-ctx.Done():
 		t.Fatal("peer remained connected after invalid clock")
 	}
-	if doc := store.Doc("doc"); doc != nil && doc.Text() != "" {
-		t.Fatalf("stored text = %q", doc.Text())
+	if doc := store.Doc("doc"); doc != nil && docText(t, doc) != "" {
+		t.Fatalf("stored text = %q", docText(t, doc))
 	}
 }
 
@@ -117,7 +117,7 @@ func TestInvalidCursorIsIgnored(t *testing.T) {
 func waitForStoredText(t *testing.T, ctx context.Context, store *MemoryStore, docID, want string) {
 	t.Helper()
 	for {
-		if doc := store.Doc(docID); doc != nil && doc.Text() == want {
+		if doc := store.Doc(docID); doc != nil && docText(t, doc) == want {
 			return
 		}
 		select {

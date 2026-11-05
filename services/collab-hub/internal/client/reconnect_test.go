@@ -88,7 +88,12 @@ func converge(t *testing.T, ctx context.Context, store *hub.MemoryStore, clients
 			return proto.Equal(r.Snapshot(), store.Doc(canonicalTestDocumentID("doc")).Snapshot())
 		})
 		if err != nil {
-			t.Fatalf("client %d: %q never matched the log %q: %v", i, c.Text(), store.Doc(canonicalTestDocumentID("doc")).Text(), err)
+			logDoc := store.Doc(canonicalTestDocumentID("doc"))
+			logText, textErr := logDoc.Text()
+			if textErr != nil {
+				t.Fatal(textErr)
+			}
+			t.Fatalf("client %d: %q never matched the log %q: %v", i, c.Text(), logText, err)
 		}
 	}
 }

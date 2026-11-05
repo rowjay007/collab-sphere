@@ -207,7 +207,10 @@ func TestRestoreLive(t *testing.T) {
 func waitText(t *testing.T, ctx context.Context, clients []*collabclient.Client, want string) {
 	t.Helper()
 	for i, c := range clients {
-		if err := c.WaitUntil(ctx, func(r *crdt.Replica) bool { return r.Text() == want }); err != nil {
+		if err := c.WaitUntil(ctx, func(r *crdt.Replica) bool {
+			text, err := r.Text()
+			return err == nil && text == want
+		}); err != nil {
 			t.Fatalf("client %d text %q, want %q: %v", i, c.Text(), want, err)
 		}
 	}
@@ -277,7 +280,11 @@ func mergeOracle(t *testing.T, ctx context.Context, vs versionv1.VersionServiceC
 			}
 		}
 	}
-	return doc.Text()
+	text, err := doc.Text()
+	if err != nil {
+		t.Fatal(err)
+	}
+	return text
 }
 
 func TestHubRefusesSystemReplica(t *testing.T) {

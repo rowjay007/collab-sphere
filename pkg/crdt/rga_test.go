@@ -11,6 +11,15 @@ import (
 	crdtv1 "github.com/rowjay007/collab-sphere/gen/crdt/v1"
 )
 
+func mustText(t testing.TB, d interface{ Text() (string, error) }) string {
+	t.Helper()
+	s, err := d.Text()
+	if err != nil {
+		t.Fatal(err)
+	}
+	return s
+}
+
 func TestReplicaMatchesRuneModel(t *testing.T) {
 	replica, err := NewReplica(7, nil)
 	if err != nil {
@@ -33,7 +42,7 @@ func TestReplicaMatchesRuneModel(t *testing.T) {
 			}
 			model = slices.Delete(model, index, index+1)
 		}
-		if got := replica.Text(); got != string(model) {
+		if got := mustText(t, replica); got != string(model) {
 			t.Fatalf("step %d: got %q, want %q", step, got, string(model))
 		}
 	}
@@ -104,7 +113,7 @@ func TestReplicaEditsByID(t *testing.T) {
 	if _, err := r.Delete(cursor); err != nil {
 		t.Fatal(err)
 	}
-	if got := r.Text(); got != "hell" {
+	if got := mustText(t, r); got != "hell" {
 		t.Fatalf("text = %q, want %q", got, "hell")
 	}
 
@@ -185,8 +194,9 @@ func TestDeepChainUsesIterativeTraversal(t *testing.T) {
 		}
 		parent = op.ID
 	}
-	if doc.Len() != count || len(doc.Text()) != count {
-		t.Fatalf("len=%d bytes=%d", doc.Len(), len(doc.Text()))
+	got := mustText(t, doc)
+	if doc.Len() != count || len(got) != count {
+		t.Fatalf("len=%d bytes=%d", doc.Len(), len(got))
 	}
 }
 
@@ -219,6 +229,6 @@ func BenchmarkText(b *testing.B) {
 	}
 	b.ResetTimer()
 	for range b.N {
-		_ = doc.Text()
+		_ = mustText(b, doc)
 	}
 }

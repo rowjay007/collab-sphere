@@ -550,6 +550,44 @@ func (h *Hub) handleOpsGroup(first opsEvent) (event, bool) {
 	return nil, h.persist(accepted)
 }
 
+func cipherProblem(mode crdt.Mode, op crdt.Op) string {
+	ins, ok := asInsert(op)
+	if !ok {
+		return ""
+	}
+	if ins.Cipher != nil && ins.Value != 0 {
+		return "operation does not match document mode"
+	}
+	if mode == crdt.Encrypted {
+		if ins.Cipher == nil {
+			return "operation does not match document mode"
+		}
+		n := len(ins.Cipher.Bytes)
+		if n < 17 || n > 20 {
+			return "cipher length out of range"
+		}
+		return ""
+	}
+	if ins.Cipher != nil {
+		return "operation does not match document mode"
+	}
+	return ""
+}
+
+func asInsert(op crdt.Op) (crdt.Insert, bool) {
+	switch op := op.(type) {
+	case crdt.Insert:
+		return op, true
+	case *crdt.Insert:
+		if op == nil {
+			return crdt.Insert{}, false
+		}
+		return *op, true
+	default:
+		return crdt.Insert{}, false
+	}
+}
+
 func (h *Hub) applyOps(ev opsEvent) []crdt.Op {
 	if h.dead {
 		return nil
@@ -560,6 +598,10 @@ func (h *Hub) applyOps(ev opsEvent) []crdt.Op {
 	}
 	accepted := make([]crdt.Op, 0, len(ev.ops))
 	for _, op := range ev.ops {
+		if msg := cipherProblem(h.doc.Mode(), op); msg != "" {
+			h.rejectOperation(p, collabv1.ErrorMessage_CODE_INVALID_OPERATION, msg)
+			break
+		}
 		if op.OpID().Client != ev.id {
 			h.rejectOperation(p, collabv1.ErrorMessage_CODE_CLIENT_MISMATCH, "operation client does not match connection")
 			break

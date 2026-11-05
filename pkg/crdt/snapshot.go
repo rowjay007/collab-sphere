@@ -14,6 +14,7 @@ func (d *Doc) Snapshot() *crdtv1.Snapshot {
 	if d == nil {
 		return snapshot
 	}
+	snapshot.Encrypted = d.mode == Encrypted
 	for _, id := range d.nodeIDsDFS() {
 		n := d.nodes[id]
 		pbNode := &crdtv1.Node{
@@ -21,6 +22,10 @@ func (d *Doc) Snapshot() *crdtv1.Snapshot {
 			Parent: idToProto(n.parent),
 			Value:  uint32(n.value),
 			Copy:   n.copy,
+		}
+		if n.cipher != nil {
+			pbNode.Cipher = append([]byte(nil), n.cipher.Bytes...)
+			pbNode.Epoch = n.cipher.Epoch
 		}
 		for _, deleteID := range n.deletedBy {
 			pbNode.DeletedBy = append(pbNode.DeletedBy, idToProto(deleteID))
@@ -64,6 +69,9 @@ func FromSnapshot(snapshot *crdtv1.Snapshot) (*Doc, error) {
 	}
 
 	d := New()
+	if snapshot.Encrypted {
+		d.mode = Encrypted
+	}
 	d.vector = vector
 	d.collected = collected
 	seen := make(map[ID]struct{})
@@ -75,11 +83,11 @@ func FromSnapshot(snapshot *crdtv1.Snapshot) (*Doc, error) {
 		}
 		id := idFromProto(pbNode.Id)
 		parent := idFromProto(pbNode.Parent)
-		op := Insert{ID: id, Parent: parent, Value: rune(pbNode.Value), Copy: pbNode.Copy}
-		if uint32(op.Value) != pbNode.Value {
-			return nil, fmt.Errorf("%w: invalid rune", ErrInvalidOp)
+		op, err := insertFromNode(pbNode, id, parent)
+		if err != nil {
+			return nil, err
 		}
-		if err := validateInsert(op); err != nil {
+		if err := d.matchesMode(op); err != nil {
 			return nil, err
 		}
 		if _, exists := seen[id]; exists {
@@ -90,7 +98,7 @@ func FromSnapshot(snapshot *crdtv1.Snapshot) (*Doc, error) {
 			if !exists {
 				return nil, fmt.Errorf("%w: parent does not precede child", ErrInvalidOp)
 			}
-			if op.Copy && parentNode.value != op.Value {
+			if op.Copy && !copyMatches(parentNode, op) {
 				return nil, fmt.Errorf("%w: copy value differs from its parent", ErrInvalidOp)
 			}
 		}
@@ -99,7 +107,7 @@ func FromSnapshot(snapshot *crdtv1.Snapshot) (*Doc, error) {
 		}
 		lastChild[parent] = id
 		seen[id] = struct{}{}
-		n := &node{id: id, parent: parent, value: op.Value, copy: op.Copy}
+		n := &node{id: id, parent: parent, value: op.Value, cipher: op.Cipher, copy: op.Copy}
 		var previousDelete ID
 		for i, pbDeleteID := range pbNode.DeletedBy {
 			if pbDeleteID == nil {
@@ -159,9 +167,13 @@ func FromSnapshot(snapshot *crdtv1.Snapshot) (*Doc, error) {
 		seen[id] = struct{}{}
 		switch op := op.(type) {
 		case Insert:
+			if err := d.matchesMode(op); err != nil {
+				return nil, err
+			}
 			if d.Has(op.Parent) || d.collected.Covers(op.Parent) {
 				return nil, fmt.Errorf("%w: insert is not pending", ErrInvalidOp)
 			}
+			op.Cipher = cloneCipher(op.Cipher)
 			d.inserts[op.ID] = op
 			d.pendingInserts[op.ID] = op
 			d.waitingInserts[op.Parent] = append(d.waitingInserts[op.Parent], op.ID)
@@ -194,12 +206,8 @@ func OpToProto(op Op) *crdtv1.Operation {
 	switch op := op.(type) {
 	case Insert:
 		return &crdtv1.Operation{
-			Id: idToProto(op.ID),
-			Kind: &crdtv1.Operation_Insert{Insert: &crdtv1.Insert{
-				Parent: idToProto(op.Parent),
-				Value:  uint32(op.Value),
-				Copy:   op.Copy,
-			}},
+			Id:   idToProto(op.ID),
+			Kind: &crdtv1.Operation_Insert{Insert: insertToProto(op)},
 		}
 	case *Insert:
 		if op == nil {
@@ -237,12 +245,8 @@ func OpFromProto(pbOp *crdtv1.Operation) (Op, error) {
 		if kind.Insert == nil || kind.Insert.Parent == nil {
 			return nil, fmt.Errorf("%w: missing insert", ErrInvalidOp)
 		}
-		value := rune(kind.Insert.Value)
-		if uint32(value) != kind.Insert.Value || !utf8.ValidRune(value) {
-			return nil, fmt.Errorf("%w: invalid rune", ErrInvalidOp)
-		}
-		op := Insert{ID: id, Parent: idFromProto(kind.Insert.Parent), Value: value, Copy: kind.Insert.Copy}
-		if err := validateInsert(op); err != nil {
+		op, err := insertFromProto(id, kind.Insert)
+		if err != nil {
 			return nil, err
 		}
 		return op, nil
@@ -259,6 +263,45 @@ func OpFromProto(pbOp *crdtv1.Operation) (Op, error) {
 	default:
 		return nil, fmt.Errorf("%w: missing operation kind", ErrInvalidOp)
 	}
+}
+
+func insertToProto(op Insert) *crdtv1.Insert {
+	ins := &crdtv1.Insert{Parent: idToProto(op.Parent), Copy: op.Copy, Value: uint32(op.Value)}
+	if op.Cipher != nil {
+		ins.Cipher = append([]byte(nil), op.Cipher.Bytes...)
+		ins.Epoch = op.Cipher.Epoch
+	}
+	return ins
+}
+
+func insertFromProto(id ID, pb *crdtv1.Insert) (Insert, error) {
+	return insertFromFields(id, idFromProto(pb.Parent), pb.Value, pb.Copy, pb.Cipher, pb.Epoch)
+}
+
+func insertFromNode(pb *crdtv1.Node, id, parent ID) (Insert, error) {
+	return insertFromFields(id, parent, pb.Value, pb.Copy, pb.Cipher, pb.Epoch)
+}
+
+func insertFromFields(id, parent ID, value uint32, copy bool, cipher []byte, epoch uint32) (Insert, error) {
+	if len(cipher) == 0 && epoch != 0 {
+		return Insert{}, fmt.Errorf("%w: epoch without cipher", ErrInvalidOp)
+	}
+	op := Insert{ID: id, Parent: parent, Copy: copy, Value: rune(value)}
+	if uint32(op.Value) != value {
+		return Insert{}, fmt.Errorf("%w: invalid rune", ErrInvalidOp)
+	}
+	if len(cipher) > 0 {
+		op.Cipher = &Ciphertext{Epoch: epoch, Bytes: append([]byte(nil), cipher...)}
+	} else if !utf8.ValidRune(op.Value) {
+		return Insert{}, fmt.Errorf("%w: invalid rune", ErrInvalidOp)
+	}
+	if err := validateInsert(op); err != nil {
+		return Insert{}, err
+	}
+	if err := validateInsertShape(op); err != nil {
+		return Insert{}, err
+	}
+	return op, nil
 }
 
 func idToProto(id ID) *crdtv1.OpID {

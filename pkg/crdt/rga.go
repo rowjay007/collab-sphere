@@ -12,6 +12,7 @@ type node struct {
 	id        ID
 	parent    ID
 	value     rune
+	cipher    *Ciphertext
 	copy      bool
 	children  []ID
 	deletedBy []ID
@@ -31,6 +32,22 @@ type Doc struct {
 	collected      VersionVector
 	clock          uint64
 	visible        int
+	mode           Mode
+}
+
+// NewEncrypted returns an empty encrypted document. The mode never changes.
+func NewEncrypted() *Doc {
+	d := New()
+	d.mode = Encrypted
+	return d
+}
+
+// Mode returns the document mode.
+func (d *Doc) Mode() Mode {
+	if d == nil {
+		return Plain
+	}
+	return d.mode
 }
 
 // New returns an empty document.
@@ -77,8 +94,15 @@ func (d *Doc) applyInsert(op Insert) (Status, error) {
 	if err := validateInsert(op); err != nil {
 		return 0, err
 	}
+	if err := validateInsertShape(op); err != nil {
+		return 0, err
+	}
+	if err := d.matchesMode(op); err != nil {
+		return 0, err
+	}
+	op.Cipher = cloneCipher(op.Cipher)
 	if existing, ok := d.inserts[op.ID]; ok {
-		if existing == op {
+		if sameInsert(existing, op) {
 			return Duplicate, nil
 		}
 		return 0, fmt.Errorf("%w: insert ID %s", ErrConflict, op.ID)
@@ -92,7 +116,7 @@ func (d *Doc) applyInsert(op Insert) (Status, error) {
 	if !d.Has(op.Parent) && d.collected.Covers(op.Parent) {
 		return 0, fmt.Errorf("%w: parent %s was collected", ErrInvalidOp, op.Parent)
 	}
-	if parent, ok := d.nodes[op.Parent]; ok && op.Copy && parent.value != op.Value {
+	if parent, ok := d.nodes[op.Parent]; ok && op.Copy && !copyMatches(parent, op) {
 		return 0, fmt.Errorf("%w: copy value differs from its parent", ErrInvalidOp)
 	}
 
@@ -124,10 +148,30 @@ func validateInsert(op Insert) error {
 	if op.ID.Clock <= op.Parent.Clock {
 		return fmt.Errorf("%w: insert clock does not follow parent", ErrInvalidOp)
 	}
-	if !utf8.ValidRune(op.Value) {
+	if op.Cipher == nil && !utf8.ValidRune(op.Value) {
 		return fmt.Errorf("%w: invalid rune", ErrInvalidOp)
 	}
 	return nil
+}
+
+func (d *Doc) matchesMode(op Insert) error {
+	if d.mode == Encrypted {
+		if op.Cipher == nil {
+			return fmt.Errorf("%w: encrypted document requires a cipher", ErrInvalidOp)
+		}
+		return nil
+	}
+	if op.Cipher != nil {
+		return fmt.Errorf("%w: plain document requires a rune", ErrInvalidOp)
+	}
+	return nil
+}
+
+func copyMatches(parent *node, op Insert) bool {
+	if parent.cipher != nil || op.Cipher != nil {
+		return sameCipher(parent.cipher, op.Cipher)
+	}
+	return parent.value == op.Value
 }
 
 func (d *Doc) integrate(first Insert) {
@@ -137,7 +181,7 @@ func (d *Doc) integrate(first Insert) {
 		queue = queue[1:]
 		delete(d.pendingInserts, op.ID)
 
-		n := &node{id: op.ID, parent: op.Parent, value: op.Value, copy: op.Copy}
+		n := &node{id: op.ID, parent: op.Parent, value: op.Value, cipher: op.Cipher, copy: op.Copy}
 		d.nodes[op.ID] = n
 		if op.Parent.IsRoot() {
 			d.rootChildren = insertIDDescending(d.rootChildren, op.ID)
@@ -268,10 +312,17 @@ func (d *Doc) Contains(id ID) bool {
 	return d.collected.Covers(id)
 }
 
-// Text returns the visible document text.
-func (d *Doc) Text() string {
-	if d == nil || d.visible == 0 {
-		return ""
+// Text returns the visible document text. An encrypted document returns
+// ErrEncrypted because the server has no key.
+func (d *Doc) Text() (string, error) {
+	if d == nil {
+		return "", nil
+	}
+	if d.mode == Encrypted {
+		return "", ErrEncrypted
+	}
+	if d.visible == 0 {
+		return "", nil
 	}
 	var text strings.Builder
 	stack := make([]ID, 0, len(d.nodes))
@@ -285,7 +336,7 @@ func (d *Doc) Text() string {
 		}
 		pushReverse(&stack, n.children)
 	}
-	return text.String()
+	return text.String(), nil
 }
 
 // Len returns the number of visible runes.

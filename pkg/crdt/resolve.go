@@ -9,6 +9,7 @@ import (
 // first and last visible nodes in it; Detached means there are none.
 type Range struct {
 	Detached    bool
+	TextOmitted bool
 	First, Last ID
 	Text        string
 }
@@ -59,6 +60,8 @@ func (d *Doc) ResolveRange(start, end ID) (Range, error) {
 	var r Range
 	var text strings.Builder
 	inside := false
+	seen := false
+	omitted := d.mode == Encrypted
 	stack := make([]ID, 0, len(d.nodes))
 	pushReverse(&stack, d.rootChildren)
 	for len(stack) > 0 {
@@ -69,21 +72,25 @@ func (d *Doc) ResolveRange(start, end ID) (Range, error) {
 			inside = true
 		}
 		if inside && len(n.deletedBy) == 0 {
-			if text.Len() == 0 {
+			if !seen {
 				r.First = id
 			}
 			r.Last = id
-			text.WriteRune(n.value)
+			seen = true
+			if !omitted {
+				text.WriteRune(n.value)
+			}
 		}
 		if id == end {
 			break
 		}
 		pushReverse(&stack, n.children)
 	}
-	if text.Len() == 0 {
-		return Range{Detached: true}, nil
+	if !seen {
+		return Range{Detached: true, TextOmitted: omitted}, nil
 	}
 	r.Text = text.String()
+	r.TextOmitted = omitted
 	return r, nil
 }
 

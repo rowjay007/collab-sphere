@@ -66,7 +66,7 @@ func TestResolveRangeEdges(t *testing.T) {
 			t.Fatal(err)
 		}
 		if got.Detached || got.Text != want {
-			t.Fatalf("range = %+v, want %q in %q", got, want, r.Text())
+			t.Fatalf("range = %+v, want %q in %q", got, want, mustText(t, r))
 		}
 	}
 	expect("bcd")

@@ -7,6 +7,15 @@ import (
 	"github.com/rowjay007/collab-sphere/pkg/crdt"
 )
 
+func mustText(t testing.TB, d interface{ Text() (string, error) }) string {
+	t.Helper()
+	s, err := d.Text()
+	if err != nil {
+		t.Fatal(err)
+	}
+	return s
+}
+
 // history drives one fork tree through random edits, forks, merges, saved
 // versions and restores. Every client authors ops in exactly one document,
 // as homed replicas do, so each document holds a prefix of every client's

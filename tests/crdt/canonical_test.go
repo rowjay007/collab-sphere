@@ -73,8 +73,8 @@ func TestCanonicalGoldenVectors(t *testing.T) {
 		if err != nil {
 			t.Fatalf("%s: FromCanonical: %v", tc.name, err)
 		}
-		if back.Text() != tc.doc.Text() {
-			t.Errorf("%s: decoded text %q, want %q", tc.name, back.Text(), tc.doc.Text())
+		if mustText(t, back) != mustText(t, tc.doc) {
+			t.Errorf("%s: decoded text %q, want %q", tc.name, mustText(t, back), mustText(t, tc.doc))
 		}
 	}
 }
@@ -156,7 +156,7 @@ func assertEncodersAgree(t *testing.T, d *crdt.Doc, s oracle.State) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !bytes.Equal(again, got) || back.Text() != d.Text() {
+	if !bytes.Equal(again, got) || mustText(t, back) != mustText(t, d) {
 		t.Fatal("FromCanonical does not round-trip")
 	}
 }

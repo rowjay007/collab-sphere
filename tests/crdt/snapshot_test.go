@@ -31,7 +31,7 @@ func TestSnapshotRoundTripWithPending(t *testing.T) {
 	if _, err := restored.Apply(first); err != nil {
 		t.Fatal(err)
 	}
-	if doc.Text() != restored.Text() || !proto.Equal(doc.Snapshot(), restored.Snapshot()) {
+	if mustText(t, doc) != mustText(t, restored) || !proto.Equal(doc.Snapshot(), restored.Snapshot()) {
 		t.Fatal("restored document diverged")
 	}
 }

@@ -183,7 +183,7 @@ func assertConverged(t *testing.T, store *MemoryStore, streams ...*stream) {
 	for i, s := range streams {
 		_, _, doc, _ := s.snapshot()
 		if !proto.Equal(doc.Snapshot(), want) {
-			t.Fatalf("stream %d diverged from the log: %q vs %q", i, doc.Text(), store.Doc("doc").Text())
+			t.Fatalf("stream %d diverged from the log: %q vs %q", i, docText(t, doc), docText(t, store.Doc("doc")))
 		}
 	}
 }

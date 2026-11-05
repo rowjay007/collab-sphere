@@ -13,7 +13,7 @@ func TestPlanRestoreReachesTargetAndIsIdempotent(t *testing.T) {
 		h := newHistory(t, seed).run(60)
 		for _, r := range h.restores {
 			restores++
-			if got, want := r.result.Text(), r.target.Text(); got != want {
+			if got, want := mustText(t, r.result), mustText(t, r.target); got != want {
 				t.Fatalf("seed %d: restored text %q, want %q", seed, got, want)
 			}
 			again, err := crdt.PlanRestore(r.result, r.target, r.system)
@@ -76,7 +76,7 @@ func TestPlanRestoreCommutesWithConcurrentEdits(t *testing.T) {
 			t.Fatal(err)
 		}
 		if !bytes.Equal(x, y) {
-			t.Fatalf("seed %d: plan and concurrent edits do not commute: %q vs %q", seed, planFirst.Text(), editsFirst.Text())
+			t.Fatalf("seed %d: plan and concurrent edits do not commute: %q vs %q", seed, mustText(t, planFirst), mustText(t, editsFirst))
 		}
 		planned++
 	}
@@ -103,16 +103,16 @@ func TestPlanRestoreSkipsCopyBehindTargetText(t *testing.T) {
 	if err := d.Merge(q); err != nil {
 		t.Fatal(err)
 	}
-	if d.Text() != "yxta" {
-		t.Fatalf("merged text = %q, want the branch copy behind t", d.Text())
+	if mustText(t, d) != "yxta" {
+		t.Fatalf("merged text = %q, want the branch copy behind t", mustText(t, d))
 	}
 	plan, err := crdt.PlanRestore(d, v, 9)
 	if err != nil {
 		t.Fatal(err)
 	}
 	applyAll(t, d, plan)
-	if d.Text() != v.Text() {
-		t.Fatalf("restored text = %q, want %q", d.Text(), v.Text())
+	if mustText(t, d) != mustText(t, v) {
+		t.Fatalf("restored text = %q, want %q", mustText(t, d), mustText(t, v))
 	}
 }
 

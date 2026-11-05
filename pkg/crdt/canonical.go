@@ -10,7 +10,10 @@ import (
 	crdtv1 "github.com/rowjay007/collab-sphere/gen/crdt/v1"
 )
 
-const canonicalMagic = "CSS1"
+const (
+	canonicalMagic  = "CSS1"
+	canonicalMagic2 = "CSS2"
+)
 
 const flagCopy = 1
 
@@ -20,6 +23,9 @@ const flagCopy = 1
 func CanonicalBytes(d *Doc) ([]byte, error) {
 	if d == nil {
 		return nil, fmt.Errorf("%w: nil document", ErrInvalidOp)
+	}
+	if d.mode == Encrypted {
+		return nil, ErrEncrypted
 	}
 	if len(d.pendingInserts) != 0 || len(d.pendingDeletes) != 0 {
 		return nil, ErrPending
@@ -48,9 +54,58 @@ func CanonicalBytes(d *Doc) ([]byte, error) {
 	return b, nil
 }
 
-// FromCanonical decodes CanonicalBytes output. It re-encodes the result and
-// requires byte equality, so every state has exactly one accepted encoding.
+// CanonicalCSS2 encodes an encrypted document. The layout is the phase 4
+// CSS2 rule. A plain document has no CSS2 form.
+func CanonicalCSS2(d *Doc) ([]byte, error) {
+	if d == nil {
+		return nil, fmt.Errorf("%w: nil document", ErrInvalidOp)
+	}
+	if d.mode != Encrypted {
+		return nil, fmt.Errorf("%w: CSS2 requires an encrypted document", ErrInvalidOp)
+	}
+	if len(d.pendingInserts) != 0 || len(d.pendingDeletes) != 0 {
+		return nil, ErrPending
+	}
+	ids := d.nodeIDsDFS()
+	b := make([]byte, 0, len(canonicalMagic2)+24*len(ids))
+	b = append(b, canonicalMagic2...)
+	b = binary.AppendUvarint(b, uint64(len(ids)))
+	for _, id := range ids {
+		n := d.nodes[id]
+		if n.cipher == nil {
+			return nil, fmt.Errorf("%w: encrypted node lacks a cipher", ErrInvalidOp)
+		}
+		b = appendCanonicalID(b, n.id)
+		b = appendCanonicalID(b, n.parent)
+		b = binary.AppendUvarint(b, uint64(n.cipher.Epoch))
+		b = binary.AppendUvarint(b, uint64(len(n.cipher.Bytes)))
+		b = append(b, n.cipher.Bytes...)
+		var flags uint64
+		if n.copy {
+			flags |= flagCopy
+		}
+		b = binary.AppendUvarint(b, flags)
+		b = binary.AppendUvarint(b, uint64(len(n.deletedBy)))
+		for _, deleteID := range n.deletedBy {
+			b = appendCanonicalID(b, deleteID)
+		}
+	}
+	b = appendCanonicalVector(b, d.vector)
+	b = appendCanonicalVector(b, d.collected)
+	return b, nil
+}
+
+// FromCanonical decodes CanonicalBytes or CanonicalCSS2 output. It dispatches
+// on the magic, re-encodes the result, and requires byte equality, so every
+// state has exactly one accepted encoding.
 func FromCanonical(b []byte) (*Doc, error) {
+	if bytes.HasPrefix(b, []byte(canonicalMagic2)) {
+		return fromCanonicalCSS2(b)
+	}
+	return fromCanonicalCSS1(b)
+}
+
+func fromCanonicalCSS1(b []byte) (*Doc, error) {
 	r := canonicalReader{b: b}
 	if !bytes.HasPrefix(b, []byte(canonicalMagic)) {
 		return nil, fmt.Errorf("%w: canonical snapshot lacks %q", ErrInvalidOp, canonicalMagic)
@@ -103,6 +158,56 @@ func FromCanonical(b []byte) (*Doc, error) {
 	return d, nil
 }
 
+func fromCanonicalCSS2(b []byte) (*Doc, error) {
+	r := canonicalReader{b: b[len(canonicalMagic2):]}
+	snapshot := &crdtv1.Snapshot{Encrypted: true}
+	nodes := r.count(8)
+	for range nodes {
+		if r.err != nil {
+			break
+		}
+		pbNode := &crdtv1.Node{Id: r.id(), Parent: r.id()}
+		epoch := r.uvarint()
+		if epoch > math.MaxUint32 {
+			r.fail("epoch overflows uint32")
+		}
+		pbNode.Epoch = uint32(epoch)
+		pbNode.Cipher = r.raw(r.uvarint())
+		switch flags := r.uvarint(); flags {
+		case 0:
+		case flagCopy:
+			pbNode.Copy = true
+		default:
+			r.fail(fmt.Sprintf("unknown node flags %d", flags))
+		}
+		deletes := r.count(2)
+		for range deletes {
+			pbNode.DeletedBy = append(pbNode.DeletedBy, r.id())
+		}
+		snapshot.Nodes = append(snapshot.Nodes, pbNode)
+	}
+	snapshot.Vector = r.vector()
+	snapshot.Collected = r.vector()
+	if r.err == nil && len(r.b) != 0 {
+		r.fail("trailing bytes")
+	}
+	if r.err != nil {
+		return nil, r.err
+	}
+	d, err := FromSnapshot(snapshot)
+	if err != nil {
+		return nil, err
+	}
+	again, err := CanonicalCSS2(d)
+	if err != nil {
+		return nil, err
+	}
+	if !bytes.Equal(again, b) {
+		return nil, fmt.Errorf("%w: snapshot is not in canonical form", ErrInvalidOp)
+	}
+	return d, nil
+}
+
 func appendCanonicalID(b []byte, id ID) []byte {
 	b = binary.AppendUvarint(b, uint64(id.Client))
 	return binary.AppendUvarint(b, id.Clock)
@@ -133,6 +238,19 @@ func (r *canonicalReader) fail(reason string) {
 	if r.err == nil {
 		r.err = fmt.Errorf("%w: canonical snapshot: %s", ErrInvalidOp, reason)
 	}
+}
+
+func (r *canonicalReader) raw(n uint64) []byte {
+	if r.err != nil {
+		return nil
+	}
+	if n > uint64(len(r.b)) {
+		r.fail("cipher exceeds remaining bytes")
+		return nil
+	}
+	out := append([]byte(nil), r.b[:n]...)
+	r.b = r.b[n:]
+	return out
 }
 
 func (r *canonicalReader) uvarint() uint64 {

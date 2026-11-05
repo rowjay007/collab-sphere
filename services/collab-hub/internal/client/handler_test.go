@@ -118,8 +118,12 @@ func TestConvergence(t *testing.T) {
 	if server == nil {
 		t.Fatal("store has no document")
 	}
-	if a.text() != b.text() || a.text() != server.Text() {
-		t.Fatalf("texts diverged (seed %d): a=%q b=%q server=%q", seed, a.text(), b.text(), server.Text())
+	serverText, err := server.Text()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if a.text() != b.text() || a.text() != serverText {
+		t.Fatalf("texts diverged (seed %d): a=%q b=%q server=%q", seed, a.text(), b.text(), serverText)
 	}
 	if !proto.Equal(a.snapshot(), b.snapshot()) || !proto.Equal(a.snapshot(), server.Snapshot()) {
 		t.Fatalf("snapshots diverged (seed %d)", seed)
@@ -435,7 +439,12 @@ func TestAppendFailStopReloads(t *testing.T) {
 	if err := a.waitEchoed(ctx); err != nil {
 		t.Fatal(err)
 	}
-	if got := store.Doc(canonicalTestDocumentID("doc")).Text(); got != "A" {
+	stored := store.Doc(canonicalTestDocumentID("doc"))
+	got, err := stored.Text()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got != "A" {
 		t.Fatalf("store text %q", got)
 	}
 
