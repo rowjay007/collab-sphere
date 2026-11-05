@@ -1,2 +1,3 @@
 ts	phase	decision	why	evidence	result
 2026-11-05T16:14:16Z	5b design	Grok design as base; graft gc stable age gauge; reject async persist and abandon-as-caught-up	Local 10k proof with scoped claim; Append is the ack; retirement needs tree coverage	design-grok.md, design-composer.md	docs/design/phase5.md
+2026-11-05T16:22:09Z	5 unit1	GCWithPins plus Stable; floor missing client counts as zero	Delegate treated a missing floor client as no limit, which collects tombstones deleted after the restore floor	TestStableFloorMissingClientKeepsLaterDelete fails under the delegate rule; pin-ignore mutation fails pin tests	pkg/crdt green in isolation
