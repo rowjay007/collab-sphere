@@ -149,27 +149,6 @@ func ageAllReplicaReports(t *testing.T, dbURL, forkRoot string, by time.Duration
 	}
 }
 
-func ageReportsHomedOn(t *testing.T, dbURL, forkRoot, homeDocID string, by time.Duration) {
-	t.Helper()
-	ctx := context.Background()
-	conn, err := pgx.Connect(ctx, dbURL)
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer conn.Close(ctx)
-	if _, err := conn.Exec(ctx, `
-		UPDATE replica_reports rr
-		SET reported_at = now() - $3::interval
-		FROM replicas r
-		WHERE rr.fork_root = $1::uuid
-		  AND rr.replica_id = r.id
-		  AND r.fork_root = $1::uuid
-		  AND r.document_id = $2::uuid`,
-		forkRoot, homeDocID, by.String()); err != nil {
-		t.Fatal(err)
-	}
-}
-
 func opIDProto(id crdt.ID) *crdtv1.OpID {
 	return &crdtv1.OpID{Client: uint64(id.Client), Clock: id.Clock}
 }
@@ -187,17 +166,25 @@ func TestGCBranchReplicaProtectsLeafUntilRetired(t *testing.T) {
 	}
 	forkRoot := meta.GetForkRoot()
 	onD := s.dial(ctx, docID, collabclient.Options{URLs: []string{s.HubURL(0)}, Client: 1})
-	var nodeN crdt.ID
-	if err := onD.InsertAt(0, 'x'); err != nil {
+	var control, nodeN crdt.ID
+	if err := onD.Edit(func(r *crdt.Replica) ([]crdt.Op, error) {
+		w, err := r.InsertAfter(crdt.Root, 'w')
+		if err != nil {
+			return nil, err
+		}
+		del, err := r.Delete(w.ID)
+		if err != nil {
+			return nil, err
+		}
+		x, err := r.InsertAfter(crdt.Root, 'x')
+		if err != nil {
+			return nil, err
+		}
+		control, nodeN = w.ID, x.ID
+		return []crdt.Op{w, del, x}, nil
+	}); err != nil {
 		t.Fatal(err)
 	}
-	onD.Read(func(r *crdt.Replica) {
-		var err error
-		nodeN, err = r.IDAt(0)
-		if err != nil {
-			t.Fatal(err)
-		}
-	})
 	if err := onD.WaitAcked(ctx); err != nil {
 		t.Fatal(err)
 	}
@@ -219,13 +206,23 @@ func TestGCBranchReplicaProtectsLeafUntilRetired(t *testing.T) {
 		t.Fatal(err)
 	}
 	replicaR := onB.ID()
-	if err := onB.InsertAt(0, 'y'); err != nil {
+	if err := onB.Edit(func(r *crdt.Replica) ([]crdt.Op, error) {
+		y, err := r.InsertAfter(nodeN, 'y')
+		if err != nil {
+			return nil, err
+		}
+		return []crdt.Op{y}, nil
+	}); err != nil {
 		t.Fatal(err)
 	}
 	if err := onB.WaitAcked(ctx); err != nil {
 		t.Fatal(err)
 	}
 	waitForkReport(t, ctx, s, forkRoot, uint64(replicaR))
+	onB.Disconnect()
+	if _, err := s.Docs.ArchiveDocument(s.AuthCtx(ctx, s.Owner()), &documentv1.ArchiveDocumentRequest{Id: bID}); err != nil {
+		t.Fatal(err)
+	}
 	if err := onD.DeleteAt(0); err != nil {
 		t.Fatal(err)
 	}
@@ -233,26 +230,42 @@ func TestGCBranchReplicaProtectsLeafUntilRetired(t *testing.T) {
 		t.Fatal(err)
 	}
 	onD.Disconnect()
-	waitLiveState(t, ctx, s, docID, func(*crdt.Doc) bool {
-		return liveDoc(t, s.dbURL, docID).Has(nodeN)
-	})
-	if _, err := s.Docs.ArchiveDocument(s.AuthCtx(ctx, s.Owner()), &documentv1.ArchiveDocumentRequest{Id: bID}); err != nil {
-		t.Fatal(err)
-	}
-	onB.Disconnect()
-	ageReplicaReport(t, s.dbURL, forkRoot, uint64(replicaR), 31*time.Minute)
-	ageReplicaReport(t, s.dbURL, forkRoot, uint64(onD.ID()), 31*time.Minute)
-	ageReportsHomedOn(t, s.dbURL, forkRoot, bID, 31*time.Minute)
 	if _, err := s.Versions.Client.Checkpoint(ctx, &versionv1.CheckpointRequest{
 		DocId: docID, Name: "post-delete", RequestId: t.Name() + "-cp2",
 	}); err != nil {
 		t.Fatal(err)
 	}
 	ageAllButTipVersion(t, s.Versions.DB(), docID)
+	ageReportsExcept(t, s.dbURL, forkRoot, uint64(replicaR), 31*time.Minute)
 
+	waitLiveState(t, ctx, s, docID, func(*crdt.Doc) bool {
+		return !liveDoc(t, s.dbURL, docID).Has(control)
+	})
+	if !liveDoc(t, s.dbURL, docID).Has(nodeN) {
+		t.Fatal("D collected the parent of B's insert while B's replica report is live")
+	}
+
+	ageReplicaReport(t, s.dbURL, forkRoot, uint64(replicaR), 31*time.Minute)
 	waitLiveState(t, ctx, s, docID, func(*crdt.Doc) bool {
 		return !liveDoc(t, s.dbURL, docID).Has(nodeN)
 	})
+}
+
+func ageReportsExcept(t *testing.T, dbURL, forkRoot string, keep uint64, by time.Duration) {
+	t.Helper()
+	ctx := context.Background()
+	conn, err := pgx.Connect(ctx, dbURL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer conn.Close(ctx)
+	if _, err := conn.Exec(ctx, `
+		UPDATE replica_reports
+		SET reported_at = now() - $3::interval
+		WHERE fork_root = $1::uuid AND replica_id <> $2::numeric`,
+		forkRoot, keep, by.String()); err != nil {
+		t.Fatal(err)
+	}
 }
 
 func TestHorizonPinsSurviveDeletedRange(t *testing.T) {
@@ -392,6 +405,19 @@ func TestGCEncryptedDocKeepsCipherInLog(t *testing.T) {
 	if err := client.WaitAcked(ctx); err != nil {
 		t.Fatal(err)
 	}
+	var collected []crdt.ID
+	client.Read(func(r *crdt.Replica) {
+		for i := range r.Len() {
+			id, err := r.IDAt(i)
+			if err != nil {
+				t.Fatal(err)
+			}
+			collected = append(collected, id)
+		}
+	})
+	if len(collected) != len(markerRunes) {
+		t.Fatalf("visible nodes = %d, want %d", len(collected), len(markerRunes))
+	}
 	for len([]rune(client.Text())) > 0 {
 		if err := client.DeleteAt(0); err != nil {
 			t.Fatal(err)
@@ -405,10 +431,49 @@ func TestGCEncryptedDocKeepsCipherInLog(t *testing.T) {
 	}); err != nil {
 		t.Fatal(err)
 	}
+	ageAllButTipVersion(t, s.Versions.DB(), docID)
+	client.Disconnect()
+	meta, err := s.Docs.GetDocument(ctx, &documentv1.GetDocumentRequest{Id: docID})
+	if err != nil {
+		t.Fatal(err)
+	}
+	ageAllReplicaReports(t, s.dbURL, meta.GetForkRoot(), 3*time.Hour)
 	opsBefore := operationCount(t, s.dbURL, docID)
-	waitLiveGC(t, ctx, s, docID)
+
+	waitLiveState(t, ctx, s, docID, func(*crdt.Doc) bool {
+		live := liveDoc(t, s.dbURL, docID)
+		for _, id := range collected {
+			if live.Has(id) {
+				return false
+			}
+		}
+		return true
+	})
 	if operationCount(t, s.dbURL, docID) != opsBefore {
 		t.Fatal("operations count changed after gc")
+	}
+	logged := make(map[crdt.ID]*crdt.Ciphertext)
+	resp, err := s.Docs.ReadOperations(ctx, &documentv1.ReadOperationsRequest{Id: docID, AfterSeq: 0, Limit: 1000})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, p := range resp.GetOperations() {
+		op, err := crdt.OpFromProto(p)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if ins, ok := op.(crdt.Insert); ok {
+			logged[ins.ID] = ins.Cipher
+		}
+	}
+	for _, id := range collected {
+		cipher, ok := logged[id]
+		if !ok {
+			t.Fatalf("collected insert %v missing from operations", id)
+		}
+		if cipher == nil || len(cipher.Bytes) == 0 {
+			t.Fatalf("collected insert %v lost its ciphertext in operations", id)
+		}
 	}
 	raw := liveSnapshotJSON(t, s.dbURL, docID)
 	if strings.Contains(raw, marker) {

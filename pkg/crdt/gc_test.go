@@ -42,6 +42,37 @@ func TestGCCascadesUpChains(t *testing.T) {
 	}
 }
 
+func TestGCWithPinsKeepsPinnedTombstoneAndItsAncestors(t *testing.T) {
+	r, _ := NewReplica(1, nil)
+	parent, err := r.InsertAfter(Root, 'p')
+	if err != nil {
+		t.Fatal(err)
+	}
+	pinned, err := r.InsertAfter(parent.ID, 'c')
+	if err != nil {
+		t.Fatal(err)
+	}
+	stray, err := r.InsertAfter(Root, 's')
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, id := range []ID{pinned.ID, parent.ID, stray.ID} {
+		if _, err := r.Delete(id); err != nil {
+			t.Fatal(err)
+		}
+	}
+	removed, err := r.GCWithPins(r.Vector(), map[ID]struct{}{pinned.ID: {}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if removed != 1 || !r.Has(pinned.ID) || !r.Has(parent.ID) || r.Has(stray.ID) {
+		t.Fatalf("removed=%d has(pinned)=%v has(parent)=%v has(stray)=%v", removed, r.Has(pinned.ID), r.Has(parent.ID), r.Has(stray.ID))
+	}
+	if _, err := r.GCWithPins(VersionVector{1: r.Vector()[1] + 1}, nil); !errors.Is(err, ErrInvalidOp) {
+		t.Fatalf("uncovered stable: %v", err)
+	}
+}
+
 func TestDeleteOfCollectedTombstoneIsApplied(t *testing.T) {
 	doc := New()
 	insert := Insert{ID: ID{Clock: 1, Client: 1}, Parent: Root, Value: 'x'}

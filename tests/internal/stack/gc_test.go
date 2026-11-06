@@ -13,30 +13,33 @@ import (
 
 func TestGCLiveSnapshotStack(t *testing.T) {
 	s := New(t, WithExport())
-	ctx, cancel := context.WithTimeout(t.Context(), 45*time.Second)
+	ctx, cancel := context.WithTimeout(t.Context(), 90*time.Second)
 	defer cancel()
-	commentAddr := freeAddr(s.t)
-	startCommentOnAddr(s, s.Versions, commentAddr)
-	s.docsvc.kill()
-	s.docsvc = start(s.t, "document-service", binary(s.t, "document-service"), append([]string{
-		"DATABASE_URL=" + s.dbURL,
-		"GRPC_ADDR=" + s.grpc,
-		"VERSION_ADDR=" + s.Versions.addr,
-		"COMMENT_ADDR=" + commentAddr,
-		"GC_INTERVAL=200ms",
-		"REPLICA_REPORT_TTL=336h",
-	}, s.authEnv()...)...)
-	waitFor(s.t, "document-service", func(ctx context.Context) error {
-		_, err := s.Docs.CreateDocument(s.AuthCtx(ctx, s.Owner()), &documentv1.CreateDocumentRequest{Title: "probe", OwnerId: s.Owner()})
-		return err
-	})
+	restartDocumentGC(t, s, 30*time.Minute)
 
 	docID := s.CreateDocument(ctx)
-	c := s.dial(ctx, docID, collabclient.Options{URLs: []string{s.HubURL(0)}, Client: 1})
-	if err := c.InsertAt(0, 'a'); err != nil {
+	meta, err := s.Docs.GetDocument(ctx, &documentv1.GetDocumentRequest{Id: docID})
+	if err != nil {
 		t.Fatal(err)
 	}
-	if err := c.DeleteAt(0); err != nil {
+	c := s.dial(ctx, docID, collabclient.Options{URLs: []string{s.HubURL(0)}, Client: 1})
+	var gone, kept crdt.ID
+	if err := c.Edit(func(r *crdt.Replica) ([]crdt.Op, error) {
+		a, err := r.InsertAfter(crdt.Root, 'a')
+		if err != nil {
+			return nil, err
+		}
+		b, err := r.InsertAfter(crdt.Root, 'b')
+		if err != nil {
+			return nil, err
+		}
+		del, err := r.Delete(a.ID)
+		if err != nil {
+			return nil, err
+		}
+		gone, kept = a.ID, b.ID
+		return []crdt.Op{a, b, del}, nil
+	}); err != nil {
 		t.Fatal(err)
 	}
 	if err := c.WaitAcked(ctx); err != nil {
@@ -47,27 +50,32 @@ func TestGCLiveSnapshotStack(t *testing.T) {
 	}); err != nil {
 		t.Fatal(err)
 	}
-	want := ""
-	c.Read(func(r *crdt.Replica) { want, _ = r.Text() })
+	ageAllButTipVersion(t, s.Versions.DB(), docID)
+	c.Disconnect()
+	ageAllReplicaReports(t, s.dbURL, meta.GetForkRoot(), 31*time.Minute)
 
-	deadline := time.Now().Add(15 * time.Second)
-	var live bool
-	for time.Now().Before(deadline) {
-		resp, err := s.Docs.ReadOperations(ctx, &documentv1.ReadOperationsRequest{Id: docID, AfterSeq: 0, Limit: 1})
-		if err == nil && resp.GetLiveSeq() > 0 {
-			live = true
-			break
-		}
-		time.Sleep(250 * time.Millisecond)
-	}
-	if !live {
-		t.Fatal("live snapshot never appeared")
-	}
+	waitLiveState(t, ctx, s, docID, func(*crdt.Doc) bool {
+		return !liveDoc(t, s.dbURL, docID).Has(gone)
+	})
+	s.StopHub(0)
+	s.StartHub(0)
+
 	c2 := s.dial(ctx, docID, collabclient.Options{URLs: []string{s.HubURL(0)}, Client: 2})
-	got := ""
-	c2.Read(func(r *crdt.Replica) { got, _ = r.Text() })
-	if got != want {
-		t.Fatalf("text after gc %q != %q", got, want)
+	joined, err := crdt.FromSnapshot(c2.Snapshot())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if joined.Has(gone) {
+		t.Fatalf("cold hub served collected node %v", gone)
+	}
+	if !joined.Has(kept) {
+		t.Fatalf("cold hub lost live node %v", kept)
+	}
+	if got := joined.Collected()[1]; got < 3 {
+		t.Fatalf("cold hub collected[1] = %d, want >= 3", got)
+	}
+	if text := c2.Text(); text != "b" {
+		t.Fatalf("text after cold join = %q, want %q", text, "b")
 	}
 }
 

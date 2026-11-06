@@ -97,40 +97,51 @@ func TestGCOfflineReplicaWithinTTLPinsStable(t *testing.T) {
 	restartDocumentGC(t, s, 2*time.Hour)
 
 	docID := s.CreateDocument(ctx)
-	doc, _ := s.Docs.GetDocument(ctx, &documentv1.GetDocumentRequest{Id: docID})
+	doc, err := s.Docs.GetDocument(ctx, &documentv1.GetDocumentRequest{Id: docID})
+	if err != nil {
+		t.Fatal(err)
+	}
 	a := s.dial(ctx, docID, collabclient.Options{URLs: []string{s.HubURL(0)}, Client: 1})
+	insertDeleteAcked := func(r rune) crdt.ID {
+		t.Helper()
+		if err := a.InsertAt(0, r); err != nil {
+			t.Fatal(err)
+		}
+		var id crdt.ID
+		a.Read(func(rep *crdt.Replica) {
+			var err error
+			if id, err = rep.IDAt(0); err != nil {
+				t.Fatal(err)
+			}
+		})
+		if err := a.DeleteAt(0); err != nil {
+			t.Fatal(err)
+		}
+		if err := a.WaitAcked(ctx); err != nil {
+			t.Fatal(err)
+		}
+		return id
+	}
+	covered := insertDeleteAcked('w')
 	b := s.dial(ctx, docID, collabclient.Options{URLs: []string{s.HubURL(0)}, Client: 2})
-	if err := a.InsertAt(0, 'x'); err != nil {
-		t.Fatal(err)
-	}
-	if err := a.WaitAcked(ctx); err != nil {
-		t.Fatal(err)
-	}
-	if err := a.DeleteAt(0); err != nil {
-		t.Fatal(err)
-	}
-	if err := a.WaitAcked(ctx); err != nil {
-		t.Fatal(err)
-	}
+	waitForkReport(t, ctx, s, doc.GetForkRoot(), 2)
+	b.Disconnect()
+	uncovered := insertDeleteAcked('x')
 	if _, err := s.Versions.Client.Checkpoint(ctx, &versionv1.CheckpointRequest{
 		DocId: docID, Name: "gc-offline", RequestId: t.Name(),
 	}); err != nil {
 		t.Fatal(err)
 	}
-	if err := b.InsertAt(0, 'y'); err != nil {
-		t.Fatal(err)
+	ageAllButTipVersion(t, s.Versions.DB(), docID)
+	a.Disconnect()
+	ageReplicaReport(t, s.dbURL, doc.GetForkRoot(), 1, 3*time.Hour)
+
+	waitLiveState(t, ctx, s, docID, func(*crdt.Doc) bool {
+		return !liveDoc(t, s.dbURL, docID).Has(covered)
+	})
+	if !liveDoc(t, s.dbURL, docID).Has(uncovered) {
+		t.Fatal("leaf the offline replica has not covered was collected within TTL")
 	}
-	if err := b.WaitAcked(ctx); err != nil {
-		t.Fatal(err)
-	}
-	b.Disconnect()
-	waitLiveGC(t, ctx, s, docID)
-	opsBefore := operationCount(t, s.dbURL, docID)
-	waitLiveGC(t, ctx, s, docID)
-	if operationCount(t, s.dbURL, docID) != opsBefore {
-		t.Fatal("operations rows changed within TTL")
-	}
-	_ = doc
 }
 
 func TestResyncPastTTLCollectsLeafWithoutAppendingUnsent(t *testing.T) {
@@ -140,15 +151,24 @@ func TestResyncPastTTLCollectsLeafWithoutAppendingUnsent(t *testing.T) {
 	restartDocumentGC(t, s, 30*time.Minute)
 
 	docID := s.CreateDocument(ctx)
-	doc, _ := s.Docs.GetDocument(ctx, &documentv1.GetDocumentRequest{Id: docID})
+	doc, err := s.Docs.GetDocument(ctx, &documentv1.GetDocumentRequest{Id: docID})
+	if err != nil {
+		t.Fatal(err)
+	}
 	c := s.dial(ctx, docID, collabclient.Options{URLs: []string{s.HubURL(0)}, Client: 5})
-	if err := c.InsertAt(0, 'a'); err != nil {
-		t.Fatal(err)
-	}
-	if err := c.WaitAcked(ctx); err != nil {
-		t.Fatal(err)
-	}
-	if err := c.DeleteAt(0); err != nil {
+	var leaf crdt.ID
+	if err := c.Edit(func(r *crdt.Replica) ([]crdt.Op, error) {
+		ins, err := r.InsertAfter(crdt.Root, 'a')
+		if err != nil {
+			return nil, err
+		}
+		del, err := r.Delete(ins.ID)
+		if err != nil {
+			return nil, err
+		}
+		leaf = ins.ID
+		return []crdt.Op{ins, del}, nil
+	}); err != nil {
 		t.Fatal(err)
 	}
 	if err := c.WaitAcked(ctx); err != nil {
@@ -159,30 +179,58 @@ func TestResyncPastTTLCollectsLeafWithoutAppendingUnsent(t *testing.T) {
 	}); err != nil {
 		t.Fatal(err)
 	}
-	if err := c.InsertAt(0, 'z'); err != nil {
+	ageAllButTipVersion(t, s.Versions.DB(), docID)
+	c.Disconnect()
+	var unsent crdt.ID
+	if err := c.Edit(func(r *crdt.Replica) ([]crdt.Op, error) {
+		ins, err := r.InsertAfter(leaf, 'z')
+		if err != nil {
+			return nil, err
+		}
+		unsent = ins.ID
+		return []crdt.Op{ins}, nil
+	}); err != nil {
 		t.Fatal(err)
 	}
-	c.Disconnect()
 	ageReplicaReport(t, s.dbURL, doc.GetForkRoot(), 5, 31*time.Minute)
 	opsBefore := operationCount(t, s.dbURL, docID)
-	waitLiveGC(t, ctx, s, docID)
-	if operationCount(t, s.dbURL, docID) != opsBefore {
-		t.Fatalf("operations count changed: %d -> %d", opsBefore, operationCount(t, s.dbURL, docID))
+
+	waitLiveState(t, ctx, s, docID, func(*crdt.Doc) bool {
+		return !liveDoc(t, s.dbURL, docID).Has(leaf)
+	})
+	if n := operationCount(t, s.dbURL, docID); n != opsBefore {
+		t.Fatalf("operations count changed: %d -> %d", opsBefore, n)
 	}
-	c2 := s.dial(ctx, docID, collabclient.Options{URLs: []string{s.HubURL(0)}, Client: 5})
-	if c2.LastJoin() != collabclient.Sync {
-		t.Fatalf("LastJoin = %v, want Sync", c2.LastJoin())
-	}
-	got := ""
-	c2.Read(func(r *crdt.Replica) { got, _ = r.Text() })
-	if got != "" {
-		t.Fatalf("text after resync = %q, want empty", got)
-	}
-	if err := c2.InsertAt(0, 'q'); err != nil {
+
+	if err := c.Reconnect(ctx, s.HubURL(0)); err != nil {
 		t.Fatal(err)
 	}
-	time.Sleep(200 * time.Millisecond)
-	c2.Disconnect()
+	if c.LastJoin() != collabclient.Sync {
+		t.Fatalf("LastJoin = %v, want Sync", c.LastJoin())
+	}
+	if c.Unacked() != 0 {
+		t.Fatalf("resync kept %d unacked ops", c.Unacked())
+	}
+	if text := c.Text(); text != "" {
+		t.Fatalf("text after resync = %q, want empty", text)
+	}
+	time.Sleep(500 * time.Millisecond)
+	resp, err := s.Docs.ReadOperations(ctx, &documentv1.ReadOperationsRequest{Id: docID, AfterSeq: 0, Limit: 1000})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, p := range resp.GetOperations() {
+		op, err := crdt.OpFromProto(p)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if op.OpID() == unsent {
+			t.Fatalf("unsent insert %v parented on collected leaf was appended", unsent)
+		}
+	}
+	if n := operationCount(t, s.dbURL, docID); n != opsBefore {
+		t.Fatalf("operations count changed after reconnect: %d -> %d", opsBefore, n)
+	}
 }
 
 func TestGCMergeArchivedBranchFailedPrecondition(t *testing.T) {
