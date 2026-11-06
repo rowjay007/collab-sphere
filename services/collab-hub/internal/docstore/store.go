@@ -182,12 +182,13 @@ func vectorFromEntries(entries []*crdtv1.VectorEntry) crdt.VersionVector {
 }
 
 // ReportVector stores one replica's vector. A stale row comes back as hub.ErrStaleReport.
-func (s *Store) ReportVector(ctx context.Context, docID string, replica crdt.ClientID, vector crdt.VersionVector, homeSeq uint64) error {
+func (s *Store) ReportVector(ctx context.Context, docID string, replica crdt.ClientID, vector crdt.VersionVector, homeSeq uint64, resyncPending bool) error {
 	_, err := s.client.ReportVector(ctx, &documentv1.ReportVectorRequest{
-		DocumentId: docID,
-		ReplicaId:  uint64(replica),
-		Vector:     vectorEntries(vector),
-		HomeSeq:    homeSeq,
+		DocumentId:    docID,
+		ReplicaId:     uint64(replica),
+		Vector:        vectorEntries(vector),
+		HomeSeq:       homeSeq,
+		ResyncPending: resyncPending,
 	})
 	if hasErrorReason(err, codes.FailedPrecondition, "STALE_REPORT") {
 		return fmt.Errorf("%w: %v", hub.ErrStaleReport, err)

@@ -23,7 +23,9 @@ type Report struct {
 	ReleasedAt *time.Time
 }
 
-func (s *Store) UpsertReport(ctx context.Context, forkRoot uuid.UUID, replica uint64, vector crdt.VersionVector, homeSeq uint64, at time.Time) error {
+// UpsertReport stores the replica's vector clamped to its home document's
+// committed vector. A replica with no replicas row is ErrNotFound.
+func (s *Store) UpsertReport(ctx context.Context, forkRoot uuid.UUID, replica uint64, vector crdt.VersionVector, homeSeq uint64, resyncPending bool, at time.Time) error {
 	if err := validateReport(replica, homeSeq); err != nil {
 		return err
 	}
@@ -32,7 +34,23 @@ func (s *Store) UpsertReport(ctx context.Context, forkRoot uuid.UUID, replica ui
 		return fmt.Errorf("begin report: %w", err)
 	}
 	defer tx.Rollback(ctx)
-	if err := upsertReportTx(ctx, tx, forkRoot, replica, vector, homeSeq, at); err != nil {
+	var home uuid.UUID
+	err = tx.QueryRow(ctx, `
+		SELECT document_id FROM replicas
+		WHERE fork_root = $1 AND id = $2::numeric`,
+		forkRoot, strconv.FormatUint(replica, 10)).Scan(&home)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return domain.ErrNotFound
+	}
+	if err != nil {
+		return fmt.Errorf("load report home: %w", err)
+	}
+	homeVector, _, err := loadDocumentVector(ctx, tx, home, false)
+	if err != nil {
+		return err
+	}
+	clamped := crdt.Stable(vector, nil, homeVector)
+	if err := upsertReportTx(ctx, tx, forkRoot, replica, clamped, homeSeq, resyncPending, at); err != nil {
 		return err
 	}
 	if err := tx.Commit(ctx); err != nil {
@@ -206,7 +224,7 @@ func validateReport(replica, homeSeq uint64) error {
 	return nil
 }
 
-func upsertReportTx(ctx context.Context, tx pgx.Tx, forkRoot uuid.UUID, replica uint64, vector crdt.VersionVector, homeSeq uint64, at time.Time) error {
+func upsertReportTx(ctx context.Context, tx pgx.Tx, forkRoot uuid.UUID, replica uint64, vector crdt.VersionVector, homeSeq uint64, resyncPending bool, at time.Time) error {
 	idArg := strconv.FormatUint(replica, 10)
 	body, err := marshalVector(vector)
 	if err != nil {
@@ -220,9 +238,9 @@ func upsertReportTx(ctx context.Context, tx pgx.Tx, forkRoot uuid.UUID, replica 
 		FOR UPDATE`, forkRoot, idArg).Scan(&raw)
 	if errors.Is(err, pgx.ErrNoRows) {
 		tag, insErr := tx.Exec(ctx, `
-			INSERT INTO replica_reports (fork_root, replica_id, vector, home_seq, reported_at)
-			VALUES ($1, $2::numeric, $3::jsonb, $4, $5)
-			ON CONFLICT DO NOTHING`, forkRoot, idArg, body, int64(homeSeq), at)
+			INSERT INTO replica_reports (fork_root, replica_id, vector, home_seq, reported_at, resync_pending)
+			VALUES ($1, $2::numeric, $3::jsonb, $4, $5, $6)
+			ON CONFLICT DO NOTHING`, forkRoot, idArg, body, int64(homeSeq), at, resyncPending)
 		if insErr != nil {
 			return fmt.Errorf("insert report: %w", insErr)
 		}
@@ -247,9 +265,9 @@ func upsertReportTx(ctx context.Context, tx pgx.Tx, forkRoot uuid.UUID, replica 
 	}
 	if _, err := tx.Exec(ctx, `
 		UPDATE replica_reports
-		SET vector = $3::jsonb, home_seq = $4, reported_at = $5
+		SET vector = $3::jsonb, home_seq = $4, reported_at = $5, resync_pending = $6
 		WHERE fork_root = $1 AND replica_id = $2::numeric`,
-		forkRoot, idArg, body, int64(homeSeq), at); err != nil {
+		forkRoot, idArg, body, int64(homeSeq), at, resyncPending); err != nil {
 		return fmt.Errorf("update report: %w", err)
 	}
 	return nil

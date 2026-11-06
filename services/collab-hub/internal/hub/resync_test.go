@@ -56,6 +56,36 @@ func lapsedJoin(t *testing.T) (*MemoryStore, *Peer, *Session) {
 	return store, peer, session
 }
 
+func TestLapsedJoinStampKeepsResyncPending(t *testing.T) {
+	ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
+	defer cancel()
+	store := NewMemoryStore()
+	reg := localRegistry(store)
+	t.Cleanup(reg.Close)
+	seedLog(t, store, chain(1, 2))
+	peer := NewPeer(1, 0)
+	peer.SetResyncPending()
+	session, err := reg.Join(ctx, "doc", peer, true, 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	peer.Close()
+	session.Leave(context.Background())
+	for {
+		if rep, ok := store.Report("doc", 1); ok {
+			if !rep.ResyncPending {
+				t.Fatalf("lapsed join stamp %+v cleared resync_pending before the client read the DocumentSync", rep)
+			}
+			return
+		}
+		select {
+		case <-ctx.Done():
+			t.Fatal("lapsed join wrote no stamp")
+		case <-time.After(5 * time.Millisecond):
+		}
+	}
+}
+
 func TestResyncStaysPendingUntilClientReports(t *testing.T) {
 	ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
 	defer cancel()
@@ -92,7 +122,7 @@ func TestResyncClearsAfterClientReport(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		if meta.OpSeq == 3 {
+		if rep, ok := store.Report("doc", 1); meta.OpSeq == 3 && ok && !rep.ResyncPending {
 			return
 		}
 		select {
@@ -112,28 +142,18 @@ func TestResyncClearsAfterClientReport(t *testing.T) {
 }
 
 func TestResyncPendingRejectsOperationBatch(t *testing.T) {
-	ctx := t.Context()
-	store := NewMemoryStore()
-	reg := localRegistry(store)
-	t.Cleanup(reg.Close)
-	seedLog(t, store, chain(1, 1))
-	warm, err := reg.Join(ctx, "doc", NewPeer(2, 0), false, 0)
-	if err != nil {
-		t.Fatal(err)
-	}
-	warm.Leave(context.Background())
-	h := reg.acquire("doc")
-	if h == nil {
-		t.Fatal("no hub")
-	}
-	t.Cleanup(func() { reg.release(h) })
-	peer := NewPeer(1, 0)
-	peer.SetResyncPending()
-	h.peers[1] = peer
-	op := crdt.Insert{ID: crdt.ID{Client: 1, Clock: 2}, Parent: crdt.ID{Client: 1, Clock: 1}, Value: 'q'}
-	h.applyOps(opsEvent{id: 1, ops: []crdt.Op{op}})
-	msg := readServerMessage(t, ctx, peer)
-	if msg.GetError().GetCode() != collabv1.ErrorMessage_CODE_RESYNC {
-		t.Fatalf("got %v", msg.GetError())
+	ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
+	defer cancel()
+	_, peer, session := lapsedJoin(t)
+	op := crdt.Insert{ID: crdt.ID{Client: 1, Clock: 3}, Parent: crdt.ID{Client: 1, Clock: 2}, Value: 'q'}
+	session.SubmitOps(ctx, []crdt.Op{op})
+	for {
+		msg := readServerMessage(t, ctx, peer)
+		if e := msg.GetError(); e != nil {
+			if e.GetCode() != collabv1.ErrorMessage_CODE_RESYNC {
+				t.Fatalf("got %v", e)
+			}
+			return
+		}
 	}
 }

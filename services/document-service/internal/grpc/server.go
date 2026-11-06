@@ -186,15 +186,7 @@ func (s *Server) ClaimReplica(ctx context.Context, req *documentv1.ClaimReplicaR
 	if err != nil {
 		return nil, err
 	}
-	client, err := s.store.ClaimReplica(ctx, id, req.GetClient(), req.GetSystem(), req.GetUserId())
-	if err != nil {
-		return nil, mapError(err)
-	}
-	doc, err := s.store.Get(ctx, id)
-	if err != nil {
-		return nil, mapError(err)
-	}
-	lapsed, err := s.store.ReplicaReportLapsed(ctx, doc.ForkRoot, client, s.replicaTTL)
+	client, lapsed, err := s.store.ClaimReplica(ctx, id, req.GetClient(), req.GetSystem(), req.GetUserId(), s.replicaTTL)
 	if err != nil {
 		return nil, mapError(err)
 	}
@@ -217,7 +209,7 @@ func (s *Server) ReportVector(ctx context.Context, req *documentv1.ReportVectorR
 	if err != nil {
 		return nil, mapError(err)
 	}
-	if err := s.store.UpsertReport(ctx, doc.ForkRoot, req.GetReplicaId(), vector, req.GetHomeSeq(), time.Now()); err != nil {
+	if err := s.store.UpsertReport(ctx, doc.ForkRoot, req.GetReplicaId(), vector, req.GetHomeSeq(), req.GetResyncPending(), time.Now()); err != nil {
 		return nil, mapError(err)
 	}
 	return &documentv1.ReportVectorResponse{}, nil

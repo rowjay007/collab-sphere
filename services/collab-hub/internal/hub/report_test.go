@@ -170,7 +170,7 @@ type slowReportStore struct {
 	once     sync.Once
 }
 
-func (s *slowReportStore) ReportVector(ctx context.Context, docID string, replica crdt.ClientID, vector crdt.VersionVector, homeSeq uint64) error {
+func (s *slowReportStore) ReportVector(ctx context.Context, docID string, replica crdt.ClientID, vector crdt.VersionVector, homeSeq uint64, resyncPending bool) error {
 	first := false
 	s.once.Do(func() { first = true })
 	if first {
@@ -178,7 +178,7 @@ func (s *slowReportStore) ReportVector(ctx context.Context, docID string, replic
 		time.Sleep(500 * time.Millisecond)
 		close(s.finished)
 	}
-	return s.MemoryStore.ReportVector(ctx, docID, replica, vector, homeSeq)
+	return s.MemoryStore.ReportVector(ctx, docID, replica, vector, homeSeq, resyncPending)
 }
 
 func TestReportDoesNotBlockApply(t *testing.T) {
@@ -230,7 +230,7 @@ type gateReportStore struct {
 	entered chan struct{}
 }
 
-func (s *gateReportStore) ReportVector(ctx context.Context, docID string, replica crdt.ClientID, vector crdt.VersionVector, homeSeq uint64) error {
+func (s *gateReportStore) ReportVector(ctx context.Context, docID string, replica crdt.ClientID, vector crdt.VersionVector, homeSeq uint64, resyncPending bool) error {
 	s.mu.Lock()
 	s.calls = append(s.calls, vector.Clone())
 	n := len(s.calls)
@@ -243,7 +243,7 @@ func (s *gateReportStore) ReportVector(ctx context.Context, docID string, replic
 			return ctx.Err()
 		}
 	}
-	return s.MemoryStore.ReportVector(ctx, docID, replica, vector, homeSeq)
+	return s.MemoryStore.ReportVector(ctx, docID, replica, vector, homeSeq, resyncPending)
 }
 
 func (s *gateReportStore) callCount() int {

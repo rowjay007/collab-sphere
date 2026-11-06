@@ -110,6 +110,7 @@ type reportJob struct {
 	id      crdt.ClientID
 	vector  crdt.VersionVector
 	homeSeq uint64
+	resync  bool
 }
 
 // reportSlot is the one in-flight report for a replica. The loop is the only writer.
@@ -340,7 +341,7 @@ func (h *Hub) loop() {
 				pending, stop = h.handleOpsGroup(ev)
 			case reportEvent:
 				h.clientReported(ev.id)
-				h.stampReport(ev.id, ev.vector)
+				h.stampReport(ev.id, ev.vector, false)
 			case reportDone:
 				h.finishReport(ev.id)
 			case cursorEvent:
@@ -607,7 +608,7 @@ func (h *Hub) attachJoin(ev joinEvent, frames, extra [][]byte) {
 	}
 	resyncJoin := ev.peer.ResyncPending()
 	if !ev.resume || resyncJoin {
-		h.stampReport(ev.peer.id, h.doc.Vector())
+		h.stampReport(ev.peer.id, h.doc.Vector(), resyncJoin)
 	}
 	h.joinPresence(ev.peer, superseded)
 	replyJoin(ev, nil)
@@ -870,7 +871,7 @@ func (h *Hub) stampMarks(before uint64, seqs []uint64, marks []reportMark) {
 	}
 }
 
-func (h *Hub) stampReport(id crdt.ClientID, vector crdt.VersionVector) {
+func (h *Hub) stampReport(id crdt.ClientID, vector crdt.VersionVector, resync bool) {
 	if h.doc == nil || h.dead {
 		return
 	}
@@ -878,6 +879,7 @@ func (h *Hub) stampReport(id crdt.ClientID, vector crdt.VersionVector) {
 		id:      id,
 		vector:  clipVector(vector, h.doc.Vector()),
 		homeSeq: h.delivered(),
+		resync:  resync,
 	})
 }
 
@@ -909,7 +911,7 @@ func (h *Hub) enqueueReport(job *reportJob) {
 
 func (h *Hub) sendReport(job *reportJob) {
 	ctx, cancel := context.WithTimeout(context.Background(), appendTimeout)
-	err := h.store.ReportVector(ctx, h.docID, job.id, job.vector, job.homeSeq)
+	err := h.store.ReportVector(ctx, h.docID, job.id, job.vector, job.homeSeq, job.resync)
 	cancel()
 	if errors.Is(err, ErrStaleReport) {
 		slog.Debug("stale replica report", "doc", h.docID, "replica", job.id)

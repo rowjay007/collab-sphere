@@ -16,6 +16,7 @@ import (
 	crdtv1 "github.com/rowjay007/collab-sphere/gen/crdt/v1"
 	"github.com/rowjay007/collab-sphere/pkg/crdt"
 	"github.com/rowjay007/collab-sphere/services/document-service/internal/domain"
+	"github.com/rowjay007/collab-sphere/services/document-service/internal/store"
 	"github.com/rowjay007/collab-sphere/services/document-service/internal/testdb"
 )
 
@@ -27,7 +28,7 @@ func TestReportHomeSeqAndStaleVector(t *testing.T) {
 		t.Fatal(err)
 	}
 	const replica = uint64(4)
-	if _, err := st.ClaimReplica(ctx, doc.ID, replica, false, ""); err != nil {
+	if _, _, err := st.ClaimReplica(ctx, doc.ID, replica, false, "", time.Hour); err != nil {
 		t.Fatal(err)
 	}
 	r, err := crdt.NewReplica(crdt.ClientID(replica), nil)
@@ -44,7 +45,7 @@ func TestReportHomeSeqAndStaleVector(t *testing.T) {
 	}
 	now := time.Now()
 	vector := crdt.VersionVector{crdt.ClientID(replica): op.ID.Clock}
-	if err := st.UpsertReport(ctx, doc.ForkRoot, replica, vector, appended.OpSeq, now); err != nil {
+	if err := st.UpsertReport(ctx, doc.ForkRoot, replica, vector, appended.OpSeq, false, now); err != nil {
 		t.Fatal(err)
 	}
 	reports, err := st.ListReports(ctx, doc.ForkRoot)
@@ -58,7 +59,7 @@ func TestReportHomeSeqAndStaleVector(t *testing.T) {
 		t.Fatalf("vector = %v", reports[0].Vector)
 	}
 
-	err = st.UpsertReport(ctx, doc.ForkRoot, replica, crdt.VersionVector{1: 1, crdt.ClientID(replica): op.ID.Clock - 1}, appended.OpSeq+1, now.Add(time.Second))
+	err = st.UpsertReport(ctx, doc.ForkRoot, replica, crdt.VersionVector{1: 1, crdt.ClientID(replica): op.ID.Clock - 1}, appended.OpSeq+1, false, now.Add(time.Second))
 	if !errors.Is(err, domain.ErrStaleReport) {
 		t.Fatalf("backwards report = %v", err)
 	}
@@ -70,20 +71,131 @@ func TestReportHomeSeqAndStaleVector(t *testing.T) {
 		t.Fatalf("stale report changed the row: %+v", reports)
 	}
 
-	if err := st.UpsertReport(ctx, doc.ForkRoot, replica, vector, 12, now.Add(2*time.Second)); err != nil {
+	if err := st.UpsertReport(ctx, doc.ForkRoot, replica, vector, 12, false, now.Add(2*time.Second)); err != nil {
 		t.Fatalf("equal vector: %v", err)
 	}
-	above := crdt.VersionVector{crdt.ClientID(replica): op.ID.Clock + 1}
-	if err := st.UpsertReport(ctx, doc.ForkRoot, replica, above, 13, now.Add(3*time.Second)); err != nil {
+	next, err := r.InsertAt(1, 'b')
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := st.Append(ctx, doc.ID, []*crdtv1.Operation{crdt.OpToProto(next)}); err != nil {
+		t.Fatal(err)
+	}
+	above := crdt.VersionVector{crdt.ClientID(replica): next.ID.Clock}
+	if err := st.UpsertReport(ctx, doc.ForkRoot, replica, above, 13, false, now.Add(3*time.Second)); err != nil {
 		t.Fatalf("above vector: %v", err)
 	}
 	reports, err = st.ListReports(ctx, doc.ForkRoot)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(reports) != 1 || reports[0].HomeSeq != 13 || reports[0].Vector[crdt.ClientID(replica)] != op.ID.Clock+1 {
+	if len(reports) != 1 || reports[0].HomeSeq != 13 || reports[0].Vector[crdt.ClientID(replica)] != next.ID.Clock {
 		t.Fatalf("replaced report = %+v", reports)
 	}
+}
+
+func TestReportClampedToHomeVector(t *testing.T) {
+	st, _ := testdb.Open(t)
+	ctx := t.Context()
+	doc, err := st.Create(ctx, "clamp", "owner")
+	if err != nil {
+		t.Fatal(err)
+	}
+	const replica = uint64(5)
+	if _, _, err := st.ClaimReplica(ctx, doc.ID, replica, false, "", time.Hour); err != nil {
+		t.Fatal(err)
+	}
+	op := appendOne(t, st, doc.ID, crdt.ClientID(replica))
+	forged := crdt.VersionVector{crdt.ClientID(replica): op.ID.Clock + 9, 99: 4}
+	if err := st.UpsertReport(ctx, doc.ForkRoot, replica, forged, 1, false, time.Now()); err != nil {
+		t.Fatal(err)
+	}
+	reports, err := st.ListReports(ctx, doc.ForkRoot)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(reports) != 1 || len(reports[0].Vector) != 1 || reports[0].Vector[crdt.ClientID(replica)] != op.ID.Clock {
+		t.Fatalf("forged report stored as %+v, want {%d:%d}", reports, replica, op.ID.Clock)
+	}
+}
+
+func TestReportUnclaimedReplicaNotFound(t *testing.T) {
+	st, _ := testdb.Open(t)
+	ctx := t.Context()
+	doc, err := st.Create(ctx, "unclaimed", "owner")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := st.UpsertReport(ctx, doc.ForkRoot, 3, crdt.VersionVector{}, 0, false, time.Now()); !errors.Is(err, domain.ErrNotFound) {
+		t.Fatalf("unclaimed report = %v", err)
+	}
+}
+
+func TestClaimLapsedFollowsResyncPending(t *testing.T) {
+	st, _ := testdb.Open(t)
+	ctx := t.Context()
+	doc, err := st.Create(ctx, "pending", "owner")
+	if err != nil {
+		t.Fatal(err)
+	}
+	const replica = uint64(11)
+	if _, lapsed, err := st.ClaimReplica(ctx, doc.ID, replica, false, "", time.Hour); err != nil || lapsed {
+		t.Fatalf("first claim lapsed=%v err=%v", lapsed, err)
+	}
+	if err := st.UpsertReport(ctx, doc.ForkRoot, replica, crdt.VersionVector{}, 0, true, time.Now()); err != nil {
+		t.Fatal(err)
+	}
+	if _, lapsed, err := st.ClaimReplica(ctx, doc.ID, replica, false, "", time.Hour); err != nil || !lapsed {
+		t.Fatalf("claim after pending report lapsed=%v err=%v, want lapsed", lapsed, err)
+	}
+	if err := st.UpsertReport(ctx, doc.ForkRoot, replica, crdt.VersionVector{}, 0, false, time.Now()); err != nil {
+		t.Fatal(err)
+	}
+	if _, lapsed, err := st.ClaimReplica(ctx, doc.ID, replica, false, "", time.Hour); err != nil || lapsed {
+		t.Fatalf("claim after cleared report lapsed=%v err=%v, want not lapsed", lapsed, err)
+	}
+}
+
+func TestReleasedReplicaReclaimRevives(t *testing.T) {
+	st, _ := testdb.Open(t)
+	ctx := t.Context()
+	doc, err := st.Create(ctx, "revive", "owner")
+	if err != nil {
+		t.Fatal(err)
+	}
+	const replica = uint64(12)
+	if _, _, err := st.ClaimReplica(ctx, doc.ID, replica, false, "", time.Hour); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.ReleaseReplica(ctx, doc.ID, replica); err != nil {
+		t.Fatal(err)
+	}
+	if _, lapsed, err := st.ClaimReplica(ctx, doc.ID, replica, false, "", time.Hour); err != nil || !lapsed {
+		t.Fatalf("re-claim after release lapsed=%v err=%v, want lapsed", lapsed, err)
+	}
+	reports, err := st.ListReports(ctx, doc.ForkRoot)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(reports) != 1 || reports[0].ReleasedAt != nil {
+		t.Fatalf("released_at after re-claim: %+v", reports)
+	}
+}
+
+func appendOne(t *testing.T, st *store.Store, id uuid.UUID, client crdt.ClientID) crdt.Insert {
+	t.Helper()
+	r, err := crdt.NewReplica(client, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	op, err := r.InsertAt(0, 'x')
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := st.Append(t.Context(), id, []*crdtv1.Operation{crdt.OpToProto(op)}); err != nil {
+		t.Fatal(err)
+	}
+	return op
 }
 
 func TestReleaseReplicaKeepsRow(t *testing.T) {
@@ -93,8 +205,12 @@ func TestReleaseReplicaKeepsRow(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	vector := crdt.VersionVector{2: 4}
-	if err := st.UpsertReport(ctx, doc.ForkRoot, 2, vector, 4, time.Now()); err != nil {
+	if _, _, err := st.ClaimReplica(ctx, doc.ID, 2, false, "", time.Hour); err != nil {
+		t.Fatal(err)
+	}
+	op := appendOne(t, st, doc.ID, 2)
+	vector := crdt.VersionVector{2: op.ID.Clock}
+	if err := st.UpsertReport(ctx, doc.ForkRoot, 2, vector, 4, false, time.Now()); err != nil {
 		t.Fatal(err)
 	}
 	if err := st.ReleaseReplica(ctx, doc.ID, 2); err != nil {
@@ -104,7 +220,7 @@ func TestReleaseReplicaKeepsRow(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(reports) != 1 || reports[0].ReleasedAt == nil || reports[0].HomeSeq != 4 || reports[0].Vector[2] != 4 {
+	if len(reports) != 1 || reports[0].ReleasedAt == nil || reports[0].HomeSeq != 4 || reports[0].Vector[2] != op.ID.Clock {
 		t.Fatalf("released reports = %+v", reports)
 	}
 	released := *reports[0].ReleasedAt
@@ -138,26 +254,39 @@ func TestSystemClaimWritesInitialReport(t *testing.T) {
 	if _, err := st.Append(ctx, doc.ID, []*crdtv1.Operation{crdt.OpToProto(op)}); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := st.ClaimReplica(ctx, doc.ID, 9, false, ""); err != nil {
+	if _, _, err := st.ClaimReplica(ctx, doc.ID, 9, false, "", time.Hour); err != nil {
 		t.Fatal(err)
 	}
 	reports, err := st.ListReports(ctx, doc.ForkRoot)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(reports) != 0 {
-		t.Fatalf("client claim wrote reports: %+v", reports)
+	if len(reports) != 1 || reports[0].Replica != 9 || len(reports[0].Vector) != 0 || reports[0].HomeSeq != 0 || reports[0].ReleasedAt != nil {
+		t.Fatalf("client claim report = %+v, want empty vector at home_seq 0", reports)
 	}
-	sys, err := st.ClaimReplica(ctx, doc.ID, 0, true, "")
+	sys, _, err := st.ClaimReplica(ctx, doc.ID, 0, true, "", time.Hour)
 	if err != nil || sys == 0 {
 		t.Fatalf("system claim = %d, %v", sys, err)
 	}
-	reports, err = st.ListReports(ctx, doc.ForkRoot)
-	if err != nil {
-		t.Fatal(err)
+	sysReport := func() store.Report {
+		t.Helper()
+		reports, err := st.ListReports(ctx, doc.ForkRoot)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(reports) != 2 {
+			t.Fatalf("reports = %+v", reports)
+		}
+		for _, r := range reports {
+			if r.Replica == sys {
+				return r
+			}
+		}
+		t.Fatalf("no system report in %+v", reports)
+		return store.Report{}
 	}
-	if len(reports) != 1 || reports[0].Replica != sys || reports[0].HomeSeq != 1 || reports[0].Vector[1] != op.ID.Clock || reports[0].ReleasedAt != nil {
-		t.Fatalf("system report = %+v", reports)
+	if got := sysReport(); got.HomeSeq != 1 || got.Vector[1] != op.ID.Clock || got.ReleasedAt != nil {
+		t.Fatalf("system report = %+v", got)
 	}
 	got := readVector(t, pool, doc.ID)
 	if got[1] != op.ID.Clock {
@@ -171,27 +300,26 @@ func TestSystemClaimWritesInitialReport(t *testing.T) {
 	if _, err := st.Append(ctx, doc.ID, []*crdtv1.Operation{crdt.OpToProto(next)}); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := st.ClaimReplica(ctx, doc.ID, sys, true, ""); err != nil {
+	if _, _, err := st.ClaimReplica(ctx, doc.ID, sys, true, "", time.Hour); err != nil {
 		t.Fatal(err)
 	}
-	reports, err = st.ListReports(ctx, doc.ForkRoot)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(reports) != 1 || reports[0].Vector[1] != op.ID.Clock || reports[0].HomeSeq != 1 {
-		t.Fatalf("re-claim moved the system floor: %+v", reports)
+	if got := sysReport(); got.Vector[1] != op.ID.Clock || got.HomeSeq != 1 {
+		t.Fatalf("re-claim moved the system floor: %+v", got)
 	}
 }
 
 func TestBackfillReportsOnce(t *testing.T) {
-	st, _ := testdb.Open(t)
+	st, pool := testdb.Open(t)
 	ctx := t.Context()
 	doc, err := st.Create(ctx, "backfill", "owner")
 	if err != nil {
 		t.Fatal(err)
 	}
 	const replica = uint64(6)
-	if _, err := st.ClaimReplica(ctx, doc.ID, replica, false, ""); err != nil {
+	if _, _, err := st.ClaimReplica(ctx, doc.ID, replica, false, "", time.Hour); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := pool.Exec(ctx, `DELETE FROM replica_reports WHERE fork_root = $1`, doc.ForkRoot); err != nil {
 		t.Fatal(err)
 	}
 	state := crdt.New()
@@ -217,7 +345,7 @@ func TestBackfillReportsOnce(t *testing.T) {
 	if len(reports) != 1 || reports[0].Replica != replica || reports[0].HomeSeq != appended.OpSeq || reports[0].Vector[crdt.ClientID(replica)] != op.ID.Clock {
 		t.Fatalf("backfill = %+v", reports)
 	}
-	if err := st.UpsertReport(ctx, doc.ForkRoot, replica, crdt.VersionVector{crdt.ClientID(replica): op.ID.Clock + 5}, 40, time.Now()); err != nil {
+	if err := st.UpsertReport(ctx, doc.ForkRoot, replica, crdt.VersionVector{crdt.ClientID(replica): op.ID.Clock}, 40, false, time.Now()); err != nil {
 		t.Fatal(err)
 	}
 	if err := st.BackfillReports(ctx); err != nil {
@@ -227,7 +355,7 @@ func TestBackfillReportsOnce(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(reports) != 1 || reports[0].HomeSeq != 40 || reports[0].Vector[crdt.ClientID(replica)] != op.ID.Clock+5 {
+	if len(reports) != 1 || reports[0].HomeSeq != 40 || reports[0].Vector[crdt.ClientID(replica)] != op.ID.Clock {
 		t.Fatalf("backfill regressed the report: %+v", reports)
 	}
 }

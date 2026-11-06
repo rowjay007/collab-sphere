@@ -26,15 +26,20 @@ func ReportLapsed(reportedAt time.Time, releasedAt *time.Time, ttl time.Duration
 
 // ReportRetired is true when the report is lapsed and either the home document
 // is archived or every unarchived document in the tree covers this replica's
-// clock in the report. A sibling with a null vector means not retired.
-func ReportRetired(replica uint64, vector crdt.VersionVector, reportedAt time.Time, releasedAt *time.Time, homeArchived bool, tree []TreeDoc, ttl time.Duration, now time.Time) bool {
+// clock in the home document's committed vector. The report can trail acked
+// ops, so its own clock is not used. A null home or sibling vector means not
+// retired.
+func ReportRetired(replica uint64, reportedAt time.Time, releasedAt *time.Time, home TreeDoc, tree []TreeDoc, ttl time.Duration, now time.Time) bool {
 	if !ReportLapsed(reportedAt, releasedAt, ttl, now) {
 		return false
 	}
-	if homeArchived {
+	if home.Archived {
 		return true
 	}
-	self := crdt.ID{Client: crdt.ClientID(replica), Clock: vector[crdt.ClientID(replica)]}
+	if !home.VectorOK {
+		return false
+	}
+	self := crdt.ID{Client: crdt.ClientID(replica), Clock: home.Vector[crdt.ClientID(replica)]}
 	for _, doc := range tree {
 		if doc.Archived {
 			continue

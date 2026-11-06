@@ -62,15 +62,18 @@ type Store interface {
 	// ReadOperations returns up to limit ops after seq after and log metadata.
 	ReadOperations(ctx context.Context, docID string, after uint64, limit int) (fanout.Batch, LogMeta, error)
 	// ReportVector records one replica's version vector at homeSeq.
+	// resyncPending marks a stamp whose resync DocumentSync the client has
+	// not yet acknowledged with its own report.
 	// ErrStaleReport means the stored row was left unchanged.
-	ReportVector(ctx context.Context, docID string, replica crdt.ClientID, vector crdt.VersionVector, homeSeq uint64) error
+	ReportVector(ctx context.Context, docID string, replica crdt.ClientID, vector crdt.VersionVector, homeSeq uint64, resyncPending bool) error
 }
 
 // StoredReport is one replica's recorded vector.
 type StoredReport struct {
-	Replica crdt.ClientID
-	Vector  crdt.VersionVector
-	HomeSeq uint64
+	Replica       crdt.ClientID
+	Vector        crdt.VersionVector
+	HomeSeq       uint64
+	ResyncPending bool
 }
 
 // MemoryStore is an in-process Store for tests. Each document is an ordered
@@ -185,7 +188,7 @@ func (l *memoryLog) append(ops []crdt.Op) (AppendResult, error) {
 }
 
 // ReportVector records the report, replacing any row for the same replica.
-func (s *MemoryStore) ReportVector(_ context.Context, docID string, replica crdt.ClientID, vector crdt.VersionVector, homeSeq uint64) error {
+func (s *MemoryStore) ReportVector(_ context.Context, docID string, replica crdt.ClientID, vector crdt.VersionVector, homeSeq uint64, resyncPending bool) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	byReplica := s.reports[docID]
@@ -193,7 +196,7 @@ func (s *MemoryStore) ReportVector(_ context.Context, docID string, replica crdt
 		byReplica = make(map[crdt.ClientID]StoredReport)
 		s.reports[docID] = byReplica
 	}
-	byReplica[replica] = StoredReport{Replica: replica, Vector: vector.Clone(), HomeSeq: homeSeq}
+	byReplica[replica] = StoredReport{Replica: replica, Vector: vector.Clone(), HomeSeq: homeSeq, ResyncPending: resyncPending}
 	return nil
 }
 

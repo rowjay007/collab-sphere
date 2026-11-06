@@ -177,11 +177,11 @@ func (c *reportClient) ReportVector(_ context.Context, req *documentv1.ReportVec
 
 func TestReportVectorForwardsStamp(t *testing.T) {
 	rec := &reportClient{}
-	err := New(rec).ReportVector(t.Context(), "doc", 7, crdt.VersionVector{7: 4, 3: 1, 1: 0}, 9)
+	err := New(rec).ReportVector(t.Context(), "doc", 7, crdt.VersionVector{7: 4, 3: 1, 1: 0}, 9, true)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if rec.req.GetDocumentId() != "doc" || rec.req.GetReplicaId() != 7 || rec.req.GetHomeSeq() != 9 {
+	if rec.req.GetDocumentId() != "doc" || rec.req.GetReplicaId() != 7 || rec.req.GetHomeSeq() != 9 || !rec.req.GetResyncPending() {
 		t.Fatalf("request = %+v", rec.req)
 	}
 	if len(rec.req.GetVector()) != 2 || rec.req.GetVector()[0].GetClient() != 3 || rec.req.GetVector()[0].GetClock() != 1 || rec.req.GetVector()[1].GetClient() != 7 || rec.req.GetVector()[1].GetClock() != 4 {
@@ -192,7 +192,7 @@ func TestReportVectorForwardsStamp(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	err = New(&reportClient{err: st.Err()}).ReportVector(t.Context(), "doc", 7, crdt.VersionVector{7: 1}, 1)
+	err = New(&reportClient{err: st.Err()}).ReportVector(t.Context(), "doc", 7, crdt.VersionVector{7: 1}, 1, false)
 	if !errors.Is(err, hub.ErrStaleReport) {
 		t.Fatalf("ReportVector error = %v", err)
 	}

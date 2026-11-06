@@ -4,6 +4,7 @@ import (
 	"errors"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -25,20 +26,20 @@ func TestClaimReplica(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if got, err := st.ClaimReplica(ctx, home.ID, 77, false, ""); err != nil || got != 77 {
+	if got, _, err := st.ClaimReplica(ctx, home.ID, 77, false, "", time.Hour); err != nil || got != 77 {
 		t.Fatalf("claim = %d, %v", got, err)
 	}
-	if got, err := st.ClaimReplica(ctx, home.ID, 77, false, ""); err != nil || got != 77 {
+	if got, _, err := st.ClaimReplica(ctx, home.ID, 77, false, "", time.Hour); err != nil || got != 77 {
 		t.Fatalf("repeat claim = %d, %v", got, err)
 	}
-	if _, err := st.ClaimReplica(ctx, branch, 77, false, ""); !errors.Is(err, domain.ErrReplicaHomedElsewhere) {
+	if _, _, err := st.ClaimReplica(ctx, branch, 77, false, "", time.Hour); !errors.Is(err, domain.ErrReplicaHomedElsewhere) {
 		t.Fatalf("branch claim error = %v", err)
 	}
-	if got, err := st.ClaimReplica(ctx, unrelated.ID, 77, false, ""); err != nil || got != 77 {
+	if got, _, err := st.ClaimReplica(ctx, unrelated.ID, 77, false, "", time.Hour); err != nil || got != 77 {
 		t.Fatalf("unrelated claim = %d, %v", got, err)
 	}
 
-	allocated, err := st.ClaimReplica(ctx, home.ID, 0, false, "")
+	allocated, _, err := st.ClaimReplica(ctx, home.ID, 0, false, "", time.Hour)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -68,7 +69,7 @@ func TestClaimReplicaConcurrentRace(t *testing.T) {
 		go func() {
 			defer wg.Done()
 			<-start
-			_, err := st.ClaimReplica(ctx, doc, 88, false, "")
+			_, _, err := st.ClaimReplica(ctx, doc, 88, false, "", time.Hour)
 			results <- result{doc: doc, err: err}
 		}()
 	}
@@ -95,7 +96,7 @@ func TestClaimReplicaConcurrentRace(t *testing.T) {
 func TestClaimReplicaRejectsMissingAndArchived(t *testing.T) {
 	st, _ := testdb.Open(t)
 	ctx := t.Context()
-	if _, err := st.ClaimReplica(ctx, uuid.New(), 1, false, ""); !errors.Is(err, domain.ErrNotFound) {
+	if _, _, err := st.ClaimReplica(ctx, uuid.New(), 1, false, "", time.Hour); !errors.Is(err, domain.ErrNotFound) {
 		t.Fatalf("missing error = %v", err)
 	}
 	doc, err := st.Create(ctx, "archived", "owner")
@@ -105,7 +106,7 @@ func TestClaimReplicaRejectsMissingAndArchived(t *testing.T) {
 	if _, err := st.Archive(ctx, doc.ID); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := st.ClaimReplica(ctx, doc.ID, 1, false, ""); !errors.Is(err, domain.ErrArchived) {
+	if _, _, err := st.ClaimReplica(ctx, doc.ID, 1, false, "", time.Hour); !errors.Is(err, domain.ErrArchived) {
 		t.Fatalf("archived error = %v", err)
 	}
 }
@@ -117,14 +118,14 @@ func TestClaimReplicaRefusesClientClaimOfSystemID(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	sys, err := st.ClaimReplica(ctx, doc.ID, 0, true, "")
+	sys, _, err := st.ClaimReplica(ctx, doc.ID, 0, true, "", time.Hour)
 	if err != nil || sys == 0 {
 		t.Fatalf("system allocate = %d, %v", sys, err)
 	}
-	if _, err := st.ClaimReplica(ctx, doc.ID, sys, false, ""); !errors.Is(err, domain.ErrReplicaHomedElsewhere) {
+	if _, _, err := st.ClaimReplica(ctx, doc.ID, sys, false, "", time.Hour); !errors.Is(err, domain.ErrReplicaHomedElsewhere) {
 		t.Fatalf("client claim of system id = %v", err)
 	}
-	if got, err := st.ClaimReplica(ctx, doc.ID, sys, true, ""); err != nil || got != sys {
+	if got, _, err := st.ClaimReplica(ctx, doc.ID, sys, true, "", time.Hour); err != nil || got != sys {
 		t.Fatalf("system re-claim = %d, %v", got, err)
 	}
 }
@@ -136,16 +137,16 @@ func TestReplicaUserIsWriteOnce(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got, err := st.ClaimReplica(ctx, doc.ID, 7, false, "ada"); err != nil || got != 7 {
+	if got, _, err := st.ClaimReplica(ctx, doc.ID, 7, false, "ada", time.Hour); err != nil || got != 7 {
 		t.Fatalf("claim = %d, %v", got, err)
 	}
-	if _, err := st.ClaimReplica(ctx, doc.ID, 7, false, "ada"); err != nil {
+	if _, _, err := st.ClaimReplica(ctx, doc.ID, 7, false, "ada", time.Hour); err != nil {
 		t.Fatalf("reclaim = %v", err)
 	}
-	if _, err := st.ClaimReplica(ctx, doc.ID, 7, false, "bob"); !errors.Is(err, domain.ErrReplicaOwned) {
+	if _, _, err := st.ClaimReplica(ctx, doc.ID, 7, false, "bob", time.Hour); !errors.Is(err, domain.ErrReplicaOwned) {
 		t.Fatalf("other user = %v", err)
 	}
-	if _, err := st.ClaimReplica(ctx, doc.ID, 8, false, ""); err != nil {
+	if _, _, err := st.ClaimReplica(ctx, doc.ID, 8, false, "", time.Hour); err != nil {
 		t.Fatal(err)
 	}
 	start := make(chan struct{})
@@ -156,7 +157,7 @@ func TestReplicaUserIsWriteOnce(t *testing.T) {
 		go func() {
 			defer wg.Done()
 			<-start
-			_, errs[i] = st.ClaimReplica(ctx, doc.ID, 8, false, user)
+			_, _, errs[i] = st.ClaimReplica(ctx, doc.ID, 8, false, user, time.Hour)
 		}()
 	}
 	close(start)
@@ -175,7 +176,7 @@ func TestReplicaUserIsWriteOnce(t *testing.T) {
 	if won != 1 || lost != 1 {
 		t.Fatalf("adopt results won=%d lost=%d errs=%v", won, lost, errs)
 	}
-	if _, err := st.ClaimReplica(ctx, doc.ID, 0, true, "ada"); !errors.Is(err, domain.ErrInvalidArgument) {
+	if _, _, err := st.ClaimReplica(ctx, doc.ID, 0, true, "ada", time.Hour); !errors.Is(err, domain.ErrInvalidArgument) {
 		t.Fatalf("system with user = %v", err)
 	}
 }

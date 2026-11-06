@@ -151,6 +151,51 @@ func TestRestoreResumeAfterEachCrashPoint(t *testing.T) {
 	}
 }
 
+func TestResumedRestorePastHorizonFailsWithoutAppending(t *testing.T) {
+	t.Setenv("RESTORE_HORIZON", "1h")
+	st, _ := testdb.Open(t)
+	docs := newFakeDocs()
+	h := history.New(st, docs)
+	ctx := t.Context()
+	start := time.Now()
+	h.SetNow(func() time.Time { return start })
+	d := docs.create(t)
+	docs.edit(t, d, 40)
+	v, err := h.Checkpoint(ctx, d, "v", "cp-aged")
+	if err != nil {
+		t.Fatal(err)
+	}
+	docs.edit(t, d, 20)
+
+	h.SetCrashHook(history.CrashAfterPersist, func() error { return history.ErrInjected })
+	if _, err := h.Restore(ctx, d, v.ID, "restore-aged"); !errors.Is(err, history.ErrInjected) {
+		t.Fatalf("first restore: %v", err)
+	}
+	h.SetCrashHook(history.CrashAfterPersist, nil)
+	before := docs.seq(d)
+
+	h.SetNow(func() time.Time { return start.Add(2 * time.Hour) })
+	if _, err := h.Restore(ctx, d, v.ID, "restore-aged"); !errors.Is(err, history.ErrRestoreHorizon) {
+		t.Fatalf("resumed restore: %v", err)
+	}
+	if got := docs.seq(d); got != before {
+		t.Fatalf("resumed restore appended: seq %d, want %d", got, before)
+	}
+	m, ok, err := st.Mutation(ctx, "restore-aged")
+	if err != nil || !ok {
+		t.Fatalf("mutation: ok=%v err=%v", ok, err)
+	}
+	if m.State != store.StateFailed {
+		t.Fatalf("state %s, want failed", m.State)
+	}
+	if _, err := h.Checkpoint(ctx, d, "after", "cp-after-aged"); err != nil {
+		t.Fatalf("checkpoint after failed restore: %v", err)
+	}
+	if got := docs.seq(d); got != before {
+		t.Fatalf("later call appended the plan: seq %d, want %d", got, before)
+	}
+}
+
 func TestMergeFrontierFollowsMergeParent(t *testing.T) {
 	st, _ := testdb.Open(t)
 	docs := newFakeDocs()

@@ -5,7 +5,6 @@ import (
 	"errors"
 	"fmt"
 	"strconv"
-	"time"
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
@@ -14,33 +13,27 @@ import (
 	docgc "github.com/rowjay007/collab-sphere/services/document-service/internal/gc"
 )
 
-func (s *Store) ReplicaReportLapsed(ctx context.Context, forkRoot uuid.UUID, replica uint64, ttl time.Duration) (bool, error) {
-	if replica == 0 {
-		return false, nil
-	}
-	var reportedAt time.Time
-	var releasedAt *time.Time
-	err := s.pool.QueryRow(ctx, `
-		SELECT reported_at, released_at
-		FROM replica_reports
-		WHERE fork_root = $1 AND replica_id = $2::numeric`,
-		forkRoot, strconv.FormatUint(replica, 10)).Scan(&reportedAt, &releasedAt)
-	if errors.Is(err, pgx.ErrNoRows) {
-		return false, nil
-	}
+// UnarchivedForkTree returns the ids of every unarchived document in the tree.
+func (s *Store) UnarchivedForkTree(ctx context.Context, forkRoot uuid.UUID) ([]uuid.UUID, error) {
+	rows, err := s.pool.Query(ctx, `
+		SELECT id FROM documents
+		WHERE fork_root = $1 AND status <> $2
+		ORDER BY id`, forkRoot, domain.StatusArchived)
 	if err != nil {
-		return false, fmt.Errorf("load report lapse: %w", err)
+		return nil, fmt.Errorf("list unarchived fork tree: %w", err)
 	}
-	return docgc.ReportLapsed(reportedAt, releasedAt, ttl, time.Now()), nil
+	return pgx.CollectRows(rows, pgx.RowTo[uuid.UUID])
 }
 
-func (s *Store) ForkTreeForRetirement(ctx context.Context, forkRoot uuid.UUID, replica uint64) (homeArchived bool, tree []docgc.TreeDoc, err error) {
+// ForkTreeForRetirement returns the replica's home document and every document
+// in the tree. A replica with no replicas row gets a zero home.
+func (s *Store) ForkTreeForRetirement(ctx context.Context, forkRoot uuid.UUID, replica uint64) (home docgc.TreeDoc, tree []docgc.TreeDoc, err error) {
 	rows, err := s.pool.Query(ctx, `
 		SELECT status, vector
 		FROM documents
 		WHERE fork_root = $1`, forkRoot)
 	if err != nil {
-		return false, nil, fmt.Errorf("list fork tree: %w", err)
+		return home, nil, fmt.Errorf("list fork tree: %w", err)
 	}
 	defer rows.Close()
 
@@ -48,34 +41,48 @@ func (s *Store) ForkTreeForRetirement(ctx context.Context, forkRoot uuid.UUID, r
 		var status string
 		var raw []byte
 		if err := rows.Scan(&status, &raw); err != nil {
-			return false, nil, err
+			return home, nil, err
 		}
-		item := docgc.TreeDoc{Archived: domain.Status(status) == domain.StatusArchived}
-		if len(raw) > 0 {
-			vec, err := unmarshalVector(raw)
-			if err != nil {
-				return false, nil, err
-			}
-			item.Vector = vec
-			item.VectorOK = true
+		item, err := treeDoc(status, raw)
+		if err != nil {
+			return home, nil, err
 		}
 		tree = append(tree, item)
 	}
 	if err := rows.Err(); err != nil {
-		return false, nil, err
+		return home, nil, err
 	}
-	var homeStatus string
+	var status string
+	var raw []byte
 	err = s.pool.QueryRow(ctx, `
-		SELECT d.status
+		SELECT d.status, d.vector
 		FROM replicas r
 		JOIN documents d ON d.id = r.document_id
-	 WHERE r.fork_root = $1 AND r.id = $2::numeric`,
-		forkRoot, strconv.FormatUint(replica, 10)).Scan(&homeStatus)
+		WHERE r.fork_root = $1 AND r.id = $2::numeric`,
+		forkRoot, strconv.FormatUint(replica, 10)).Scan(&status, &raw)
 	if errors.Is(err, pgx.ErrNoRows) {
-		return false, tree, nil
+		return home, tree, nil
 	}
 	if err != nil {
-		return false, nil, fmt.Errorf("replica home: %w", err)
+		return home, nil, fmt.Errorf("replica home: %w", err)
 	}
-	return domain.Status(homeStatus) == domain.StatusArchived, tree, nil
+	home, err = treeDoc(status, raw)
+	if err != nil {
+		return home, nil, err
+	}
+	return home, tree, nil
+}
+
+func treeDoc(status string, raw []byte) (docgc.TreeDoc, error) {
+	item := docgc.TreeDoc{Archived: domain.Status(status) == domain.StatusArchived}
+	if len(raw) == 0 {
+		return item, nil
+	}
+	vec, err := unmarshalVector(raw)
+	if err != nil {
+		return item, err
+	}
+	item.Vector = vec
+	item.VectorOK = true
+	return item, nil
 }

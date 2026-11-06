@@ -18,6 +18,9 @@ func TestGCWorkerPinnedLeafSurvives(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	if _, _, err := st.ClaimReplica(ctx, doc.ID, 1, false, "", time.Hour); err != nil {
+		t.Fatal(err)
+	}
 	r, err := crdt.NewReplica(1, nil)
 	if err != nil {
 		t.Fatal(err)
@@ -50,7 +53,7 @@ func TestGCWorkerPinnedLeafSurvives(t *testing.T) {
 	}
 	full := r.Vector()
 	now := time.Now()
-	if err := st.UpsertReport(ctx, doc.ForkRoot, 1, full, appended.OpSeq, now); err != nil {
+	if err := st.UpsertReport(ctx, doc.ForkRoot, 1, full, appended.OpSeq, false, now); err != nil {
 		t.Fatal(err)
 	}
 	pins := map[crdt.ID]struct{}{left.ID: {}}

@@ -1104,6 +1104,7 @@ type ReportVectorRequest struct {
 	ReplicaId     uint64                 `protobuf:"varint,2,opt,name=replica_id,json=replicaId,proto3" json:"replica_id,omitempty"`
 	Vector        []*v1.VectorEntry      `protobuf:"bytes,3,rep,name=vector,proto3" json:"vector,omitempty"`
 	HomeSeq       uint64                 `protobuf:"varint,4,opt,name=home_seq,json=homeSeq,proto3" json:"home_seq,omitempty"`
+	ResyncPending bool                   `protobuf:"varint,5,opt,name=resync_pending,json=resyncPending,proto3" json:"resync_pending,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -1164,6 +1165,13 @@ func (x *ReportVectorRequest) GetHomeSeq() uint64 {
 		return x.HomeSeq
 	}
 	return 0
+}
+
+func (x *ReportVectorRequest) GetResyncPending() bool {
+	if x != nil {
+		return x.ResyncPending
+	}
+	return false
 }
 
 type ReportVectorResponse struct {
@@ -1551,14 +1559,15 @@ const file_document_v1_document_proto_rawDesc = "" +
 	"\tdocuments\x18\x01 \x03(\v2\x15.document.v1.DocumentR\tdocuments\x129\n" +
 	"\n" +
 	"next_since\x18\x02 \x01(\v2\x1a.google.protobuf.TimestampR\tnextSince\x12\"\n" +
-	"\rnext_after_id\x18\x03 \x01(\tR\vnextAfterId\"\x9e\x01\n" +
+	"\rnext_after_id\x18\x03 \x01(\tR\vnextAfterId\"\xc5\x01\n" +
 	"\x13ReportVectorRequest\x12\x1f\n" +
 	"\vdocument_id\x18\x01 \x01(\tR\n" +
 	"documentId\x12\x1d\n" +
 	"\n" +
 	"replica_id\x18\x02 \x01(\x04R\treplicaId\x12,\n" +
 	"\x06vector\x18\x03 \x03(\v2\x14.crdt.v1.VectorEntryR\x06vector\x12\x19\n" +
-	"\bhome_seq\x18\x04 \x01(\x04R\ahomeSeq\"\x16\n" +
+	"\bhome_seq\x18\x04 \x01(\x04R\ahomeSeq\x12%\n" +
+	"\x0eresync_pending\x18\x05 \x01(\bR\rresyncPending\"\x16\n" +
 	"\x14ReportVectorResponse\"1\n" +
 	"\x12ListReportsRequest\x12\x1b\n" +
 	"\tfork_root\x18\x01 \x01(\tR\bforkRoot\"\xf1\x01\n" +

@@ -30,8 +30,8 @@ type GC struct {
 }
 
 type retireInputs struct {
-	homeArchived bool
-	tree         []docgc.TreeDoc
+	home docgc.TreeDoc
+	tree []docgc.TreeDoc
 }
 
 func (g *GC) Run(ctx context.Context, interval time.Duration) {
@@ -78,7 +78,7 @@ func (g *GC) RunDocument(ctx context.Context, id uuid.UUID) {
 		slog.Debug("gc skip null vector", "document_id", id)
 		return
 	}
-	floor, err := g.Floor.RestoreFloor(ctx, id)
+	floor, err := g.treeFloor(ctx, docRow.ForkRoot)
 	if err != nil {
 		slog.Warn("gc floor", "document_id", id, "err", err)
 		return
@@ -99,15 +99,15 @@ func (g *GC) RunDocument(ctx context.Context, id uuid.UUID) {
 	for _, r := range reports {
 		in, ok := retireCache[r.Replica]
 		if !ok {
-			homeArchived, tree, err := g.Store.ForkTreeForRetirement(ctx, docRow.ForkRoot, r.Replica)
+			home, tree, err := g.Store.ForkTreeForRetirement(ctx, docRow.ForkRoot, r.Replica)
 			if err != nil {
 				slog.Warn("gc retirement inputs", "document_id", id, "replica", r.Replica, "err", err)
 				return
 			}
-			in = retireInputs{homeArchived: homeArchived, tree: tree}
+			in = retireInputs{home: home, tree: tree}
 			retireCache[r.Replica] = in
 		}
-		retired := docgc.ReportRetired(r.Replica, r.Vector, r.ReportedAt, r.ReleasedAt, in.homeArchived, in.tree, g.TTL, now)
+		retired := docgc.ReportRetired(r.Replica, r.ReportedAt, r.ReleasedAt, in.home, in.tree, g.TTL, now)
 		gcReports = append(gcReports, docgc.Report{
 			Replica: r.Replica, Vector: r.Vector, ReportedAt: r.ReportedAt, ReleasedAt: r.ReleasedAt, Retired: retired,
 		})
@@ -147,4 +147,25 @@ func (g *GC) RunDocument(ctx context.Context, id uuid.UUID) {
 	if g.Metrics.GCStableAge != nil {
 		g.Metrics.GCStableAge.Set(docgc.StableAge(gcReports, stable, now).Seconds())
 	}
+}
+
+// treeFloor is the pointwise minimum of RestoreFloor across every unarchived
+// document in the tree. A client absent from any floor is 0.
+func (g *GC) treeFloor(ctx context.Context, forkRoot uuid.UUID) (crdt.VersionVector, error) {
+	ids, err := g.Store.UnarchivedForkTree(ctx, forkRoot)
+	if err != nil {
+		return nil, err
+	}
+	floors := make([]crdt.VersionVector, 0, len(ids))
+	for _, doc := range ids {
+		floor, err := g.Floor.RestoreFloor(ctx, doc)
+		if err != nil {
+			return nil, err
+		}
+		floors = append(floors, floor)
+	}
+	if len(floors) == 0 {
+		return crdt.VersionVector{}, nil
+	}
+	return crdt.Stable(floors[0], floors[1:], floors[0]), nil
 }

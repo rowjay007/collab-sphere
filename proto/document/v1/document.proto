@@ -155,6 +155,7 @@ message ReportVectorRequest {
   uint64 replica_id = 2;
   repeated crdt.v1.VectorEntry vector = 3;
   uint64 home_seq = 4;
+  bool resync_pending = 5;
 }
 
 message ReportVectorResponse {}

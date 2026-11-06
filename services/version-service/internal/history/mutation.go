@@ -390,6 +390,19 @@ func (h *History) drive(ctx context.Context, m store.Mutation) error {
 	}
 	defer unlock()
 
+	if m.Kind == store.KindRestore && m.State == store.StatePlanned && m.SourceNode != nil {
+		target, err := h.version(ctx, *m.SourceNode)
+		if err != nil {
+			return err
+		}
+		if h.pastHorizon(target) {
+			if err := h.failMutation(ctx, m); err != nil {
+				return err
+			}
+			return ErrRestoreHorizon
+		}
+	}
+
 	ops, err := decodePlan(m.Plan)
 	if err != nil {
 		return err
@@ -400,9 +413,7 @@ func (h *History) drive(ctx context.Context, m store.Mutation) error {
 		res, err := h.docs.Append(ctx, m.Doc, ops[i:end])
 		if err != nil {
 			if isOpConflict(err) || errors.Is(err, ErrKeyRotation) {
-				if markErr := h.do(ctx, []uuid.UUID{m.Doc}, func(tx store.Tx) error {
-					return tx.SetMutationState(ctx, m.RequestID, store.StateFailed)
-				}); markErr != nil {
+				if markErr := h.failMutation(ctx, m); markErr != nil {
 					return markErr
 				}
 				if errors.Is(err, ErrKeyRotation) {
@@ -461,6 +472,12 @@ func (h *History) drive(ctx context.Context, m store.Mutation) error {
 	}
 	return h.do(ctx, []uuid.UUID{m.Doc}, func(tx store.Tx) error {
 		return tx.FinishMutation(ctx, m.RequestID, result.ID, m.Appended, m.Noop)
+	})
+}
+
+func (h *History) failMutation(ctx context.Context, m store.Mutation) error {
+	return h.do(ctx, []uuid.UUID{m.Doc}, func(tx store.Tx) error {
+		return tx.SetMutationState(ctx, m.RequestID, store.StateFailed)
 	})
 }
 
