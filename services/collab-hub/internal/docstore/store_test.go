@@ -111,7 +111,7 @@ func (c replicaClient) ClaimReplica(context.Context, *documentv1.ClaimReplicaReq
 }
 
 func TestReplicaClaim(t *testing.T) {
-	got, err := New(replicaClient{client: 44}).Replica(t.Context(), "doc", 44)
+	got, _, err := New(replicaClient{client: 44}).Replica(t.Context(), "doc", 44)
 	if err != nil || got != 44 {
 		t.Fatalf("Replica = %d, %v", got, err)
 	}
@@ -121,7 +121,7 @@ func TestReplicaClaim(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	_, err = New(replicaClient{err: st.Err()}).Replica(t.Context(), "doc", 44)
+	_, _, err = New(replicaClient{err: st.Err()}).Replica(t.Context(), "doc", 44)
 	if !errors.Is(err, hub.ErrUnknownReplica) {
 		t.Fatalf("Replica error = %v", err)
 	}

@@ -33,7 +33,7 @@ func New(client documentv1.DocumentServiceClient) *Store {
 	return &Store{client: client}
 }
 
-func (s *Store) Replica(ctx context.Context, docID string, requested crdt.ClientID) (crdt.ClientID, error) {
+func (s *Store) Replica(ctx context.Context, docID string, requested crdt.ClientID) (crdt.ClientID, bool, error) {
 	resp, err := s.client.ClaimReplica(ctx, &documentv1.ClaimReplicaRequest{
 		DocumentId: docID,
 		Client:     uint64(requested),
@@ -41,14 +41,14 @@ func (s *Store) Replica(ctx context.Context, docID string, requested crdt.Client
 	})
 	if err != nil {
 		if hasErrorReason(err, codes.FailedPrecondition, replicaOwnedReason) {
-			return 0, hub.ErrReplicaForbidden
+			return 0, false, hub.ErrReplicaForbidden
 		}
 		if hasErrorReason(err, codes.FailedPrecondition, replicaHomedElsewhereReason) {
-			return 0, hub.ErrUnknownReplica
+			return 0, false, hub.ErrUnknownReplica
 		}
-		return 0, err
+		return 0, false, err
 	}
-	return crdt.ClientID(resp.GetClient()), nil
+	return crdt.ClientID(resp.GetClient()), resp.GetLapsed(), nil
 }
 
 // Load restores a document from the latest snapshot plus subsequent ops.

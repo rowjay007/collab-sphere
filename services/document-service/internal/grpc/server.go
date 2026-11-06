@@ -31,9 +31,10 @@ type permissions interface {
 
 type Server struct {
 	documentv1.UnimplementedDocumentServiceServer
-	store     *store.Store
-	perm      permissions
-	appendObs interface{ Observe(float64) }
+	store      *store.Store
+	perm       permissions
+	appendObs  interface{ Observe(float64) }
+	replicaTTL time.Duration
 }
 
 func New(s *store.Store) *Server {
@@ -43,6 +44,8 @@ func New(s *store.Store) *Server {
 func (s *Server) UsePermissions(p permissions) { s.perm = p }
 
 func (s *Server) UseAppend(obs interface{ Observe(float64) }) { s.appendObs = obs }
+
+func (s *Server) UseReplicaTTL(d time.Duration) { s.replicaTTL = d }
 
 func Methods() map[string]auth.Class {
 	return map[string]auth.Class{
@@ -187,7 +190,15 @@ func (s *Server) ClaimReplica(ctx context.Context, req *documentv1.ClaimReplicaR
 	if err != nil {
 		return nil, mapError(err)
 	}
-	return &documentv1.ClaimReplicaResponse{Client: client}, nil
+	doc, err := s.store.Get(ctx, id)
+	if err != nil {
+		return nil, mapError(err)
+	}
+	lapsed, err := s.store.ReplicaReportLapsed(ctx, doc.ForkRoot, client, s.replicaTTL)
+	if err != nil {
+		return nil, mapError(err)
+	}
+	return &documentv1.ClaimReplicaResponse{Client: client, Lapsed: lapsed}, nil
 }
 
 func (s *Server) ReportVector(ctx context.Context, req *documentv1.ReportVectorRequest) (*documentv1.ReportVectorResponse, error) {

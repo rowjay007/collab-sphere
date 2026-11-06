@@ -349,6 +349,7 @@ func (h *Hub) loop() {
 			case opsEvent:
 				pending, stop = h.handleOpsGroup(ev)
 			case reportEvent:
+				h.clientReported(ev.id)
 				h.stampReport(ev.id, ev.vector)
 			case reportDone:
 				h.finishReport(ev.id)
@@ -536,13 +537,15 @@ func (h *Hub) serveJoin(ev joinEvent) {
 		h.refuseResume(ev, ErrInvalidResume)
 		return
 	}
-	if !ev.resume || d-ev.seq > h.registry.maxReplay {
+	forceSync := ev.peer.ResyncPending()
+	if forceSync || !ev.resume || d-ev.seq > h.registry.maxReplay {
 		frame := mustMarshal(&collabv1.ServerMessage{
 			Payload: &collabv1.ServerMessage_DocumentSync{DocumentSync: &collabv1.DocumentSync{
 				DocumentId: h.docID,
 				Snapshot:   h.doc.Snapshot(),
 				Seq:        d,
 				Client:     uint64(ev.peer.id),
+				Resync:     forceSync,
 			}},
 		})
 		h.attachJoin(ev, [][]byte{frame}, nil)
@@ -612,7 +615,8 @@ func (h *Hub) attachJoin(ev joinEvent, frames, extra [][]byte) {
 			return
 		}
 	}
-	if !ev.resume {
+	resyncJoin := ev.peer.ResyncPending()
+	if !ev.resume || resyncJoin {
 		h.stampReport(ev.peer.id, h.doc.Vector())
 	}
 	h.joinPresence(ev.peer, superseded)
@@ -842,7 +846,16 @@ type reportMark struct {
 	after  int
 }
 
+// clientReported ends a pending resync: the socket is FIFO, so a report
+// after the resync DocumentSync means the client applied that snapshot.
+func (h *Hub) clientReported(id crdt.ClientID) {
+	if p := h.peers[id]; p != nil {
+		p.ClearResyncPending()
+	}
+}
+
 func (h *Hub) markReport(ev reportEvent, after int) reportMark {
+	h.clientReported(ev.id)
 	clip := crdt.VersionVector{}
 	if h.doc != nil {
 		clip = h.doc.Vector()
@@ -1029,6 +1042,12 @@ func (h *Hub) applyOps(ev opsEvent) []crdt.Op {
 	}
 	p, ok := h.peers[ev.id]
 	if !ok {
+		return nil
+	}
+	if p.ResyncPending() {
+		p.TrySend(EncodeError(collabv1.ErrorMessage_CODE_RESYNC, "replica resync required"))
+		p.CloseWithReason("resync")
+		h.dropPeer(p)
 		return nil
 	}
 	if !h.gateWrite(p) {

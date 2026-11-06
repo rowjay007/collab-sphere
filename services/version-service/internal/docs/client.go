@@ -4,6 +4,7 @@ package docs
 import (
 	"context"
 	"fmt"
+	"slices"
 	"time"
 
 	"github.com/google/uuid"
@@ -112,6 +113,32 @@ func (c *Client) ClaimReplica(ctx context.Context, doc uuid.UUID, client uint64,
 	return crdt.ClientID(resp.GetClient()), nil
 }
 
+func (c *Client) ReportVector(ctx context.Context, doc uuid.UUID, replica crdt.ClientID, vector crdt.VersionVector, homeSeq uint64) error {
+	_, err := c.rpc.ReportVector(ctx, &documentv1.ReportVectorRequest{
+		DocumentId: doc.String(),
+		ReplicaId:  uint64(replica),
+		Vector:     vectorEntries(vector),
+		HomeSeq:    homeSeq,
+	})
+	return mapError(err)
+}
+
+func vectorEntries(v crdt.VersionVector) []*crdtv1.VectorEntry {
+	clients := make([]crdt.ClientID, 0, len(v))
+	for id, clock := range v {
+		if id == 0 || clock == 0 {
+			continue
+		}
+		clients = append(clients, id)
+	}
+	slices.Sort(clients)
+	out := make([]*crdtv1.VectorEntry, 0, len(clients))
+	for _, id := range clients {
+		out = append(out, &crdtv1.VectorEntry{Client: uint64(id), Clock: v[id]})
+	}
+	return out
+}
+
 func (c *Client) ListChanged(ctx context.Context, since time.Time, afterID string, limit int) ([]uuid.UUID, time.Time, string, error) {
 	req := &documentv1.ListChangedRequest{Limit: uint32(limit), AfterId: afterID}
 	if !since.IsZero() {
@@ -146,6 +173,7 @@ func fromProto(d *documentv1.Document) (history.Document, error) {
 		ForkRoot:   id,
 		Encrypted:  d.GetEncryption() == "encrypted",
 		EpochState: d.GetEpochState(),
+		Archived:   d.GetStatus() == documentv1.Document_STATUS_ARCHIVED,
 	}
 	if d.GetForkOf() != "" {
 		src, err := uuid.Parse(d.GetForkOf())

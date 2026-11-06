@@ -109,6 +109,8 @@ message DocumentSync {
   crdt.v1.Snapshot snapshot = 2;
   uint64 seq = 3;
   uint64 client = 4;
+  // True when the replica's report lapsed: replace local state and drop unacked ops.
+  bool resync = 5;
 }
 
 // The ops a resuming client missed, seqs first_seq..first_seq+len-1. seq is
@@ -145,6 +147,8 @@ message ErrorMessage {
     CODE_REVOKED = 12;
     // Editors stay connected while a new epoch is pending.
     CODE_KEY_ROTATION = 13;
+    // Terminal: a lapsed replica sent ops after a resync DocumentSync.
+    CODE_RESYNC = 14;
   }
   Code code = 1;
   string message = 2;

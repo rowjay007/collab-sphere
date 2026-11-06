@@ -7,8 +7,10 @@ import (
 )
 
 type Report struct {
+	Replica    uint64
 	Vector     crdt.VersionVector
 	ReportedAt time.Time
+	ReleasedAt *time.Time
 	Retired    bool
 }
 
@@ -67,12 +69,3 @@ func PinnedReplicaCount(reports []Report) float64 {
 	return float64(n)
 }
 
-func ReportRetired(r Report, ttl time.Duration, now time.Time) bool {
-	if r.Retired {
-		return true
-	}
-	if ttl > 0 && now.Sub(r.ReportedAt) > ttl {
-		return true
-	}
-	return false
-}

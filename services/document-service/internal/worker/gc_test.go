@@ -76,7 +76,7 @@ func TestGCWorkerFloorErrorKeepsLiveRow(t *testing.T) {
 func TestStableRetiredReport(t *testing.T) {
 	doc := crdt.VersionVector{1: 3}
 	fresh := docgc.Report{Vector: crdt.VersionVector{1: 1}, ReportedAt: time.Now()}
-	stale := docgc.Report{Vector: crdt.VersionVector{1: 0}, ReportedAt: time.Now().Add(-400 * time.Hour), Retired: true}
+	stale := docgc.Report{Vector: crdt.VersionVector{1: 0}, ReportedAt: time.Now().Add(-400 * time.Hour), Retired: true} // retired => excluded from stable
 	stable := docgc.Stable(docgc.Input{Doc: doc, Reports: []docgc.Report{fresh, stale}, Floor: doc})
 	if stable[1] != 1 {
 		t.Fatalf("stable=%v", stable)

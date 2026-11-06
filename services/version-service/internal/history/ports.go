@@ -31,6 +31,7 @@ type Document struct {
 	ForkRoot   uuid.UUID
 	Encrypted  bool
 	EpochState string
+	Archived   bool
 }
 
 type AppendResult struct {
@@ -51,4 +52,5 @@ type Docs interface {
 	LoadState(ctx context.Context, doc uuid.UUID) (*crdt.Doc, uint64, error)
 	Append(ctx context.Context, doc uuid.UUID, ops []crdt.Op) (AppendResult, error)
 	ClaimReplica(ctx context.Context, doc uuid.UUID, client uint64, system bool) (crdt.ClientID, error)
+	ReportVector(ctx context.Context, doc uuid.UUID, replica crdt.ClientID, vector crdt.VersionVector, homeSeq uint64) error
 }

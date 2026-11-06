@@ -95,6 +95,8 @@ const (
 	ErrorMessage_CODE_REVOKED ErrorMessage_Code = 12
 	// Editors stay connected while a new epoch is pending.
 	ErrorMessage_CODE_KEY_ROTATION ErrorMessage_Code = 13
+	// Terminal: a lapsed replica sent ops after a resync DocumentSync.
+	ErrorMessage_CODE_RESYNC ErrorMessage_Code = 14
 )
 
 // Enum value maps for ErrorMessage_Code.
@@ -114,6 +116,7 @@ var (
 		11: "CODE_REPLICA_FORBIDDEN",
 		12: "CODE_REVOKED",
 		13: "CODE_KEY_ROTATION",
+		14: "CODE_RESYNC",
 	}
 	ErrorMessage_Code_value = map[string]int32{
 		"CODE_UNSPECIFIED":        0,
@@ -130,6 +133,7 @@ var (
 		"CODE_REPLICA_FORBIDDEN":  11,
 		"CODE_REVOKED":            12,
 		"CODE_KEY_ROTATION":       13,
+		"CODE_RESYNC":             14,
 	}
 )
 
@@ -1069,11 +1073,13 @@ func (x *AwarenessSync) GetVersion() uint64 {
 
 // The snapshot holds exactly seqs 1..seq.
 type DocumentSync struct {
-	state         protoimpl.MessageState `protogen:"open.v1"`
-	DocumentId    string                 `protobuf:"bytes,1,opt,name=document_id,json=documentId,proto3" json:"document_id,omitempty"`
-	Snapshot      *v1.Snapshot           `protobuf:"bytes,2,opt,name=snapshot,proto3" json:"snapshot,omitempty"`
-	Seq           uint64                 `protobuf:"varint,3,opt,name=seq,proto3" json:"seq,omitempty"`
-	Client        uint64                 `protobuf:"varint,4,opt,name=client,proto3" json:"client,omitempty"`
+	state      protoimpl.MessageState `protogen:"open.v1"`
+	DocumentId string                 `protobuf:"bytes,1,opt,name=document_id,json=documentId,proto3" json:"document_id,omitempty"`
+	Snapshot   *v1.Snapshot           `protobuf:"bytes,2,opt,name=snapshot,proto3" json:"snapshot,omitempty"`
+	Seq        uint64                 `protobuf:"varint,3,opt,name=seq,proto3" json:"seq,omitempty"`
+	Client     uint64                 `protobuf:"varint,4,opt,name=client,proto3" json:"client,omitempty"`
+	// True when the replica's report lapsed: replace local state and drop unacked ops.
+	Resync        bool `protobuf:"varint,5,opt,name=resync,proto3" json:"resync,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -1134,6 +1140,13 @@ func (x *DocumentSync) GetClient() uint64 {
 		return x.Client
 	}
 	return 0
+}
+
+func (x *DocumentSync) GetResync() bool {
+	if x != nil {
+		return x.Resync
+	}
+	return false
 }
 
 // The ops a resuming client missed, seqs first_seq..first_seq+len-1. seq is
@@ -1325,13 +1338,14 @@ const file_collab_v1_ws_proto_rawDesc = "" +
 	"\aversion\x18\x04 \x01(\x04R\aversion\"[\n" +
 	"\rAwarenessSync\x120\n" +
 	"\x06states\x18\x01 \x03(\v2\x18.collab.v1.PresenceStateR\x06states\x12\x18\n" +
-	"\aversion\x18\x02 \x01(\x04R\aversion\"\x88\x01\n" +
+	"\aversion\x18\x02 \x01(\x04R\aversion\"\xa0\x01\n" +
 	"\fDocumentSync\x12\x1f\n" +
 	"\vdocument_id\x18\x01 \x01(\tR\n" +
 	"documentId\x12-\n" +
 	"\bsnapshot\x18\x02 \x01(\v2\x11.crdt.v1.SnapshotR\bsnapshot\x12\x10\n" +
 	"\x03seq\x18\x03 \x01(\x04R\x03seq\x12\x16\n" +
-	"\x06client\x18\x04 \x01(\x04R\x06client\"\x8f\x01\n" +
+	"\x06client\x18\x04 \x01(\x04R\x06client\x12\x16\n" +
+	"\x06resync\x18\x05 \x01(\bR\x06resync\"\x8f\x01\n" +
 	"\tMissedOps\x12\x1f\n" +
 	"\vdocument_id\x18\x01 \x01(\tR\n" +
 	"documentId\x12\x1b\n" +
@@ -1339,10 +1353,10 @@ const file_collab_v1_ws_proto_rawDesc = "" +
 	"\n" +
 	"operations\x18\x03 \x03(\v2\x12.crdt.v1.OperationR\n" +
 	"operations\x12\x10\n" +
-	"\x03seq\x18\x04 \x01(\x04R\x03seq\"\xb2\x03\n" +
+	"\x03seq\x18\x04 \x01(\x04R\x03seq\"\xc3\x03\n" +
 	"\fErrorMessage\x120\n" +
 	"\x04code\x18\x01 \x01(\x0e2\x1c.collab.v1.ErrorMessage.CodeR\x04code\x12\x18\n" +
-	"\amessage\x18\x02 \x01(\tR\amessage\"\xd5\x02\n" +
+	"\amessage\x18\x02 \x01(\tR\amessage\"\xe6\x02\n" +
 	"\x04Code\x12\x14\n" +
 	"\x10CODE_UNSPECIFIED\x10\x00\x12\x1a\n" +
 	"\x16CODE_MALFORMED_MESSAGE\x10\x01\x12\x1a\n" +
@@ -1358,7 +1372,8 @@ const file_collab_v1_ws_proto_rawDesc = "" +
 	"\x12\x1a\n" +
 	"\x16CODE_REPLICA_FORBIDDEN\x10\v\x12\x10\n" +
 	"\fCODE_REVOKED\x10\f\x12\x15\n" +
-	"\x11CODE_KEY_ROTATION\x10\rB;Z9github.com/rowjay007/collab-sphere/gen/collab/v1;collabv1b\x06proto3"
+	"\x11CODE_KEY_ROTATION\x10\r\x12\x0f\n" +
+	"\vCODE_RESYNC\x10\x0eB;Z9github.com/rowjay007/collab-sphere/gen/collab/v1;collabv1b\x06proto3"
 
 var (
 	file_collab_v1_ws_proto_rawDescOnce sync.Once

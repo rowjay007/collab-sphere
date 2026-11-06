@@ -55,7 +55,7 @@ type LogMeta struct {
 
 // Store is the consumer-side persistence seam for a document hub.
 type Store interface {
-	Replica(ctx context.Context, docID string, requested crdt.ClientID) (crdt.ClientID, error)
+	Replica(ctx context.Context, docID string, requested crdt.ClientID) (crdt.ClientID, bool, error)
 	// Load returns the document and the seq of the last op it holds.
 	Load(ctx context.Context, docID string) (*crdt.Doc, uint64, error)
 	Append(ctx context.Context, docID string, ops []crdt.Op) (AppendResult, error)
@@ -101,7 +101,7 @@ func NewMemoryStore() *MemoryStore {
 	}
 }
 
-func (s *MemoryStore) Replica(_ context.Context, docID string, requested crdt.ClientID) (crdt.ClientID, error) {
+func (s *MemoryStore) Replica(_ context.Context, docID string, requested crdt.ClientID) (crdt.ClientID, bool, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	homes := s.replicas[docID]
@@ -111,7 +111,7 @@ func (s *MemoryStore) Replica(_ context.Context, docID string, requested crdt.Cl
 	}
 	if requested != 0 {
 		homes[requested] = struct{}{}
-		return requested, nil
+		return requested, false, nil
 	}
 	for {
 		s.nextID++
@@ -122,7 +122,7 @@ func (s *MemoryStore) Replica(_ context.Context, docID string, requested crdt.Cl
 			continue
 		}
 		homes[s.nextID] = struct{}{}
-		return s.nextID, nil
+		return s.nextID, false, nil
 	}
 }
 

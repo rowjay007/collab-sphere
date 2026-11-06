@@ -183,6 +183,10 @@ func (f *fakeDocs) Append(_ context.Context, id uuid.UUID, ops []crdt.Op) (histo
 	return out, nil
 }
 
+func (f *fakeDocs) ReportVector(context.Context, uuid.UUID, crdt.ClientID, crdt.VersionVector, uint64) error {
+	return nil
+}
+
 func (f *fakeDocs) ClaimReplica(_ context.Context, id uuid.UUID, client uint64, _ bool) (crdt.ClientID, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()

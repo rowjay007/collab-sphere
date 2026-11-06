@@ -88,7 +88,8 @@ func Handler(reg *hub.Registry) http.Handler {
 			refuse(r.Context(), conn, collabv1.ErrorMessage_CODE_INVALID_RESUME, "resume requires a client")
 			return
 		}
-		clientID, err = reg.Replica(r.Context(), docID, subject, clientID)
+		var lapsed bool
+		clientID, lapsed, err = reg.Replica(r.Context(), docID, subject, clientID)
 		if err != nil {
 			switch {
 			case errors.Is(err, hub.ErrReplicaForbidden):
@@ -104,6 +105,9 @@ func Handler(reg *hub.Registry) http.Handler {
 		epoch, _ := strconv.ParseUint(query.Get("conn"), 10, 64)
 		peer := hub.NewPeer(clientID, epoch)
 		peer.SetUser(subject)
+		if lapsed {
+			peer.SetResyncPending()
+		}
 		ctx, cancel := context.WithCancel(r.Context())
 		defer cancel()
 

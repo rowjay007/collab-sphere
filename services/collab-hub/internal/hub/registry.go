@@ -90,23 +90,20 @@ type replicaKey struct {
 	client crdt.ClientID
 }
 
-func (r *Registry) Replica(ctx context.Context, docID, user string, requested crdt.ClientID) (crdt.ClientID, error) {
+func (r *Registry) Replica(ctx context.Context, docID, user string, requested crdt.ClientID) (crdt.ClientID, bool, error) {
 	if requested != 0 && user != "" {
-		if cached, ok := r.lookupReplica(replicaKey{docID: docID, client: requested}); ok {
-			if cached != user {
-				return 0, ErrReplicaForbidden
-			}
-			return requested, nil
+		if cached, ok := r.lookupReplica(replicaKey{docID: docID, client: requested}); ok && cached != user {
+			return 0, false, ErrReplicaForbidden
 		}
 	}
-	client, err := r.store.Replica(WithReplicaUser(ctx, user), docID, requested)
+	client, lapsed, err := r.store.Replica(WithReplicaUser(ctx, user), docID, requested)
 	if err != nil {
-		return 0, err
+		return 0, false, err
 	}
 	if user != "" {
 		r.rememberReplica(replicaKey{docID: docID, client: client}, user)
 	}
-	return client, nil
+	return client, lapsed, nil
 }
 
 func (r *Registry) lookupReplica(key replicaKey) (string, bool) {

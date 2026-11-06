@@ -17,9 +17,8 @@ func TestStableHonorsFloor(t *testing.T) {
 	}
 }
 
-func TestReportRetiredByTTL(t *testing.T) {
-	r := docgc.Report{ReportedAt: time.Now().Add(-400 * time.Hour)}
-	if !docgc.ReportRetired(r, 336*time.Hour, time.Now()) {
-		t.Fatal("expected retired")
+func TestReportLapsedByTTL(t *testing.T) {
+	if !docgc.ReportLapsed(time.Now().Add(-400*time.Hour), nil, 336*time.Hour, time.Now()) {
+		t.Fatal("expected lapsed")
 	}
 }

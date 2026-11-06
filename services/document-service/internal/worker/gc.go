@@ -29,6 +29,11 @@ type GC struct {
 	TTL     time.Duration
 }
 
+type retireInputs struct {
+	homeArchived bool
+	tree         []docgc.TreeDoc
+}
+
 func (g *GC) Run(ctx context.Context, interval time.Duration) {
 	if interval <= 0 {
 		return
@@ -89,11 +94,23 @@ func (g *GC) RunDocument(ctx context.Context, id uuid.UUID) {
 		return
 	}
 	now := time.Now()
+	retireCache := make(map[uint64]retireInputs)
 	gcReports := make([]docgc.Report, 0, len(reports))
 	for _, r := range reports {
-		rep := docgc.Report{Vector: r.Vector, ReportedAt: r.ReportedAt, Retired: r.ReleasedAt != nil}
-		rep.Retired = docgc.ReportRetired(rep, g.TTL, now)
-		gcReports = append(gcReports, rep)
+		in, ok := retireCache[r.Replica]
+		if !ok {
+			homeArchived, tree, err := g.Store.ForkTreeForRetirement(ctx, docRow.ForkRoot, r.Replica)
+			if err != nil {
+				slog.Warn("gc retirement inputs", "document_id", id, "replica", r.Replica, "err", err)
+				return
+			}
+			in = retireInputs{homeArchived: homeArchived, tree: tree}
+			retireCache[r.Replica] = in
+		}
+		retired := docgc.ReportRetired(r.Replica, r.Vector, r.ReportedAt, r.ReleasedAt, in.homeArchived, in.tree, g.TTL, now)
+		gcReports = append(gcReports, docgc.Report{
+			Replica: r.Replica, Vector: r.Vector, ReportedAt: r.ReportedAt, ReleasedAt: r.ReleasedAt, Retired: retired,
+		})
 	}
 	stable := docgc.Stable(docgc.Input{
 		Doc:     vector,

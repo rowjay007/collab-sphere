@@ -630,8 +630,8 @@ type refusingReplicaStore struct {
 	*hub.MemoryStore
 }
 
-func (s *refusingReplicaStore) Replica(context.Context, string, crdt.ClientID) (crdt.ClientID, error) {
-	return 0, hub.ErrUnknownReplica
+func (s *refusingReplicaStore) Replica(context.Context, string, crdt.ClientID) (crdt.ClientID, bool, error) {
+	return 0, false, hub.ErrUnknownReplica
 }
 
 func readMessage(t *testing.T, conn *websocket.Conn) *collabv1.ServerMessage {

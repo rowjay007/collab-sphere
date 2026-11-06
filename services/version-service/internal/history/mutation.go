@@ -83,6 +83,9 @@ func (h *History) Merge(ctx context.Context, src, dst uuid.UUID, requestID strin
 	if err != nil {
 		return MergeResult{}, err
 	}
+	if srcDoc.Archived {
+		return MergeResult{}, fmt.Errorf("%w: source document is archived", ErrFailedPrecondition)
+	}
 	dstDoc, err := h.docs.Get(ctx, dst)
 	if err != nil {
 		return MergeResult{}, err
@@ -108,6 +111,9 @@ func (h *History) Merge(ctx context.Context, src, dst uuid.UUID, requestID strin
 	}
 	head, _, err := h.docs.LoadState(ctx, dst)
 	if err != nil {
+		return MergeResult{}, err
+	}
+	if err := h.reportHead(ctx, dst); err != nil {
 		return MergeResult{}, err
 	}
 
@@ -219,6 +225,9 @@ func (h *History) Restore(ctx context.Context, doc uuid.UUID, vid dag.NodeID, re
 
 	head, _, err := h.docs.LoadState(ctx, doc)
 	if err != nil {
+		return store.Version{}, err
+	}
+	if err := h.reportHead(ctx, doc); err != nil {
 		return store.Version{}, err
 	}
 	wanted, err := h.load(ctx, target.Node.Content)
@@ -405,6 +414,9 @@ func (h *History) drive(ctx context.Context, m store.Mutation) error {
 		}
 		seqs = append(seqs, res.Seqs...)
 	}
+	if err := h.reportAfterAppend(ctx, m.Doc); err != nil {
+		return err
+	}
 	if err := h.crash(CrashAfterAppend); err != nil {
 		return err
 	}
@@ -523,6 +535,40 @@ func (h *History) nodeAtHead(ctx context.Context, id uuid.UUID) (store.Version, 
 
 func isOpConflict(err error) bool {
 	return errors.Is(err, ErrConflict) || errors.Is(err, crdt.ErrConflict)
+}
+
+func (h *History) reportHead(ctx context.Context, doc uuid.UUID) error {
+	replica, err := h.systemReplica(ctx, doc)
+	if err != nil {
+		return err
+	}
+	return h.reportAs(ctx, doc, replica)
+}
+
+// reportAfterAppend runs inside drive, which withDoc calls while the mutation
+// is still pending, so it reads the replica without withDoc's pending drive.
+func (h *History) reportAfterAppend(ctx context.Context, doc uuid.UUID) error {
+	var id uint64
+	var found bool
+	if err := h.do(ctx, []uuid.UUID{doc}, func(tx store.Tx) error {
+		var err error
+		id, found, err = tx.SystemReplica(ctx, doc)
+		return err
+	}); err != nil {
+		return err
+	}
+	if !found {
+		return nil
+	}
+	return h.reportAs(ctx, doc, crdt.ClientID(id))
+}
+
+func (h *History) reportAs(ctx context.Context, doc uuid.UUID, replica crdt.ClientID) error {
+	head, seq, err := h.docs.LoadState(ctx, doc)
+	if err != nil {
+		return err
+	}
+	return h.docs.ReportVector(ctx, doc, replica, head.Vector(), seq)
 }
 
 func (h *History) systemReplica(ctx context.Context, doc uuid.UUID) (crdt.ClientID, error) {

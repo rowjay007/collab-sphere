@@ -804,7 +804,7 @@ func (c *Client) joinFrame(msg *collabv1.ServerMessage) (bool, error) {
 			return false, err
 		}
 		c.lastJoin = Sync
-		c.reportResume = resume
+		c.reportResume = resume || p.DocumentSync.GetResync()
 		return true, nil
 	case *collabv1.ServerMessage_MissedOps:
 		if c.replica == nil {
@@ -842,15 +842,18 @@ func (c *Client) rebuild(sync *collabv1.DocumentSync) error {
 	if err != nil {
 		return fmt.Errorf("%w: %v", errBrokenStream, err)
 	}
-	kept := make([]crdt.Op, 0, len(c.unacked))
-	for _, op := range c.unacked {
-		if doc.Contains(op.OpID()) {
-			continue
+	var kept []crdt.Op
+	if !sync.GetResync() {
+		kept = make([]crdt.Op, 0, len(c.unacked))
+		for _, op := range c.unacked {
+			if doc.Contains(op.OpID()) {
+				continue
+			}
+			if _, err := doc.Apply(op); err != nil {
+				return fmt.Errorf("%w: unacked op %s: %v", errBrokenStream, op.OpID(), err)
+			}
+			kept = append(kept, op)
 		}
-		if _, err := doc.Apply(op); err != nil {
-			return fmt.Errorf("%w: unacked op %s: %v", errBrokenStream, op.OpID(), err)
-		}
-		kept = append(kept, op)
 	}
 	replica, err := crdt.NewReplica(c.id, doc)
 	if err != nil {

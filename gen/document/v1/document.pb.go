@@ -858,8 +858,10 @@ func (x *ClaimReplicaRequest) GetUserId() string {
 }
 
 type ClaimReplicaResponse struct {
-	state         protoimpl.MessageState `protogen:"open.v1"`
-	Client        uint64                 `protobuf:"varint,1,opt,name=client,proto3" json:"client,omitempty"`
+	state  protoimpl.MessageState `protogen:"open.v1"`
+	Client uint64                 `protobuf:"varint,1,opt,name=client,proto3" json:"client,omitempty"`
+	// True when the replica's report is lapsed (released or past REPLICA_REPORT_TTL).
+	Lapsed        bool `protobuf:"varint,2,opt,name=lapsed,proto3" json:"lapsed,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -899,6 +901,13 @@ func (x *ClaimReplicaResponse) GetClient() uint64 {
 		return x.Client
 	}
 	return 0
+}
+
+func (x *ClaimReplicaResponse) GetLapsed() bool {
+	if x != nil {
+		return x.Lapsed
+	}
+	return false
 }
 
 type ForkDocumentRequest struct {
@@ -1524,9 +1533,10 @@ const file_document_v1_document_proto_rawDesc = "" +
 	"documentId\x12\x16\n" +
 	"\x06client\x18\x02 \x01(\x04R\x06client\x12\x16\n" +
 	"\x06system\x18\x03 \x01(\bR\x06system\x12\x17\n" +
-	"\auser_id\x18\x04 \x01(\tR\x06userId\".\n" +
+	"\auser_id\x18\x04 \x01(\tR\x06userId\"F\n" +
 	"\x14ClaimReplicaResponse\x12\x16\n" +
-	"\x06client\x18\x01 \x01(\x04R\x06client\"y\n" +
+	"\x06client\x18\x01 \x01(\x04R\x06client\x12\x16\n" +
+	"\x06lapsed\x18\x02 \x01(\bR\x06lapsed\"y\n" +
 	"\x13ForkDocumentRequest\x12\x1b\n" +
 	"\tsource_id\x18\x01 \x01(\tR\bsourceId\x12\x10\n" +
 	"\x03seq\x18\x02 \x01(\x04R\x03seq\x12\x14\n" +

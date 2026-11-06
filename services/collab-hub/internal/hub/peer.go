@@ -23,6 +23,7 @@ type Peer struct {
 	reasonMu sync.Mutex
 	reason   string
 	user     atomic.Value
+	resync   atomic.Bool
 
 	// Owned by the hub loop. joined closes when the presence Join for this
 	// peer has returned, and stays nil until the hub starts that Join.
@@ -59,6 +60,12 @@ func (p *Peer) presence() PresenceSession {
 
 // ID returns the connection's client ID.
 func (p *Peer) ID() crdt.ClientID { return p.id }
+
+func (p *Peer) SetResyncPending() { p.resync.Store(true) }
+
+func (p *Peer) ResyncPending() bool { return p.resync.Load() }
+
+func (p *Peer) ClearResyncPending() { p.resync.Store(false) }
 
 // Frames is the outbound byte stream drained by the write pump.
 func (p *Peer) Frames() <-chan []byte { return p.out }

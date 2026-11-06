@@ -96,6 +96,7 @@ func main() {
 		grpc.StreamInterceptor(auth.StreamInterceptor(pub, internal, docgrpc.Methods())),
 	)
 	doc := docgrpc.New(st)
+	doc.UseReplicaTTL(lookupDuration("REPLICA_REPORT_TTL", 336*time.Hour))
 	doc.UsePermissions(perms)
 	doc.UseAppend(docMetrics.Append)
 	documentv1.RegisterDocumentServiceServer(server, doc)

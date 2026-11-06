@@ -127,6 +127,8 @@ message ClaimReplicaRequest {
 
 message ClaimReplicaResponse {
   uint64 client = 1;
+  // True when the replica's report is lapsed (released or past REPLICA_REPORT_TTL).
+  bool lapsed = 2;
 }
 
 message ForkDocumentRequest {
