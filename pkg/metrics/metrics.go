@@ -5,6 +5,7 @@ import (
 	"errors"
 	"net"
 	"net/http"
+	"net/http/pprof"
 	"os"
 	"time"
 
@@ -45,7 +46,14 @@ func Serve(addr string, reg *prometheus.Registry) (func(), error) {
 	if err != nil {
 		return nil, err
 	}
-	srv := &http.Server{Handler: promhttp.HandlerFor(reg, promhttp.HandlerOpts{})}
+	mux := http.NewServeMux()
+	mux.Handle("/metrics", promhttp.HandlerFor(reg, promhttp.HandlerOpts{}))
+	mux.HandleFunc("/debug/pprof/", pprof.Index)
+	mux.HandleFunc("/debug/pprof/cmdline", pprof.Cmdline)
+	mux.HandleFunc("/debug/pprof/profile", pprof.Profile)
+	mux.HandleFunc("/debug/pprof/symbol", pprof.Symbol)
+	mux.HandleFunc("/debug/pprof/trace", pprof.Trace)
+	srv := &http.Server{Handler: mux}
 	go func() { _ = srv.Serve(ln) }()
 	return func() { _ = srv.Close() }, nil
 }

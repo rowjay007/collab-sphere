@@ -65,6 +65,10 @@ func (c *Client) Dump(ctx context.Context, docID string) (*permissionv1.PolicyDu
 	return c.rpc.PolicyDump(ctx, &permissionv1.PolicyDumpRequest{DocId: docID})
 }
 
+func (c *Client) DumpBatch(ctx context.Context, docIDs []string) (*permissionv1.PolicyDumpBatchResponse, error) {
+	return c.rpc.PolicyDumpBatch(ctx, &permissionv1.PolicyDumpBatchRequest{DocIds: docIDs})
+}
+
 // Require allows user when their grant is at least min.
 func (c *Client) Require(ctx context.Context, docID, user string, min permissionv1.Role) error {
 	resp, err := c.Dump(ctx, docID)

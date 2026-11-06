@@ -227,6 +227,60 @@ func (s *store) copyGrants(ctx context.Context, src, dst uuid.UUID) error {
 	return err
 }
 
+func (s *store) policyBatch(ctx context.Context, docs []uuid.UUID) (map[uuid.UUID]Policy, error) {
+	out := make(map[uuid.UUID]Policy, len(docs))
+	for _, doc := range docs {
+		out[doc] = Policy{Members: map[string]Role{}}
+	}
+	if len(docs) == 0 {
+		return out, nil
+	}
+	rows, err := s.pool.Query(ctx, `SELECT doc_id, user_id, role FROM grants WHERE doc_id = ANY($1)`, docs)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var doc uuid.UUID
+		var user, role string
+		if err := rows.Scan(&doc, &user, &role); err != nil {
+			return nil, err
+		}
+		r, ok := parseRole(role)
+		if !ok {
+			return nil, ErrInvalidArgument
+		}
+		p := out[doc]
+		p.Members[user] = r
+		out[doc] = p
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	epochRows, err := s.pool.Query(ctx, `
+		SELECT DISTINCT ON (doc_id) doc_id, epoch, state
+		FROM doc_epochs
+		WHERE doc_id = ANY($1)
+		ORDER BY doc_id, epoch DESC`, docs)
+	if err != nil {
+		return nil, err
+	}
+	defer epochRows.Close()
+	for epochRows.Next() {
+		var doc uuid.UUID
+		var epoch int32
+		var state string
+		if err := epochRows.Scan(&doc, &epoch, &state); err != nil {
+			return nil, err
+		}
+		p := out[doc]
+		p.WriteEpoch = uint32(epoch)
+		p.EpochState = state
+		out[doc] = p
+	}
+	return out, epochRows.Err()
+}
+
 func (s *store) policy(ctx context.Context, doc uuid.UUID) (Policy, error) {
 	rows, err := s.pool.Query(ctx, `SELECT user_id, role FROM grants WHERE doc_id = $1`, doc)
 	if err != nil {

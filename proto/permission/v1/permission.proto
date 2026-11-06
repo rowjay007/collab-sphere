@@ -14,6 +14,7 @@ service PermissionService {
   rpc RevokeLink(RevokeLinkRequest) returns (RevokeLinkResponse);
   rpc Redeem(RedeemRequest) returns (GrantRecord);
   rpc PolicyDump(PolicyDumpRequest) returns (PolicyDumpResponse);
+  rpc PolicyDumpBatch(PolicyDumpBatchRequest) returns (PolicyDumpBatchResponse);
   rpc CopyGrants(CopyGrantsRequest) returns (CopyGrantsResponse);
   rpc PutKey(PutKeyRequest) returns (PublicKey);
   rpc ListKeys(ListKeysRequest) returns (ListKeysResponse);
@@ -90,6 +91,20 @@ message PolicyDumpResponse {
   map<string, Role> members = 1;
   uint32 write_epoch = 2;
   string epoch_state = 3;
+}
+
+message PolicyDumpBatchRequest {
+  repeated string doc_ids = 1;
+}
+
+message PolicyDumpEntry {
+  map<string, Role> members = 1;
+  uint32 write_epoch = 2;
+  string epoch_state = 3;
+}
+
+message PolicyDumpBatchResponse {
+  map<string, PolicyDumpEntry> policies = 1;
 }
 
 message CopyGrantsRequest {

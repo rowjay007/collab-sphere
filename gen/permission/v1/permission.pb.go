@@ -720,6 +720,154 @@ func (x *PolicyDumpResponse) GetEpochState() string {
 	return ""
 }
 
+type PolicyDumpBatchRequest struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	DocIds        []string               `protobuf:"bytes,1,rep,name=doc_ids,json=docIds,proto3" json:"doc_ids,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *PolicyDumpBatchRequest) Reset() {
+	*x = PolicyDumpBatchRequest{}
+	mi := &file_permission_v1_permission_proto_msgTypes[12]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *PolicyDumpBatchRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*PolicyDumpBatchRequest) ProtoMessage() {}
+
+func (x *PolicyDumpBatchRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_permission_v1_permission_proto_msgTypes[12]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use PolicyDumpBatchRequest.ProtoReflect.Descriptor instead.
+func (*PolicyDumpBatchRequest) Descriptor() ([]byte, []int) {
+	return file_permission_v1_permission_proto_rawDescGZIP(), []int{12}
+}
+
+func (x *PolicyDumpBatchRequest) GetDocIds() []string {
+	if x != nil {
+		return x.DocIds
+	}
+	return nil
+}
+
+type PolicyDumpEntry struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Members       map[string]Role        `protobuf:"bytes,1,rep,name=members,proto3" json:"members,omitempty" protobuf_key:"bytes,1,opt,name=key" protobuf_val:"varint,2,opt,name=value,enum=permission.v1.Role"`
+	WriteEpoch    uint32                 `protobuf:"varint,2,opt,name=write_epoch,json=writeEpoch,proto3" json:"write_epoch,omitempty"`
+	EpochState    string                 `protobuf:"bytes,3,opt,name=epoch_state,json=epochState,proto3" json:"epoch_state,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *PolicyDumpEntry) Reset() {
+	*x = PolicyDumpEntry{}
+	mi := &file_permission_v1_permission_proto_msgTypes[13]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *PolicyDumpEntry) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*PolicyDumpEntry) ProtoMessage() {}
+
+func (x *PolicyDumpEntry) ProtoReflect() protoreflect.Message {
+	mi := &file_permission_v1_permission_proto_msgTypes[13]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use PolicyDumpEntry.ProtoReflect.Descriptor instead.
+func (*PolicyDumpEntry) Descriptor() ([]byte, []int) {
+	return file_permission_v1_permission_proto_rawDescGZIP(), []int{13}
+}
+
+func (x *PolicyDumpEntry) GetMembers() map[string]Role {
+	if x != nil {
+		return x.Members
+	}
+	return nil
+}
+
+func (x *PolicyDumpEntry) GetWriteEpoch() uint32 {
+	if x != nil {
+		return x.WriteEpoch
+	}
+	return 0
+}
+
+func (x *PolicyDumpEntry) GetEpochState() string {
+	if x != nil {
+		return x.EpochState
+	}
+	return ""
+}
+
+type PolicyDumpBatchResponse struct {
+	state         protoimpl.MessageState      `protogen:"open.v1"`
+	Policies      map[string]*PolicyDumpEntry `protobuf:"bytes,1,rep,name=policies,proto3" json:"policies,omitempty" protobuf_key:"bytes,1,opt,name=key" protobuf_val:"bytes,2,opt,name=value"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *PolicyDumpBatchResponse) Reset() {
+	*x = PolicyDumpBatchResponse{}
+	mi := &file_permission_v1_permission_proto_msgTypes[14]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *PolicyDumpBatchResponse) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*PolicyDumpBatchResponse) ProtoMessage() {}
+
+func (x *PolicyDumpBatchResponse) ProtoReflect() protoreflect.Message {
+	mi := &file_permission_v1_permission_proto_msgTypes[14]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use PolicyDumpBatchResponse.ProtoReflect.Descriptor instead.
+func (*PolicyDumpBatchResponse) Descriptor() ([]byte, []int) {
+	return file_permission_v1_permission_proto_rawDescGZIP(), []int{14}
+}
+
+func (x *PolicyDumpBatchResponse) GetPolicies() map[string]*PolicyDumpEntry {
+	if x != nil {
+		return x.Policies
+	}
+	return nil
+}
+
 type CopyGrantsRequest struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	SourceDocId   string                 `protobuf:"bytes,1,opt,name=source_doc_id,json=sourceDocId,proto3" json:"source_doc_id,omitempty"`
@@ -730,7 +878,7 @@ type CopyGrantsRequest struct {
 
 func (x *CopyGrantsRequest) Reset() {
 	*x = CopyGrantsRequest{}
-	mi := &file_permission_v1_permission_proto_msgTypes[12]
+	mi := &file_permission_v1_permission_proto_msgTypes[15]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -742,7 +890,7 @@ func (x *CopyGrantsRequest) String() string {
 func (*CopyGrantsRequest) ProtoMessage() {}
 
 func (x *CopyGrantsRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_permission_v1_permission_proto_msgTypes[12]
+	mi := &file_permission_v1_permission_proto_msgTypes[15]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -755,7 +903,7 @@ func (x *CopyGrantsRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use CopyGrantsRequest.ProtoReflect.Descriptor instead.
 func (*CopyGrantsRequest) Descriptor() ([]byte, []int) {
-	return file_permission_v1_permission_proto_rawDescGZIP(), []int{12}
+	return file_permission_v1_permission_proto_rawDescGZIP(), []int{15}
 }
 
 func (x *CopyGrantsRequest) GetSourceDocId() string {
@@ -780,7 +928,7 @@ type CopyGrantsResponse struct {
 
 func (x *CopyGrantsResponse) Reset() {
 	*x = CopyGrantsResponse{}
-	mi := &file_permission_v1_permission_proto_msgTypes[13]
+	mi := &file_permission_v1_permission_proto_msgTypes[16]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -792,7 +940,7 @@ func (x *CopyGrantsResponse) String() string {
 func (*CopyGrantsResponse) ProtoMessage() {}
 
 func (x *CopyGrantsResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_permission_v1_permission_proto_msgTypes[13]
+	mi := &file_permission_v1_permission_proto_msgTypes[16]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -805,7 +953,7 @@ func (x *CopyGrantsResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use CopyGrantsResponse.ProtoReflect.Descriptor instead.
 func (*CopyGrantsResponse) Descriptor() ([]byte, []int) {
-	return file_permission_v1_permission_proto_rawDescGZIP(), []int{13}
+	return file_permission_v1_permission_proto_rawDescGZIP(), []int{16}
 }
 
 type PublicKey struct {
@@ -819,7 +967,7 @@ type PublicKey struct {
 
 func (x *PublicKey) Reset() {
 	*x = PublicKey{}
-	mi := &file_permission_v1_permission_proto_msgTypes[14]
+	mi := &file_permission_v1_permission_proto_msgTypes[17]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -831,7 +979,7 @@ func (x *PublicKey) String() string {
 func (*PublicKey) ProtoMessage() {}
 
 func (x *PublicKey) ProtoReflect() protoreflect.Message {
-	mi := &file_permission_v1_permission_proto_msgTypes[14]
+	mi := &file_permission_v1_permission_proto_msgTypes[17]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -844,7 +992,7 @@ func (x *PublicKey) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use PublicKey.ProtoReflect.Descriptor instead.
 func (*PublicKey) Descriptor() ([]byte, []int) {
-	return file_permission_v1_permission_proto_rawDescGZIP(), []int{14}
+	return file_permission_v1_permission_proto_rawDescGZIP(), []int{17}
 }
 
 func (x *PublicKey) GetKeyId() string {
@@ -877,7 +1025,7 @@ type PutKeyRequest struct {
 
 func (x *PutKeyRequest) Reset() {
 	*x = PutKeyRequest{}
-	mi := &file_permission_v1_permission_proto_msgTypes[15]
+	mi := &file_permission_v1_permission_proto_msgTypes[18]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -889,7 +1037,7 @@ func (x *PutKeyRequest) String() string {
 func (*PutKeyRequest) ProtoMessage() {}
 
 func (x *PutKeyRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_permission_v1_permission_proto_msgTypes[15]
+	mi := &file_permission_v1_permission_proto_msgTypes[18]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -902,7 +1050,7 @@ func (x *PutKeyRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use PutKeyRequest.ProtoReflect.Descriptor instead.
 func (*PutKeyRequest) Descriptor() ([]byte, []int) {
-	return file_permission_v1_permission_proto_rawDescGZIP(), []int{15}
+	return file_permission_v1_permission_proto_rawDescGZIP(), []int{18}
 }
 
 func (x *PutKeyRequest) GetPublicKey() []byte {
@@ -921,7 +1069,7 @@ type ListKeysRequest struct {
 
 func (x *ListKeysRequest) Reset() {
 	*x = ListKeysRequest{}
-	mi := &file_permission_v1_permission_proto_msgTypes[16]
+	mi := &file_permission_v1_permission_proto_msgTypes[19]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -933,7 +1081,7 @@ func (x *ListKeysRequest) String() string {
 func (*ListKeysRequest) ProtoMessage() {}
 
 func (x *ListKeysRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_permission_v1_permission_proto_msgTypes[16]
+	mi := &file_permission_v1_permission_proto_msgTypes[19]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -946,7 +1094,7 @@ func (x *ListKeysRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ListKeysRequest.ProtoReflect.Descriptor instead.
 func (*ListKeysRequest) Descriptor() ([]byte, []int) {
-	return file_permission_v1_permission_proto_rawDescGZIP(), []int{16}
+	return file_permission_v1_permission_proto_rawDescGZIP(), []int{19}
 }
 
 func (x *ListKeysRequest) GetUserId() string {
@@ -965,7 +1113,7 @@ type ListKeysResponse struct {
 
 func (x *ListKeysResponse) Reset() {
 	*x = ListKeysResponse{}
-	mi := &file_permission_v1_permission_proto_msgTypes[17]
+	mi := &file_permission_v1_permission_proto_msgTypes[20]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -977,7 +1125,7 @@ func (x *ListKeysResponse) String() string {
 func (*ListKeysResponse) ProtoMessage() {}
 
 func (x *ListKeysResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_permission_v1_permission_proto_msgTypes[17]
+	mi := &file_permission_v1_permission_proto_msgTypes[20]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -990,7 +1138,7 @@ func (x *ListKeysResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ListKeysResponse.ProtoReflect.Descriptor instead.
 func (*ListKeysResponse) Descriptor() ([]byte, []int) {
-	return file_permission_v1_permission_proto_rawDescGZIP(), []int{17}
+	return file_permission_v1_permission_proto_rawDescGZIP(), []int{20}
 }
 
 func (x *ListKeysResponse) GetKeys() []*PublicKey {
@@ -1015,7 +1163,7 @@ type KeyWrap struct {
 
 func (x *KeyWrap) Reset() {
 	*x = KeyWrap{}
-	mi := &file_permission_v1_permission_proto_msgTypes[18]
+	mi := &file_permission_v1_permission_proto_msgTypes[21]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1027,7 +1175,7 @@ func (x *KeyWrap) String() string {
 func (*KeyWrap) ProtoMessage() {}
 
 func (x *KeyWrap) ProtoReflect() protoreflect.Message {
-	mi := &file_permission_v1_permission_proto_msgTypes[18]
+	mi := &file_permission_v1_permission_proto_msgTypes[21]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1040,7 +1188,7 @@ func (x *KeyWrap) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use KeyWrap.ProtoReflect.Descriptor instead.
 func (*KeyWrap) Descriptor() ([]byte, []int) {
-	return file_permission_v1_permission_proto_rawDescGZIP(), []int{18}
+	return file_permission_v1_permission_proto_rawDescGZIP(), []int{21}
 }
 
 func (x *KeyWrap) GetEpoch() uint32 {
@@ -1096,7 +1244,7 @@ type PublishWrapsRequest struct {
 
 func (x *PublishWrapsRequest) Reset() {
 	*x = PublishWrapsRequest{}
-	mi := &file_permission_v1_permission_proto_msgTypes[19]
+	mi := &file_permission_v1_permission_proto_msgTypes[22]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1108,7 +1256,7 @@ func (x *PublishWrapsRequest) String() string {
 func (*PublishWrapsRequest) ProtoMessage() {}
 
 func (x *PublishWrapsRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_permission_v1_permission_proto_msgTypes[19]
+	mi := &file_permission_v1_permission_proto_msgTypes[22]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1121,7 +1269,7 @@ func (x *PublishWrapsRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use PublishWrapsRequest.ProtoReflect.Descriptor instead.
 func (*PublishWrapsRequest) Descriptor() ([]byte, []int) {
-	return file_permission_v1_permission_proto_rawDescGZIP(), []int{19}
+	return file_permission_v1_permission_proto_rawDescGZIP(), []int{22}
 }
 
 func (x *PublishWrapsRequest) GetDocId() string {
@@ -1155,7 +1303,7 @@ type PublishWrapsResponse struct {
 
 func (x *PublishWrapsResponse) Reset() {
 	*x = PublishWrapsResponse{}
-	mi := &file_permission_v1_permission_proto_msgTypes[20]
+	mi := &file_permission_v1_permission_proto_msgTypes[23]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1167,7 +1315,7 @@ func (x *PublishWrapsResponse) String() string {
 func (*PublishWrapsResponse) ProtoMessage() {}
 
 func (x *PublishWrapsResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_permission_v1_permission_proto_msgTypes[20]
+	mi := &file_permission_v1_permission_proto_msgTypes[23]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1180,7 +1328,7 @@ func (x *PublishWrapsResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use PublishWrapsResponse.ProtoReflect.Descriptor instead.
 func (*PublishWrapsResponse) Descriptor() ([]byte, []int) {
-	return file_permission_v1_permission_proto_rawDescGZIP(), []int{20}
+	return file_permission_v1_permission_proto_rawDescGZIP(), []int{23}
 }
 
 func (x *PublishWrapsResponse) GetWriteEpoch() uint32 {
@@ -1206,7 +1354,7 @@ type GetWrapsRequest struct {
 
 func (x *GetWrapsRequest) Reset() {
 	*x = GetWrapsRequest{}
-	mi := &file_permission_v1_permission_proto_msgTypes[21]
+	mi := &file_permission_v1_permission_proto_msgTypes[24]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1218,7 +1366,7 @@ func (x *GetWrapsRequest) String() string {
 func (*GetWrapsRequest) ProtoMessage() {}
 
 func (x *GetWrapsRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_permission_v1_permission_proto_msgTypes[21]
+	mi := &file_permission_v1_permission_proto_msgTypes[24]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1231,7 +1379,7 @@ func (x *GetWrapsRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use GetWrapsRequest.ProtoReflect.Descriptor instead.
 func (*GetWrapsRequest) Descriptor() ([]byte, []int) {
-	return file_permission_v1_permission_proto_rawDescGZIP(), []int{21}
+	return file_permission_v1_permission_proto_rawDescGZIP(), []int{24}
 }
 
 func (x *GetWrapsRequest) GetDocId() string {
@@ -1250,7 +1398,7 @@ type GetWrapsResponse struct {
 
 func (x *GetWrapsResponse) Reset() {
 	*x = GetWrapsResponse{}
-	mi := &file_permission_v1_permission_proto_msgTypes[22]
+	mi := &file_permission_v1_permission_proto_msgTypes[25]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1262,7 +1410,7 @@ func (x *GetWrapsResponse) String() string {
 func (*GetWrapsResponse) ProtoMessage() {}
 
 func (x *GetWrapsResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_permission_v1_permission_proto_msgTypes[22]
+	mi := &file_permission_v1_permission_proto_msgTypes[25]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1275,7 +1423,7 @@ func (x *GetWrapsResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use GetWrapsResponse.ProtoReflect.Descriptor instead.
 func (*GetWrapsResponse) Descriptor() ([]byte, []int) {
-	return file_permission_v1_permission_proto_rawDescGZIP(), []int{22}
+	return file_permission_v1_permission_proto_rawDescGZIP(), []int{25}
 }
 
 func (x *GetWrapsResponse) GetWraps() []*KeyWrap {
@@ -1334,7 +1482,23 @@ const file_permission_v1_permission_proto_rawDesc = "" +
 	"epochState\x1aO\n" +
 	"\fMembersEntry\x12\x10\n" +
 	"\x03key\x18\x01 \x01(\tR\x03key\x12)\n" +
-	"\x05value\x18\x02 \x01(\x0e2\x13.permission.v1.RoleR\x05value:\x028\x01\"W\n" +
+	"\x05value\x18\x02 \x01(\x0e2\x13.permission.v1.RoleR\x05value:\x028\x01\"1\n" +
+	"\x16PolicyDumpBatchRequest\x12\x17\n" +
+	"\adoc_ids\x18\x01 \x03(\tR\x06docIds\"\xeb\x01\n" +
+	"\x0fPolicyDumpEntry\x12E\n" +
+	"\amembers\x18\x01 \x03(\v2+.permission.v1.PolicyDumpEntry.MembersEntryR\amembers\x12\x1f\n" +
+	"\vwrite_epoch\x18\x02 \x01(\rR\n" +
+	"writeEpoch\x12\x1f\n" +
+	"\vepoch_state\x18\x03 \x01(\tR\n" +
+	"epochState\x1aO\n" +
+	"\fMembersEntry\x12\x10\n" +
+	"\x03key\x18\x01 \x01(\tR\x03key\x12)\n" +
+	"\x05value\x18\x02 \x01(\x0e2\x13.permission.v1.RoleR\x05value:\x028\x01\"\xc8\x01\n" +
+	"\x17PolicyDumpBatchResponse\x12P\n" +
+	"\bpolicies\x18\x01 \x03(\v24.permission.v1.PolicyDumpBatchResponse.PoliciesEntryR\bpolicies\x1a[\n" +
+	"\rPoliciesEntry\x12\x10\n" +
+	"\x03key\x18\x01 \x01(\tR\x03key\x124\n" +
+	"\x05value\x18\x02 \x01(\v2\x1e.permission.v1.PolicyDumpEntryR\x05value:\x028\x01\"W\n" +
 	"\x11CopyGrantsRequest\x12\"\n" +
 	"\rsource_doc_id\x18\x01 \x01(\tR\vsourceDocId\x12\x1e\n" +
 	"\vdest_doc_id\x18\x02 \x01(\tR\tdestDocId\"\x14\n" +
@@ -1380,7 +1544,7 @@ const file_permission_v1_permission_proto_rawDesc = "" +
 	"ROLE_OWNER\x10\x01\x12\x0f\n" +
 	"\vROLE_EDITOR\x10\x02\x12\x12\n" +
 	"\x0eROLE_COMMENTER\x10\x03\x12\x0f\n" +
-	"\vROLE_VIEWER\x10\x042\xa6\a\n" +
+	"\vROLE_VIEWER\x10\x042\x88\b\n" +
 	"\x11PermissionService\x12L\n" +
 	"\vEnsureOwner\x12!.permission.v1.EnsureOwnerRequest\x1a\x1a.permission.v1.GrantRecord\x12@\n" +
 	"\x05Grant\x12\x1b.permission.v1.GrantRequest\x1a\x1a.permission.v1.GrantRecord\x12E\n" +
@@ -1391,7 +1555,8 @@ const file_permission_v1_permission_proto_rawDesc = "" +
 	"RevokeLink\x12 .permission.v1.RevokeLinkRequest\x1a!.permission.v1.RevokeLinkResponse\x12B\n" +
 	"\x06Redeem\x12\x1c.permission.v1.RedeemRequest\x1a\x1a.permission.v1.GrantRecord\x12Q\n" +
 	"\n" +
-	"PolicyDump\x12 .permission.v1.PolicyDumpRequest\x1a!.permission.v1.PolicyDumpResponse\x12Q\n" +
+	"PolicyDump\x12 .permission.v1.PolicyDumpRequest\x1a!.permission.v1.PolicyDumpResponse\x12`\n" +
+	"\x0fPolicyDumpBatch\x12%.permission.v1.PolicyDumpBatchRequest\x1a&.permission.v1.PolicyDumpBatchResponse\x12Q\n" +
 	"\n" +
 	"CopyGrants\x12 .permission.v1.CopyGrantsRequest\x1a!.permission.v1.CopyGrantsResponse\x12@\n" +
 	"\x06PutKey\x12\x1c.permission.v1.PutKeyRequest\x1a\x18.permission.v1.PublicKey\x12K\n" +
@@ -1412,77 +1577,88 @@ func file_permission_v1_permission_proto_rawDescGZIP() []byte {
 }
 
 var file_permission_v1_permission_proto_enumTypes = make([]protoimpl.EnumInfo, 1)
-var file_permission_v1_permission_proto_msgTypes = make([]protoimpl.MessageInfo, 24)
+var file_permission_v1_permission_proto_msgTypes = make([]protoimpl.MessageInfo, 29)
 var file_permission_v1_permission_proto_goTypes = []any{
-	(Role)(0),                     // 0: permission.v1.Role
-	(*GrantRecord)(nil),           // 1: permission.v1.GrantRecord
-	(*EnsureOwnerRequest)(nil),    // 2: permission.v1.EnsureOwnerRequest
-	(*GrantRequest)(nil),          // 3: permission.v1.GrantRequest
-	(*RevokeRequest)(nil),         // 4: permission.v1.RevokeRequest
-	(*RevokeResponse)(nil),        // 5: permission.v1.RevokeResponse
-	(*CreateLinkRequest)(nil),     // 6: permission.v1.CreateLinkRequest
-	(*ShareLink)(nil),             // 7: permission.v1.ShareLink
-	(*RevokeLinkRequest)(nil),     // 8: permission.v1.RevokeLinkRequest
-	(*RevokeLinkResponse)(nil),    // 9: permission.v1.RevokeLinkResponse
-	(*RedeemRequest)(nil),         // 10: permission.v1.RedeemRequest
-	(*PolicyDumpRequest)(nil),     // 11: permission.v1.PolicyDumpRequest
-	(*PolicyDumpResponse)(nil),    // 12: permission.v1.PolicyDumpResponse
-	(*CopyGrantsRequest)(nil),     // 13: permission.v1.CopyGrantsRequest
-	(*CopyGrantsResponse)(nil),    // 14: permission.v1.CopyGrantsResponse
-	(*PublicKey)(nil),             // 15: permission.v1.PublicKey
-	(*PutKeyRequest)(nil),         // 16: permission.v1.PutKeyRequest
-	(*ListKeysRequest)(nil),       // 17: permission.v1.ListKeysRequest
-	(*ListKeysResponse)(nil),      // 18: permission.v1.ListKeysResponse
-	(*KeyWrap)(nil),               // 19: permission.v1.KeyWrap
-	(*PublishWrapsRequest)(nil),   // 20: permission.v1.PublishWrapsRequest
-	(*PublishWrapsResponse)(nil),  // 21: permission.v1.PublishWrapsResponse
-	(*GetWrapsRequest)(nil),       // 22: permission.v1.GetWrapsRequest
-	(*GetWrapsResponse)(nil),      // 23: permission.v1.GetWrapsResponse
-	nil,                           // 24: permission.v1.PolicyDumpResponse.MembersEntry
-	(*timestamppb.Timestamp)(nil), // 25: google.protobuf.Timestamp
+	(Role)(0),                       // 0: permission.v1.Role
+	(*GrantRecord)(nil),             // 1: permission.v1.GrantRecord
+	(*EnsureOwnerRequest)(nil),      // 2: permission.v1.EnsureOwnerRequest
+	(*GrantRequest)(nil),            // 3: permission.v1.GrantRequest
+	(*RevokeRequest)(nil),           // 4: permission.v1.RevokeRequest
+	(*RevokeResponse)(nil),          // 5: permission.v1.RevokeResponse
+	(*CreateLinkRequest)(nil),       // 6: permission.v1.CreateLinkRequest
+	(*ShareLink)(nil),               // 7: permission.v1.ShareLink
+	(*RevokeLinkRequest)(nil),       // 8: permission.v1.RevokeLinkRequest
+	(*RevokeLinkResponse)(nil),      // 9: permission.v1.RevokeLinkResponse
+	(*RedeemRequest)(nil),           // 10: permission.v1.RedeemRequest
+	(*PolicyDumpRequest)(nil),       // 11: permission.v1.PolicyDumpRequest
+	(*PolicyDumpResponse)(nil),      // 12: permission.v1.PolicyDumpResponse
+	(*PolicyDumpBatchRequest)(nil),  // 13: permission.v1.PolicyDumpBatchRequest
+	(*PolicyDumpEntry)(nil),         // 14: permission.v1.PolicyDumpEntry
+	(*PolicyDumpBatchResponse)(nil), // 15: permission.v1.PolicyDumpBatchResponse
+	(*CopyGrantsRequest)(nil),       // 16: permission.v1.CopyGrantsRequest
+	(*CopyGrantsResponse)(nil),      // 17: permission.v1.CopyGrantsResponse
+	(*PublicKey)(nil),               // 18: permission.v1.PublicKey
+	(*PutKeyRequest)(nil),           // 19: permission.v1.PutKeyRequest
+	(*ListKeysRequest)(nil),         // 20: permission.v1.ListKeysRequest
+	(*ListKeysResponse)(nil),        // 21: permission.v1.ListKeysResponse
+	(*KeyWrap)(nil),                 // 22: permission.v1.KeyWrap
+	(*PublishWrapsRequest)(nil),     // 23: permission.v1.PublishWrapsRequest
+	(*PublishWrapsResponse)(nil),    // 24: permission.v1.PublishWrapsResponse
+	(*GetWrapsRequest)(nil),         // 25: permission.v1.GetWrapsRequest
+	(*GetWrapsResponse)(nil),        // 26: permission.v1.GetWrapsResponse
+	nil,                             // 27: permission.v1.PolicyDumpResponse.MembersEntry
+	nil,                             // 28: permission.v1.PolicyDumpEntry.MembersEntry
+	nil,                             // 29: permission.v1.PolicyDumpBatchResponse.PoliciesEntry
+	(*timestamppb.Timestamp)(nil),   // 30: google.protobuf.Timestamp
 }
 var file_permission_v1_permission_proto_depIdxs = []int32{
 	0,  // 0: permission.v1.GrantRecord.role:type_name -> permission.v1.Role
 	0,  // 1: permission.v1.GrantRequest.role:type_name -> permission.v1.Role
-	19, // 2: permission.v1.GrantRequest.wraps:type_name -> permission.v1.KeyWrap
+	22, // 2: permission.v1.GrantRequest.wraps:type_name -> permission.v1.KeyWrap
 	0,  // 3: permission.v1.CreateLinkRequest.role:type_name -> permission.v1.Role
-	25, // 4: permission.v1.CreateLinkRequest.expires_at:type_name -> google.protobuf.Timestamp
+	30, // 4: permission.v1.CreateLinkRequest.expires_at:type_name -> google.protobuf.Timestamp
 	0,  // 5: permission.v1.ShareLink.role:type_name -> permission.v1.Role
-	25, // 6: permission.v1.ShareLink.expires_at:type_name -> google.protobuf.Timestamp
-	24, // 7: permission.v1.PolicyDumpResponse.members:type_name -> permission.v1.PolicyDumpResponse.MembersEntry
-	15, // 8: permission.v1.ListKeysResponse.keys:type_name -> permission.v1.PublicKey
-	19, // 9: permission.v1.PublishWrapsRequest.wraps:type_name -> permission.v1.KeyWrap
-	19, // 10: permission.v1.GetWrapsResponse.wraps:type_name -> permission.v1.KeyWrap
-	0,  // 11: permission.v1.PolicyDumpResponse.MembersEntry.value:type_name -> permission.v1.Role
-	2,  // 12: permission.v1.PermissionService.EnsureOwner:input_type -> permission.v1.EnsureOwnerRequest
-	3,  // 13: permission.v1.PermissionService.Grant:input_type -> permission.v1.GrantRequest
-	4,  // 14: permission.v1.PermissionService.Revoke:input_type -> permission.v1.RevokeRequest
-	6,  // 15: permission.v1.PermissionService.CreateLink:input_type -> permission.v1.CreateLinkRequest
-	8,  // 16: permission.v1.PermissionService.RevokeLink:input_type -> permission.v1.RevokeLinkRequest
-	10, // 17: permission.v1.PermissionService.Redeem:input_type -> permission.v1.RedeemRequest
-	11, // 18: permission.v1.PermissionService.PolicyDump:input_type -> permission.v1.PolicyDumpRequest
-	13, // 19: permission.v1.PermissionService.CopyGrants:input_type -> permission.v1.CopyGrantsRequest
-	16, // 20: permission.v1.PermissionService.PutKey:input_type -> permission.v1.PutKeyRequest
-	17, // 21: permission.v1.PermissionService.ListKeys:input_type -> permission.v1.ListKeysRequest
-	20, // 22: permission.v1.PermissionService.PublishWraps:input_type -> permission.v1.PublishWrapsRequest
-	22, // 23: permission.v1.PermissionService.GetWraps:input_type -> permission.v1.GetWrapsRequest
-	1,  // 24: permission.v1.PermissionService.EnsureOwner:output_type -> permission.v1.GrantRecord
-	1,  // 25: permission.v1.PermissionService.Grant:output_type -> permission.v1.GrantRecord
-	5,  // 26: permission.v1.PermissionService.Revoke:output_type -> permission.v1.RevokeResponse
-	7,  // 27: permission.v1.PermissionService.CreateLink:output_type -> permission.v1.ShareLink
-	9,  // 28: permission.v1.PermissionService.RevokeLink:output_type -> permission.v1.RevokeLinkResponse
-	1,  // 29: permission.v1.PermissionService.Redeem:output_type -> permission.v1.GrantRecord
-	12, // 30: permission.v1.PermissionService.PolicyDump:output_type -> permission.v1.PolicyDumpResponse
-	14, // 31: permission.v1.PermissionService.CopyGrants:output_type -> permission.v1.CopyGrantsResponse
-	15, // 32: permission.v1.PermissionService.PutKey:output_type -> permission.v1.PublicKey
-	18, // 33: permission.v1.PermissionService.ListKeys:output_type -> permission.v1.ListKeysResponse
-	21, // 34: permission.v1.PermissionService.PublishWraps:output_type -> permission.v1.PublishWrapsResponse
-	23, // 35: permission.v1.PermissionService.GetWraps:output_type -> permission.v1.GetWrapsResponse
-	24, // [24:36] is the sub-list for method output_type
-	12, // [12:24] is the sub-list for method input_type
-	12, // [12:12] is the sub-list for extension type_name
-	12, // [12:12] is the sub-list for extension extendee
-	0,  // [0:12] is the sub-list for field type_name
+	30, // 6: permission.v1.ShareLink.expires_at:type_name -> google.protobuf.Timestamp
+	27, // 7: permission.v1.PolicyDumpResponse.members:type_name -> permission.v1.PolicyDumpResponse.MembersEntry
+	28, // 8: permission.v1.PolicyDumpEntry.members:type_name -> permission.v1.PolicyDumpEntry.MembersEntry
+	29, // 9: permission.v1.PolicyDumpBatchResponse.policies:type_name -> permission.v1.PolicyDumpBatchResponse.PoliciesEntry
+	18, // 10: permission.v1.ListKeysResponse.keys:type_name -> permission.v1.PublicKey
+	22, // 11: permission.v1.PublishWrapsRequest.wraps:type_name -> permission.v1.KeyWrap
+	22, // 12: permission.v1.GetWrapsResponse.wraps:type_name -> permission.v1.KeyWrap
+	0,  // 13: permission.v1.PolicyDumpResponse.MembersEntry.value:type_name -> permission.v1.Role
+	0,  // 14: permission.v1.PolicyDumpEntry.MembersEntry.value:type_name -> permission.v1.Role
+	14, // 15: permission.v1.PolicyDumpBatchResponse.PoliciesEntry.value:type_name -> permission.v1.PolicyDumpEntry
+	2,  // 16: permission.v1.PermissionService.EnsureOwner:input_type -> permission.v1.EnsureOwnerRequest
+	3,  // 17: permission.v1.PermissionService.Grant:input_type -> permission.v1.GrantRequest
+	4,  // 18: permission.v1.PermissionService.Revoke:input_type -> permission.v1.RevokeRequest
+	6,  // 19: permission.v1.PermissionService.CreateLink:input_type -> permission.v1.CreateLinkRequest
+	8,  // 20: permission.v1.PermissionService.RevokeLink:input_type -> permission.v1.RevokeLinkRequest
+	10, // 21: permission.v1.PermissionService.Redeem:input_type -> permission.v1.RedeemRequest
+	11, // 22: permission.v1.PermissionService.PolicyDump:input_type -> permission.v1.PolicyDumpRequest
+	13, // 23: permission.v1.PermissionService.PolicyDumpBatch:input_type -> permission.v1.PolicyDumpBatchRequest
+	16, // 24: permission.v1.PermissionService.CopyGrants:input_type -> permission.v1.CopyGrantsRequest
+	19, // 25: permission.v1.PermissionService.PutKey:input_type -> permission.v1.PutKeyRequest
+	20, // 26: permission.v1.PermissionService.ListKeys:input_type -> permission.v1.ListKeysRequest
+	23, // 27: permission.v1.PermissionService.PublishWraps:input_type -> permission.v1.PublishWrapsRequest
+	25, // 28: permission.v1.PermissionService.GetWraps:input_type -> permission.v1.GetWrapsRequest
+	1,  // 29: permission.v1.PermissionService.EnsureOwner:output_type -> permission.v1.GrantRecord
+	1,  // 30: permission.v1.PermissionService.Grant:output_type -> permission.v1.GrantRecord
+	5,  // 31: permission.v1.PermissionService.Revoke:output_type -> permission.v1.RevokeResponse
+	7,  // 32: permission.v1.PermissionService.CreateLink:output_type -> permission.v1.ShareLink
+	9,  // 33: permission.v1.PermissionService.RevokeLink:output_type -> permission.v1.RevokeLinkResponse
+	1,  // 34: permission.v1.PermissionService.Redeem:output_type -> permission.v1.GrantRecord
+	12, // 35: permission.v1.PermissionService.PolicyDump:output_type -> permission.v1.PolicyDumpResponse
+	15, // 36: permission.v1.PermissionService.PolicyDumpBatch:output_type -> permission.v1.PolicyDumpBatchResponse
+	17, // 37: permission.v1.PermissionService.CopyGrants:output_type -> permission.v1.CopyGrantsResponse
+	18, // 38: permission.v1.PermissionService.PutKey:output_type -> permission.v1.PublicKey
+	21, // 39: permission.v1.PermissionService.ListKeys:output_type -> permission.v1.ListKeysResponse
+	24, // 40: permission.v1.PermissionService.PublishWraps:output_type -> permission.v1.PublishWrapsResponse
+	26, // 41: permission.v1.PermissionService.GetWraps:output_type -> permission.v1.GetWrapsResponse
+	29, // [29:42] is the sub-list for method output_type
+	16, // [16:29] is the sub-list for method input_type
+	16, // [16:16] is the sub-list for extension type_name
+	16, // [16:16] is the sub-list for extension extendee
+	0,  // [0:16] is the sub-list for field type_name
 }
 
 func init() { file_permission_v1_permission_proto_init() }
@@ -1496,7 +1672,7 @@ func file_permission_v1_permission_proto_init() {
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_permission_v1_permission_proto_rawDesc), len(file_permission_v1_permission_proto_rawDesc)),
 			NumEnums:      1,
-			NumMessages:   24,
+			NumMessages:   29,
 			NumExtensions: 0,
 			NumServices:   1,
 		},

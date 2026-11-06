@@ -259,7 +259,6 @@ type Hub struct {
 	attempted  atomic.Bool
 	noteMu     sync.Mutex
 	policyNote chan struct{}
-	pollStop   chan struct{}
 }
 
 func newHub(docID string, registry *Registry) *Hub {
@@ -285,15 +284,6 @@ func newHub(docID string, registry *Registry) *Hub {
 }
 
 func (h *Hub) loop() {
-	if h.registry.Policy() != nil {
-		h.pollStop = make(chan struct{})
-		var wg sync.WaitGroup
-		wg.Go(h.pollMembers)
-		defer func() {
-			close(h.pollStop)
-			wg.Wait()
-		}()
-	}
 	h.subscribe()
 	ctx, cancel := context.WithTimeout(context.Background(), loadTimeout)
 	doc, delivered, err := h.store.Load(ctx, h.docID)

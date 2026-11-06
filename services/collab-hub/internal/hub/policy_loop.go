@@ -14,7 +14,7 @@ type observedPolicy struct {
 	dump interface{ Observe(float64) }
 }
 
-// ObservePolicy times each Dump. A nil dump returns p unchanged.
+// ObservePolicy times each batch dump. A nil dump returns p unchanged.
 func ObservePolicy(p Policy, dump interface{ Observe(float64) }) Policy {
 	if p == nil || dump == nil {
 		return p
@@ -22,11 +22,11 @@ func ObservePolicy(p Policy, dump interface{ Observe(float64) }) Policy {
 	return observedPolicy{next: p, dump: dump}
 }
 
-func (o observedPolicy) Dump(ctx context.Context, docID string) (map[string]permissionv1.Role, uint32, string, error) {
+func (o observedPolicy) DumpBatch(ctx context.Context, docIDs []string) (map[string]PolicyEntry, error) {
 	start := time.Now()
-	roles, epoch, state, err := o.next.Dump(ctx, docID)
+	entries, err := o.next.DumpBatch(ctx, docIDs)
 	o.dump.Observe(time.Since(start).Seconds())
-	return roles, epoch, state, err
+	return entries, err
 }
 
 func (r *Registry) noteStale(now time.Time) {
@@ -53,7 +53,7 @@ func (r *Registry) staleDocuments(now time.Time) int {
 	return n
 }
 
-// policyView is one PolicyDump result. freshAt is when the request was sent.
+// policyView is one policy dump result. freshAt is when the request was sent.
 // The poller publishes it by swapping the pointer. The loop never writes it.
 type policyView struct {
 	members    map[string]permissionv1.Role
@@ -69,89 +69,13 @@ type peerSnap struct {
 	peers []*Peer
 }
 
-func (h *Hub) pollMembers() {
-	for {
-		if h.pollDone() {
-			return
-		}
-		h.dumpPolicy()
-		h.registry.noteStale(time.Now())
-		if h.stopApply.Load() {
-			return
-		}
-		timer := time.NewTimer(policyPeriod)
-		select {
-		case <-h.pollStop:
-			timer.Stop()
-			return
-		case <-h.stopped:
-			timer.Stop()
-			return
-		case <-timer.C:
-		}
-	}
-}
-
-func (h *Hub) pollDone() bool {
-	select {
-	case <-h.pollStop:
-		return true
-	case <-h.stopped:
-		return true
-	default:
-		return false
-	}
-}
-
-func (h *Hub) dumpPolicy() {
-	if h.pollDone() || h.registry.Policy() == nil {
+func (h *Hub) applyPolicy(sent time.Time, entry *PolicyEntry, batchErr error) {
+	if h.registry.Policy() == nil || h.stopApply.Load() {
 		return
-	}
-	sent := time.Now()
-	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
-	defer cancel()
-
-	type dumpResult struct {
-		roles map[string]permissionv1.Role
-		epoch uint32
-		state string
-		err   error
-	}
-	ch := make(chan dumpResult, 1)
-	go func() {
-		roles, epoch, state, err := h.registry.Policy().Dump(ctx, h.docID)
-		ch <- dumpResult{roles: roles, epoch: epoch, state: state, err: err}
-	}()
-
-	var stale <-chan time.Time
-	var staleTimer *time.Timer
-	if prev := h.policy.Load(); prev != nil && prev.ok {
-		remain := policyStale - time.Since(prev.freshAt)
-		if remain <= 0 {
-			h.markUnavailable()
-			h.notePolicy()
-			return
-		}
-		staleTimer = time.NewTimer(remain)
-		defer staleTimer.Stop()
-		stale = staleTimer.C
-	}
-
-	var res dumpResult
-	select {
-	case <-h.pollStop:
-		return
-	case <-h.stopped:
-		return
-	case <-stale:
-		h.markUnavailable()
-		h.notePolicy()
-		return
-	case res = <-ch:
 	}
 	h.attempted.Store(true)
 	h.notePolicy()
-	if res.err != nil || h.stopApply.Load() {
+	if batchErr != nil || entry == nil {
 		if prev := h.policy.Load(); prev != nil && prev.ok && time.Since(prev.freshAt) > policyStale {
 			h.markUnavailable()
 		}
@@ -161,13 +85,14 @@ func (h *Hub) dumpPolicy() {
 		h.markUnavailable()
 		return
 	}
-	if res.roles == nil {
-		res.roles = map[string]permissionv1.Role{}
+	roles := entry.Members
+	if roles == nil {
+		roles = map[string]permissionv1.Role{}
 	}
 	view := &policyView{
-		members:    maps.Clone(res.roles),
-		writeEpoch: res.epoch,
-		epochState: res.state,
+		members:    maps.Clone(roles),
+		writeEpoch: entry.WriteEpoch,
+		epochState: entry.EpochState,
 		freshAt:    sent,
 		ok:         true,
 	}

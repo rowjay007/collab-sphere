@@ -68,4 +68,3 @@ func PinnedReplicaCount(reports []Report) float64 {
 	}
 	return float64(n)
 }
-

@@ -10,8 +10,8 @@ import (
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 
-	docgc "github.com/rowjay007/collab-sphere/services/document-service/internal/gc"
 	"github.com/rowjay007/collab-sphere/services/document-service/internal/domain"
+	docgc "github.com/rowjay007/collab-sphere/services/document-service/internal/gc"
 )
 
 func (s *Store) ReplicaReportLapsed(ctx context.Context, forkRoot uuid.UUID, replica uint64, ttl time.Duration) (bool, error) {

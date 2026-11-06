@@ -28,18 +28,19 @@ func New(svc *perms.Service) *Server {
 
 func Methods() map[string]auth.Class {
 	return map[string]auth.Class{
-		permissionv1.PermissionService_EnsureOwner_FullMethodName:  auth.Internal,
-		permissionv1.PermissionService_Grant_FullMethodName:        auth.User,
-		permissionv1.PermissionService_Revoke_FullMethodName:       auth.User,
-		permissionv1.PermissionService_CreateLink_FullMethodName:   auth.User,
-		permissionv1.PermissionService_RevokeLink_FullMethodName:   auth.User,
-		permissionv1.PermissionService_Redeem_FullMethodName:       auth.User,
-		permissionv1.PermissionService_PolicyDump_FullMethodName:   auth.Internal,
-		permissionv1.PermissionService_CopyGrants_FullMethodName:   auth.Internal,
-		permissionv1.PermissionService_PutKey_FullMethodName:       auth.User,
-		permissionv1.PermissionService_ListKeys_FullMethodName:     auth.User,
-		permissionv1.PermissionService_PublishWraps_FullMethodName: auth.User,
-		permissionv1.PermissionService_GetWraps_FullMethodName:     auth.User,
+		permissionv1.PermissionService_EnsureOwner_FullMethodName:     auth.Internal,
+		permissionv1.PermissionService_Grant_FullMethodName:           auth.User,
+		permissionv1.PermissionService_Revoke_FullMethodName:          auth.User,
+		permissionv1.PermissionService_CreateLink_FullMethodName:      auth.User,
+		permissionv1.PermissionService_RevokeLink_FullMethodName:      auth.User,
+		permissionv1.PermissionService_Redeem_FullMethodName:          auth.User,
+		permissionv1.PermissionService_PolicyDump_FullMethodName:      auth.Internal,
+		permissionv1.PermissionService_PolicyDumpBatch_FullMethodName: auth.Internal,
+		permissionv1.PermissionService_CopyGrants_FullMethodName:      auth.Internal,
+		permissionv1.PermissionService_PutKey_FullMethodName:          auth.User,
+		permissionv1.PermissionService_ListKeys_FullMethodName:        auth.User,
+		permissionv1.PermissionService_PublishWraps_FullMethodName:    auth.User,
+		permissionv1.PermissionService_GetWraps_FullMethodName:        auth.User,
 	}
 }
 
@@ -135,15 +136,52 @@ func (s *Server) PolicyDump(ctx context.Context, req *permissionv1.PolicyDumpReq
 	if err != nil {
 		return nil, mapError(err)
 	}
+	return policyToDumpResponse(p), nil
+}
+
+func (s *Server) PolicyDumpBatch(ctx context.Context, req *permissionv1.PolicyDumpBatchRequest) (*permissionv1.PolicyDumpBatchResponse, error) {
+	ids := req.GetDocIds()
+	docs := make([]uuid.UUID, 0, len(ids))
+	for _, raw := range ids {
+		doc, err := parseID(raw, "doc id")
+		if err != nil {
+			return nil, err
+		}
+		docs = append(docs, doc)
+	}
+	batch, err := s.svc.PolicyDumpBatch(ctx, docs)
+	if err != nil {
+		return nil, mapError(err)
+	}
+	out := &permissionv1.PolicyDumpBatchResponse{Policies: make(map[string]*permissionv1.PolicyDumpEntry, len(batch))}
+	for doc, p := range batch {
+		out.Policies[doc.String()] = policyToDumpEntry(p)
+	}
+	return out, nil
+}
+
+func policyMembersProto(p perms.Policy) map[string]permissionv1.Role {
 	members := make(map[string]permissionv1.Role, len(p.Members))
 	for user, role := range p.Members {
 		members[user] = roleToProto(role)
 	}
+	return members
+}
+
+func policyToDumpResponse(p perms.Policy) *permissionv1.PolicyDumpResponse {
 	return &permissionv1.PolicyDumpResponse{
-		Members:    members,
+		Members:    policyMembersProto(p),
 		WriteEpoch: p.WriteEpoch,
 		EpochState: p.EpochState,
-	}, nil
+	}
+}
+
+func policyToDumpEntry(p perms.Policy) *permissionv1.PolicyDumpEntry {
+	return &permissionv1.PolicyDumpEntry{
+		Members:    policyMembersProto(p),
+		WriteEpoch: p.WriteEpoch,
+		EpochState: p.EpochState,
+	}
 }
 
 func (s *Server) CopyGrants(ctx context.Context, req *permissionv1.CopyGrantsRequest) (*permissionv1.CopyGrantsResponse, error) {

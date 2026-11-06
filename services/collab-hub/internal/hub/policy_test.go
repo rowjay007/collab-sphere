@@ -19,13 +19,22 @@ type flakyPolicy struct {
 	err error
 }
 
-func (p *flakyPolicy) Dump(context.Context, string) (map[string]permissionv1.Role, uint32, string, error) {
+func (p *flakyPolicy) DumpBatch(_ context.Context, docIDs []string) (map[string]PolicyEntry, error) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	if p.err != nil {
-		return nil, 0, "", p.err
+		return nil, p.err
 	}
-	return map[string]permissionv1.Role{"ada": permissionv1.Role_ROLE_EDITOR}, 1, "live", nil
+	entry := PolicyEntry{
+		Members:    map[string]permissionv1.Role{"ada": permissionv1.Role_ROLE_EDITOR},
+		WriteEpoch: 1,
+		EpochState: "live",
+	}
+	out := make(map[string]PolicyEntry, len(docIDs))
+	for _, id := range docIDs {
+		out[id] = entry
+	}
+	return out, nil
 }
 
 func (p *flakyPolicy) fail(err error) {
@@ -86,7 +95,7 @@ func newMemberPolicy(user string) *memberPolicy {
 	}
 }
 
-func (p *memberPolicy) Dump(ctx context.Context, _ string) (map[string]permissionv1.Role, uint32, string, error) {
+func (p *memberPolicy) DumpBatch(ctx context.Context, docIDs []string) (map[string]PolicyEntry, error) {
 	p.mu.Lock()
 	p.calls++
 	n := p.calls
@@ -94,6 +103,9 @@ func (p *memberPolicy) Dump(ctx context.Context, _ string) (map[string]permissio
 	epoch, state, dumpErr := p.epoch, p.state, p.err
 	block := p.blockCall != 0 && n == p.blockCall
 	p.mu.Unlock()
+	entry := func(m map[string]permissionv1.Role) PolicyEntry {
+		return PolicyEntry{Members: m, WriteEpoch: epoch, EpochState: state}
+	}
 	if block {
 		p.mu.Lock()
 		p.snap = members
@@ -102,18 +114,26 @@ func (p *memberPolicy) Dump(ctx context.Context, _ string) (map[string]permissio
 		select {
 		case <-p.release:
 		case <-ctx.Done():
-			return nil, 0, "", ctx.Err()
+			return nil, ctx.Err()
 		}
 		p.mu.Lock()
 		snap := maps.Clone(p.snap)
 		epoch, state = p.epoch, p.state
 		p.mu.Unlock()
-		return snap, epoch, state, nil
+		out := make(map[string]PolicyEntry, len(docIDs))
+		for _, id := range docIDs {
+			out[id] = PolicyEntry{Members: snap, WriteEpoch: epoch, EpochState: state}
+		}
+		return out, nil
 	}
 	if dumpErr != nil {
-		return nil, 0, "", dumpErr
+		return nil, dumpErr
 	}
-	return members, epoch, state, nil
+	out := make(map[string]PolicyEntry, len(docIDs))
+	for _, id := range docIDs {
+		out[id] = entry(members)
+	}
+	return out, nil
 }
 
 func (p *memberPolicy) setMembers(members map[string]permissionv1.Role) {

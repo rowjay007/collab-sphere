@@ -19,18 +19,19 @@ import (
 const _ = grpc.SupportPackageIsVersion9
 
 const (
-	PermissionService_EnsureOwner_FullMethodName  = "/permission.v1.PermissionService/EnsureOwner"
-	PermissionService_Grant_FullMethodName        = "/permission.v1.PermissionService/Grant"
-	PermissionService_Revoke_FullMethodName       = "/permission.v1.PermissionService/Revoke"
-	PermissionService_CreateLink_FullMethodName   = "/permission.v1.PermissionService/CreateLink"
-	PermissionService_RevokeLink_FullMethodName   = "/permission.v1.PermissionService/RevokeLink"
-	PermissionService_Redeem_FullMethodName       = "/permission.v1.PermissionService/Redeem"
-	PermissionService_PolicyDump_FullMethodName   = "/permission.v1.PermissionService/PolicyDump"
-	PermissionService_CopyGrants_FullMethodName   = "/permission.v1.PermissionService/CopyGrants"
-	PermissionService_PutKey_FullMethodName       = "/permission.v1.PermissionService/PutKey"
-	PermissionService_ListKeys_FullMethodName     = "/permission.v1.PermissionService/ListKeys"
-	PermissionService_PublishWraps_FullMethodName = "/permission.v1.PermissionService/PublishWraps"
-	PermissionService_GetWraps_FullMethodName     = "/permission.v1.PermissionService/GetWraps"
+	PermissionService_EnsureOwner_FullMethodName     = "/permission.v1.PermissionService/EnsureOwner"
+	PermissionService_Grant_FullMethodName           = "/permission.v1.PermissionService/Grant"
+	PermissionService_Revoke_FullMethodName          = "/permission.v1.PermissionService/Revoke"
+	PermissionService_CreateLink_FullMethodName      = "/permission.v1.PermissionService/CreateLink"
+	PermissionService_RevokeLink_FullMethodName      = "/permission.v1.PermissionService/RevokeLink"
+	PermissionService_Redeem_FullMethodName          = "/permission.v1.PermissionService/Redeem"
+	PermissionService_PolicyDump_FullMethodName      = "/permission.v1.PermissionService/PolicyDump"
+	PermissionService_PolicyDumpBatch_FullMethodName = "/permission.v1.PermissionService/PolicyDumpBatch"
+	PermissionService_CopyGrants_FullMethodName      = "/permission.v1.PermissionService/CopyGrants"
+	PermissionService_PutKey_FullMethodName          = "/permission.v1.PermissionService/PutKey"
+	PermissionService_ListKeys_FullMethodName        = "/permission.v1.PermissionService/ListKeys"
+	PermissionService_PublishWraps_FullMethodName    = "/permission.v1.PermissionService/PublishWraps"
+	PermissionService_GetWraps_FullMethodName        = "/permission.v1.PermissionService/GetWraps"
 )
 
 // PermissionServiceClient is the client API for PermissionService service.
@@ -44,6 +45,7 @@ type PermissionServiceClient interface {
 	RevokeLink(ctx context.Context, in *RevokeLinkRequest, opts ...grpc.CallOption) (*RevokeLinkResponse, error)
 	Redeem(ctx context.Context, in *RedeemRequest, opts ...grpc.CallOption) (*GrantRecord, error)
 	PolicyDump(ctx context.Context, in *PolicyDumpRequest, opts ...grpc.CallOption) (*PolicyDumpResponse, error)
+	PolicyDumpBatch(ctx context.Context, in *PolicyDumpBatchRequest, opts ...grpc.CallOption) (*PolicyDumpBatchResponse, error)
 	CopyGrants(ctx context.Context, in *CopyGrantsRequest, opts ...grpc.CallOption) (*CopyGrantsResponse, error)
 	PutKey(ctx context.Context, in *PutKeyRequest, opts ...grpc.CallOption) (*PublicKey, error)
 	ListKeys(ctx context.Context, in *ListKeysRequest, opts ...grpc.CallOption) (*ListKeysResponse, error)
@@ -129,6 +131,16 @@ func (c *permissionServiceClient) PolicyDump(ctx context.Context, in *PolicyDump
 	return out, nil
 }
 
+func (c *permissionServiceClient) PolicyDumpBatch(ctx context.Context, in *PolicyDumpBatchRequest, opts ...grpc.CallOption) (*PolicyDumpBatchResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(PolicyDumpBatchResponse)
+	err := c.cc.Invoke(ctx, PermissionService_PolicyDumpBatch_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 func (c *permissionServiceClient) CopyGrants(ctx context.Context, in *CopyGrantsRequest, opts ...grpc.CallOption) (*CopyGrantsResponse, error) {
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
 	out := new(CopyGrantsResponse)
@@ -190,6 +202,7 @@ type PermissionServiceServer interface {
 	RevokeLink(context.Context, *RevokeLinkRequest) (*RevokeLinkResponse, error)
 	Redeem(context.Context, *RedeemRequest) (*GrantRecord, error)
 	PolicyDump(context.Context, *PolicyDumpRequest) (*PolicyDumpResponse, error)
+	PolicyDumpBatch(context.Context, *PolicyDumpBatchRequest) (*PolicyDumpBatchResponse, error)
 	CopyGrants(context.Context, *CopyGrantsRequest) (*CopyGrantsResponse, error)
 	PutKey(context.Context, *PutKeyRequest) (*PublicKey, error)
 	ListKeys(context.Context, *ListKeysRequest) (*ListKeysResponse, error)
@@ -225,6 +238,9 @@ func (UnimplementedPermissionServiceServer) Redeem(context.Context, *RedeemReque
 }
 func (UnimplementedPermissionServiceServer) PolicyDump(context.Context, *PolicyDumpRequest) (*PolicyDumpResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method PolicyDump not implemented")
+}
+func (UnimplementedPermissionServiceServer) PolicyDumpBatch(context.Context, *PolicyDumpBatchRequest) (*PolicyDumpBatchResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method PolicyDumpBatch not implemented")
 }
 func (UnimplementedPermissionServiceServer) CopyGrants(context.Context, *CopyGrantsRequest) (*CopyGrantsResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method CopyGrants not implemented")
@@ -388,6 +404,24 @@ func _PermissionService_PolicyDump_Handler(srv interface{}, ctx context.Context,
 	return interceptor(ctx, in, info, handler)
 }
 
+func _PermissionService_PolicyDumpBatch_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(PolicyDumpBatchRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(PermissionServiceServer).PolicyDumpBatch(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: PermissionService_PolicyDumpBatch_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(PermissionServiceServer).PolicyDumpBatch(ctx, req.(*PolicyDumpBatchRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 func _PermissionService_CopyGrants_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
 	in := new(CopyGrantsRequest)
 	if err := dec(in); err != nil {
@@ -512,6 +546,10 @@ var PermissionService_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "PolicyDump",
 			Handler:    _PermissionService_PolicyDump_Handler,
+		},
+		{
+			MethodName: "PolicyDumpBatch",
+			Handler:    _PermissionService_PolicyDumpBatch_Handler,
 		},
 		{
 			MethodName: "CopyGrants",

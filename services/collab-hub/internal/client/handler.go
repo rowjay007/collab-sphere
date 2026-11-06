@@ -151,11 +151,15 @@ func granted(ctx context.Context, reg *hub.Registry, docID, subject string) (boo
 	}
 	ctx, cancel := context.WithTimeout(ctx, 2*time.Second)
 	defer cancel()
-	roles, _, _, err := policy.Dump(ctx, docID)
+	entries, err := policy.DumpBatch(ctx, []string{docID})
 	if err != nil {
 		return false, err
 	}
-	_, ok := roles[subject]
+	entry, ok := entries[docID]
+	if !ok {
+		return false, errors.New("permission service unavailable")
+	}
+	_, ok = entry.Members[subject]
 	return ok, nil
 }
 

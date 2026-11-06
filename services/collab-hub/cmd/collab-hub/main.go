@@ -15,7 +15,6 @@ import (
 	"google.golang.org/grpc/credentials/insecure"
 
 	documentv1 "github.com/rowjay007/collab-sphere/gen/document/v1"
-	permissionv1 "github.com/rowjay007/collab-sphere/gen/permission/v1"
 	presencev1 "github.com/rowjay007/collab-sphere/gen/presence/v1"
 	"github.com/rowjay007/collab-sphere/pkg/access"
 	"github.com/rowjay007/collab-sphere/pkg/auth"
@@ -167,12 +166,20 @@ func main() {
 
 type permPolicy struct{ c *access.Client }
 
-func (p permPolicy) Dump(ctx context.Context, docID string) (map[string]permissionv1.Role, uint32, string, error) {
-	resp, err := p.c.Dump(ctx, docID)
+func (p permPolicy) DumpBatch(ctx context.Context, docIDs []string) (map[string]hub.PolicyEntry, error) {
+	resp, err := p.c.DumpBatch(ctx, docIDs)
 	if err != nil {
-		return nil, 0, "", err
+		return nil, err
 	}
-	return resp.GetMembers(), resp.GetWriteEpoch(), resp.GetEpochState(), nil
+	out := make(map[string]hub.PolicyEntry, len(resp.GetPolicies()))
+	for id, entry := range resp.GetPolicies() {
+		out[id] = hub.PolicyEntry{
+			Members:    entry.GetMembers(),
+			WriteEpoch: entry.GetWriteEpoch(),
+			EpochState: entry.GetEpochState(),
+		}
+	}
+	return out, nil
 }
 
 func hubID() string {

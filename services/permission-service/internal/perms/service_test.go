@@ -208,6 +208,24 @@ func TestRedeemLinkFailures(t *testing.T) {
 	}
 }
 
+func TestPolicyDumpBatch(t *testing.T) {
+	svc, ctx := setup(t)
+	a, b := uuid.New(), uuid.New()
+	if _, err := svc.EnsureOwner(ctx, a, "alice"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := svc.EnsureOwner(ctx, b, "bob"); err != nil {
+		t.Fatal(err)
+	}
+	batch, err := svc.PolicyDumpBatch(ctx, []uuid.UUID{a, b})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if batch[a].Members["alice"] != perms.RoleOwner || batch[b].Members["bob"] != perms.RoleOwner {
+		t.Fatalf("batch: %+v", batch)
+	}
+}
+
 func TestPolicyDump(t *testing.T) {
 	svc, ctx := setup(t)
 	doc := uuid.New()

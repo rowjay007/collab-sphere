@@ -15,26 +15,36 @@ import (
 
 const replicaCacheCap = 4096
 
+type PolicyEntry struct {
+	Members    map[string]permissionv1.Role
+	WriteEpoch uint32
+	EpochState string
+}
+
 type Policy interface {
-	Dump(ctx context.Context, docID string) (map[string]permissionv1.Role, uint32, string, error)
+	DumpBatch(ctx context.Context, docIDs []string) (map[string]PolicyEntry, error)
 }
 
 // Registry maps document IDs to live hubs and counts connected clients.
 type Registry struct {
-	store     Store
-	bus       fanout.Bus
-	pres      Presence
-	gapGrace  time.Duration
-	idleSync  time.Duration
-	readyWait time.Duration
-	maxReplay uint64
-	mu        sync.Mutex
-	hubs      map[string]*Hub
-	replicas  map[replicaKey]string
-	order     []replicaKey
-	closed    bool
-	pub       ed25519.PublicKey
-	policy    Policy
+	store          Store
+	bus            fanout.Bus
+	pres           Presence
+	gapGrace       time.Duration
+	idleSync       time.Duration
+	readyWait      time.Duration
+	maxReplay      uint64
+	mu             sync.Mutex
+	hubs           map[string]*Hub
+	replicas       map[replicaKey]string
+	order          []replicaKey
+	closed         bool
+	pub            ed25519.PublicKey
+	policy         Policy
+	policyPollStop chan struct{}
+	// policyKick wakes the poller when a hub opens, so its first join does
+	// not wait out policyPeriod.
+	policyKick chan struct{}
 
 	loops         sync.WaitGroup
 	presenceCalls sync.WaitGroup
@@ -45,21 +55,32 @@ type Registry struct {
 // which learns about other instances' appends and presence through bus.
 func NewRegistry(store Store, bus fanout.Bus, pres Presence) *Registry {
 	return &Registry{
-		store:     store,
-		bus:       bus,
-		pres:      pres,
-		gapGrace:  defaultGapGrace,
-		idleSync:  defaultIdleSync,
-		readyWait: defaultReadyWait,
-		maxReplay: defaultMaxReplay,
-		hubs:      make(map[string]*Hub),
-		replicas:  make(map[replicaKey]string),
+		store:      store,
+		bus:        bus,
+		pres:       pres,
+		gapGrace:   defaultGapGrace,
+		idleSync:   defaultIdleSync,
+		readyWait:  defaultReadyWait,
+		maxReplay:  defaultMaxReplay,
+		hubs:       make(map[string]*Hub),
+		replicas:   make(map[replicaKey]string),
+		policyKick: make(chan struct{}, 1),
 	}
 }
 
 func (r *Registry) SetSecurity(pub ed25519.PublicKey, policy Policy) {
+	r.mu.Lock()
 	r.pub = pub
 	r.policy = policy
+	startPoll := policy != nil && r.policyPollStop == nil
+	if startPoll {
+		r.policyPollStop = make(chan struct{})
+		stop := r.policyPollStop
+		r.mu.Unlock()
+		r.loops.Go(func() { r.pollPolicy(stop) })
+		return
+	}
+	r.mu.Unlock()
 }
 
 // SetMetrics installs process collectors. Call it before Join.
@@ -245,6 +266,9 @@ func (s *Session) Leave(ctx context.Context) {
 func (r *Registry) Close() {
 	r.mu.Lock()
 	r.closed = true
+	if r.policyPollStop != nil {
+		close(r.policyPollStop)
+	}
 	hubs := make([]*Hub, 0, len(r.hubs))
 	for _, h := range r.hubs {
 		hubs = append(hubs, h)
@@ -273,6 +297,10 @@ func (r *Registry) acquire(docID string) *Hub {
 	h := newHub(docID, r)
 	h.refs = 1
 	r.hubs[docID] = h
+	select {
+	case r.policyKick <- struct{}{}:
+	default:
+	}
 	r.loops.Go(h.loop)
 	return h
 }
