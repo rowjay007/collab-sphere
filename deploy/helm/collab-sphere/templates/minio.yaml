@@ -51,6 +51,8 @@ spec:
         {{- include "collab-sphere.selectorLabels" . | nindent 8 }}
         app.kubernetes.io/component: minio
     spec:
+      securityContext:
+        fsGroup: 65532
       containers:
         - name: minio
           image: "{{ .Values.minio.image.repository }}:{{ .Values.minio.image.tag }}"
