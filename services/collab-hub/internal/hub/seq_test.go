@@ -273,8 +273,8 @@ func TestDuplicateSignalDeliversSenderInOrder(t *testing.T) {
 	if _, got, _, _ := aliceStream.snapshot(); !slices.Equal(got, []crdt.ID{other.ID, mine.ID}) {
 		t.Fatalf("alice saw %v", got)
 	}
-	if _, opSeq, _ := store.ReadOperations(ctx, "doc", 0, 10); opSeq != 2 {
-		t.Fatalf("log holds %d ops, want 2", opSeq)
+	if _, meta, _ := store.ReadOperations(ctx, "doc", 0, 10); meta.OpSeq != 2 {
+		t.Fatalf("log holds %d ops, want 2", meta.OpSeq)
 	}
 	assertConverged(t, store, aliceStream)
 }
@@ -297,7 +297,7 @@ func TestDocumentSyncFillsGapFirst(t *testing.T) {
 	}
 	alice.SubmitOps(ctx, []crdt.Op{insert(1, 2)})
 	for {
-		if _, opSeq, _ := store.ReadOperations(ctx, "doc", 0, 10); opSeq == 3 {
+		if _, meta, _ := store.ReadOperations(ctx, "doc", 0, 10); meta.OpSeq == 3 {
 			break
 		}
 		select {
@@ -419,11 +419,11 @@ type failingReadStore struct {
 	reads []time.Time
 }
 
-func (s *failingReadStore) ReadOperations(context.Context, string, uint64, int) (fanout.Batch, uint64, error) {
+func (s *failingReadStore) ReadOperations(context.Context, string, uint64, int) (fanout.Batch, LogMeta, error) {
 	s.mu.Lock()
 	s.reads = append(s.reads, time.Now())
 	s.mu.Unlock()
-	return fanout.Batch{}, 0, errors.New("document-service down")
+	return fanout.Batch{}, LogMeta{}, errors.New("document-service down")
 }
 
 func TestGapFillFailuresBackOffThenFailStop(t *testing.T) {

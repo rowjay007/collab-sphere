@@ -152,12 +152,12 @@ func TestAppendConflictNamesClient(t *testing.T) {
 }
 
 func TestReadOperations(t *testing.T) {
-	b, opSeq, err := New(logClient{firstSeq: 8}).ReadOperations(t.Context(), "doc", 7, 10)
+	b, meta, err := New(logClient{firstSeq: 8}).ReadOperations(t.Context(), "doc", 7, 10)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if b.FirstSeq != 8 || len(b.Ops) != 2 || b.Ops[1] != crdt.Op(opB) || opSeq != 9 {
-		t.Fatalf("batch=%+v opSeq=%d", b, opSeq)
+	if b.FirstSeq != 8 || len(b.Ops) != 2 || b.Ops[1] != crdt.Op(opB) || meta.OpSeq != 9 {
+		t.Fatalf("batch=%+v opSeq=%d", b, meta.OpSeq)
 	}
 	if _, _, err := New(logClient{firstSeq: 5}).ReadOperations(t.Context(), "doc", 7, 10); err == nil {
 		t.Fatal("ReadOperations accepted a range that does not start after the requested seq")

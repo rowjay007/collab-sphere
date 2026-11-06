@@ -177,11 +177,11 @@ func (s *Store) LoadState(ctx context.Context, id uuid.UUID) (domain.Document, *
 		return domain.Document{}, nil, nil, err
 	}
 
-	snap, err := loadSnapshot(ctx, tx, id, doc.SnapshotSeq)
+	baseSeq, snap, err := loadStateBase(ctx, tx, id, doc)
 	if err != nil {
 		return domain.Document{}, nil, nil, err
 	}
-	ops, err := loadOpsAfter(ctx, tx, id, doc.SnapshotSeq)
+	ops, err := loadOpsAfter(ctx, tx, id, baseSeq)
 	if err != nil {
 		return domain.Document{}, nil, nil, err
 	}
@@ -191,15 +191,15 @@ func (s *Store) LoadState(ctx context.Context, id uuid.UUID) (domain.Document, *
 	return doc, snap, ops, nil
 }
 
-func (s *Store) ReadOperations(ctx context.Context, id uuid.UUID, after uint64, limit int) (uint64, []*crdtv1.Operation, uint64, error) {
+func (s *Store) ReadOperations(ctx context.Context, id uuid.UUID, after uint64, limit int) (uint64, []*crdtv1.Operation, uint64, LiveMeta, error) {
 	if limit < 0 {
-		return 0, nil, 0, fmt.Errorf("%w: limit %d", domain.ErrInvalidArgument, limit)
+		return 0, nil, 0, LiveMeta{}, fmt.Errorf("%w: limit %d", domain.ErrInvalidArgument, limit)
 	}
 	if limit == 0 {
 		limit = defaultReadLimit
 	}
 	if limit > maxReadLimit {
-		return 0, nil, 0, fmt.Errorf("%w: limit %d", domain.ErrInvalidArgument, limit)
+		return 0, nil, 0, LiveMeta{}, fmt.Errorf("%w: limit %d", domain.ErrInvalidArgument, limit)
 	}
 
 	tx, err := s.pool.BeginTx(ctx, pgx.TxOptions{
@@ -207,7 +207,7 @@ func (s *Store) ReadOperations(ctx context.Context, id uuid.UUID, after uint64, 
 		AccessMode: pgx.ReadOnly,
 	})
 	if err != nil {
-		return 0, nil, 0, fmt.Errorf("begin read ops: %w", err)
+		return 0, nil, 0, LiveMeta{}, fmt.Errorf("begin read ops: %w", err)
 	}
 	defer tx.Rollback(ctx)
 
@@ -215,12 +215,16 @@ func (s *Store) ReadOperations(ctx context.Context, id uuid.UUID, after uint64, 
 	doc, err := scanDocument(row)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
-			return 0, nil, 0, domain.ErrNotFound
+			return 0, nil, 0, LiveMeta{}, domain.ErrNotFound
 		}
-		return 0, nil, 0, err
+		return 0, nil, 0, LiveMeta{}, err
 	}
 	if after > doc.OpSeq {
-		return 0, nil, 0, fmt.Errorf("%w: after_seq %d exceeds op_seq %d", domain.ErrInvalidArgument, after, doc.OpSeq)
+		return 0, nil, 0, LiveMeta{}, fmt.Errorf("%w: after_seq %d exceeds op_seq %d", domain.ErrInvalidArgument, after, doc.OpSeq)
+	}
+	live, err := loadLiveMetaTx(ctx, tx, id)
+	if err != nil {
+		return 0, nil, 0, LiveMeta{}, err
 	}
 
 	rows, err := tx.Query(ctx, `
@@ -229,16 +233,39 @@ func (s *Store) ReadOperations(ctx context.Context, id uuid.UUID, after uint64, 
 		ORDER BY seq
 		LIMIT $3`, id, int64(after), limit)
 	if err != nil {
-		return 0, nil, 0, fmt.Errorf("read ops: %w", err)
+		return 0, nil, 0, LiveMeta{}, fmt.Errorf("read ops: %w", err)
 	}
 	firstSeq, ops, err := scanOps(rows)
 	if err != nil {
-		return 0, nil, 0, err
+		return 0, nil, 0, LiveMeta{}, err
 	}
 	if err := tx.Commit(ctx); err != nil {
-		return 0, nil, 0, fmt.Errorf("commit read ops: %w", err)
+		return 0, nil, 0, LiveMeta{}, fmt.Errorf("commit read ops: %w", err)
 	}
-	return firstSeq, ops, doc.OpSeq, nil
+	return firstSeq, ops, doc.OpSeq, live, nil
+}
+
+func loadLiveMetaTx(ctx context.Context, tx pgx.Tx, id uuid.UUID) (LiveMeta, error) {
+	var seq int64
+	var raw []byte
+	err := tx.QueryRow(ctx, `
+		SELECT seq, state FROM snapshots
+		WHERE document_id = $1 AND kind = $2`, id, snapshotKindLive).Scan(&seq, &raw)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return LiveMeta{}, nil
+	}
+	if err != nil {
+		return LiveMeta{}, fmt.Errorf("load live meta: %w", err)
+	}
+	snap := &crdtv1.Snapshot{}
+	if err := protojson.Unmarshal(raw, snap); err != nil {
+		return LiveMeta{}, fmt.Errorf("unmarshal live meta: %w", err)
+	}
+	collected, err := vectorFromSnapshot(snap)
+	if err != nil {
+		return LiveMeta{}, err
+	}
+	return LiveMeta{Seq: uint64(seq), Collected: collected}, nil
 }
 
 func lockDocument(ctx context.Context, tx pgx.Tx, id uuid.UUID) (domain.Document, error) {
@@ -424,9 +451,9 @@ func writeSnapshot(ctx context.Context, tx pgx.Tx, id uuid.UUID, fromSeq, toSeq 
 		return fmt.Errorf("marshal snapshot: %w", err)
 	}
 	if _, err := tx.Exec(ctx, `
-		INSERT INTO snapshots (document_id, seq, state)
-		VALUES ($1, $2, $3::jsonb)
-		ON CONFLICT (document_id, seq) DO NOTHING`, id, int64(toSeq), body); err != nil {
+		INSERT INTO snapshots (document_id, seq, kind, state)
+		VALUES ($1, $2, $3, $4::jsonb)
+		ON CONFLICT (document_id, seq, kind) DO NOTHING`, id, int64(toSeq), snapshotKindCompact, body); err != nil {
 		return fmt.Errorf("insert snapshot: %w", err)
 	}
 	return nil
@@ -457,7 +484,8 @@ func loadSnapshot(ctx context.Context, tx pgx.Tx, id uuid.UUID, seq uint64) (*cr
 	}
 	var raw []byte
 	err := tx.QueryRow(ctx, `
-		SELECT state FROM snapshots WHERE document_id = $1 AND seq = $2`, id, int64(seq)).Scan(&raw)
+		SELECT state FROM snapshots
+		WHERE document_id = $1 AND seq = $2 AND kind = $3`, id, int64(seq), snapshotKindCompact).Scan(&raw)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return nil, fmt.Errorf("load snapshot at seq %d: invariant violation, row missing: %w", seq, err)

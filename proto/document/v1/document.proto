@@ -113,6 +113,9 @@ message ReadOperationsResponse {
   uint64 first_seq = 1;
   repeated crdt.v1.Operation operations = 2;
   uint64 op_seq = 3;
+  // live_seq and collected come from the live snapshot row when present.
+  uint64 live_seq = 4;
+  repeated crdt.v1.VectorEntry collected = 5;
 }
 
 message ClaimReplicaRequest {

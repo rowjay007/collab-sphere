@@ -165,7 +165,7 @@ func (s *Server) ReadOperations(ctx context.Context, req *documentv1.ReadOperati
 	if err != nil {
 		return nil, err
 	}
-	firstSeq, ops, opSeq, err := s.store.ReadOperations(ctx, id, req.GetAfterSeq(), int(req.GetLimit()))
+	firstSeq, ops, opSeq, live, err := s.store.ReadOperations(ctx, id, req.GetAfterSeq(), int(req.GetLimit()))
 	if err != nil {
 		return nil, mapError(err)
 	}
@@ -173,6 +173,8 @@ func (s *Server) ReadOperations(ctx context.Context, req *documentv1.ReadOperati
 		FirstSeq:   firstSeq,
 		Operations: ops,
 		OpSeq:      opSeq,
+		LiveSeq:    live.Seq,
+		Collected:  entriesFromVector(live.Collected),
 	}, nil
 }
 

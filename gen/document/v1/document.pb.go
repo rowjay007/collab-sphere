@@ -714,9 +714,12 @@ type ReadOperationsResponse struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
 	// Seq of operations[0]; operations are contiguous seqs first_seq..first_seq+len-1.
 	// Zero when operations is empty.
-	FirstSeq      uint64          `protobuf:"varint,1,opt,name=first_seq,json=firstSeq,proto3" json:"first_seq,omitempty"`
-	Operations    []*v1.Operation `protobuf:"bytes,2,rep,name=operations,proto3" json:"operations,omitempty"`
-	OpSeq         uint64          `protobuf:"varint,3,opt,name=op_seq,json=opSeq,proto3" json:"op_seq,omitempty"`
+	FirstSeq   uint64          `protobuf:"varint,1,opt,name=first_seq,json=firstSeq,proto3" json:"first_seq,omitempty"`
+	Operations []*v1.Operation `protobuf:"bytes,2,rep,name=operations,proto3" json:"operations,omitempty"`
+	OpSeq      uint64          `protobuf:"varint,3,opt,name=op_seq,json=opSeq,proto3" json:"op_seq,omitempty"`
+	// live_seq and collected come from the live snapshot row when present.
+	LiveSeq       uint64            `protobuf:"varint,4,opt,name=live_seq,json=liveSeq,proto3" json:"live_seq,omitempty"`
+	Collected     []*v1.VectorEntry `protobuf:"bytes,5,rep,name=collected,proto3" json:"collected,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -770,6 +773,20 @@ func (x *ReadOperationsResponse) GetOpSeq() uint64 {
 		return x.OpSeq
 	}
 	return 0
+}
+
+func (x *ReadOperationsResponse) GetLiveSeq() uint64 {
+	if x != nil {
+		return x.LiveSeq
+	}
+	return 0
+}
+
+func (x *ReadOperationsResponse) GetCollected() []*v1.VectorEntry {
+	if x != nil {
+		return x.Collected
+	}
+	return nil
 }
 
 type ClaimReplicaRequest struct {
@@ -1493,13 +1510,15 @@ const file_document_v1_document_proto_rawDesc = "" +
 	"\x15ReadOperationsRequest\x12\x0e\n" +
 	"\x02id\x18\x01 \x01(\tR\x02id\x12\x1b\n" +
 	"\tafter_seq\x18\x02 \x01(\x04R\bafterSeq\x12\x14\n" +
-	"\x05limit\x18\x03 \x01(\rR\x05limit\"\x80\x01\n" +
+	"\x05limit\x18\x03 \x01(\rR\x05limit\"\xcf\x01\n" +
 	"\x16ReadOperationsResponse\x12\x1b\n" +
 	"\tfirst_seq\x18\x01 \x01(\x04R\bfirstSeq\x122\n" +
 	"\n" +
 	"operations\x18\x02 \x03(\v2\x12.crdt.v1.OperationR\n" +
 	"operations\x12\x15\n" +
-	"\x06op_seq\x18\x03 \x01(\x04R\x05opSeq\"\x7f\n" +
+	"\x06op_seq\x18\x03 \x01(\x04R\x05opSeq\x12\x19\n" +
+	"\blive_seq\x18\x04 \x01(\x04R\aliveSeq\x122\n" +
+	"\tcollected\x18\x05 \x03(\v2\x14.crdt.v1.VectorEntryR\tcollected\"\x7f\n" +
 	"\x13ClaimReplicaRequest\x12\x1f\n" +
 	"\vdocument_id\x18\x01 \x01(\tR\n" +
 	"documentId\x12\x16\n" +
@@ -1618,45 +1637,46 @@ var file_document_v1_document_proto_depIdxs = []int32{
 	26, // 5: document.v1.LoadStateResponse.operations:type_name -> crdt.v1.Operation
 	26, // 6: document.v1.AppendOperationsRequest.operations:type_name -> crdt.v1.Operation
 	26, // 7: document.v1.ReadOperationsResponse.operations:type_name -> crdt.v1.Operation
-	24, // 8: document.v1.ListChangedRequest.since:type_name -> google.protobuf.Timestamp
-	1,  // 9: document.v1.ListChangedResponse.documents:type_name -> document.v1.Document
-	24, // 10: document.v1.ListChangedResponse.next_since:type_name -> google.protobuf.Timestamp
-	27, // 11: document.v1.ReportVectorRequest.vector:type_name -> crdt.v1.VectorEntry
-	27, // 12: document.v1.ReplicaReport.vector:type_name -> crdt.v1.VectorEntry
-	24, // 13: document.v1.ReplicaReport.reported_at:type_name -> google.protobuf.Timestamp
-	24, // 14: document.v1.ReplicaReport.released_at:type_name -> google.protobuf.Timestamp
-	20, // 15: document.v1.ListReportsResponse.reports:type_name -> document.v1.ReplicaReport
-	2,  // 16: document.v1.DocumentService.CreateDocument:input_type -> document.v1.CreateDocumentRequest
-	4,  // 17: document.v1.DocumentService.GetDocument:input_type -> document.v1.GetDocumentRequest
-	5,  // 18: document.v1.DocumentService.ArchiveDocument:input_type -> document.v1.ArchiveDocumentRequest
-	6,  // 19: document.v1.DocumentService.LoadState:input_type -> document.v1.LoadStateRequest
-	8,  // 20: document.v1.DocumentService.AppendOperations:input_type -> document.v1.AppendOperationsRequest
-	10, // 21: document.v1.DocumentService.ReadOperations:input_type -> document.v1.ReadOperationsRequest
-	12, // 22: document.v1.DocumentService.ClaimReplica:input_type -> document.v1.ClaimReplicaRequest
-	14, // 23: document.v1.DocumentService.ForkDocument:input_type -> document.v1.ForkDocumentRequest
-	15, // 24: document.v1.DocumentService.ListChangedDocuments:input_type -> document.v1.ListChangedRequest
-	3,  // 25: document.v1.DocumentService.SetEpoch:input_type -> document.v1.SetEpochRequest
-	17, // 26: document.v1.DocumentService.ReportVector:input_type -> document.v1.ReportVectorRequest
-	19, // 27: document.v1.DocumentService.ListReports:input_type -> document.v1.ListReportsRequest
-	22, // 28: document.v1.DocumentService.ReleaseReplica:input_type -> document.v1.ReleaseReplicaRequest
-	1,  // 29: document.v1.DocumentService.CreateDocument:output_type -> document.v1.Document
-	1,  // 30: document.v1.DocumentService.GetDocument:output_type -> document.v1.Document
-	1,  // 31: document.v1.DocumentService.ArchiveDocument:output_type -> document.v1.Document
-	7,  // 32: document.v1.DocumentService.LoadState:output_type -> document.v1.LoadStateResponse
-	9,  // 33: document.v1.DocumentService.AppendOperations:output_type -> document.v1.AppendOperationsResponse
-	11, // 34: document.v1.DocumentService.ReadOperations:output_type -> document.v1.ReadOperationsResponse
-	13, // 35: document.v1.DocumentService.ClaimReplica:output_type -> document.v1.ClaimReplicaResponse
-	1,  // 36: document.v1.DocumentService.ForkDocument:output_type -> document.v1.Document
-	16, // 37: document.v1.DocumentService.ListChangedDocuments:output_type -> document.v1.ListChangedResponse
-	1,  // 38: document.v1.DocumentService.SetEpoch:output_type -> document.v1.Document
-	18, // 39: document.v1.DocumentService.ReportVector:output_type -> document.v1.ReportVectorResponse
-	21, // 40: document.v1.DocumentService.ListReports:output_type -> document.v1.ListReportsResponse
-	23, // 41: document.v1.DocumentService.ReleaseReplica:output_type -> document.v1.ReleaseReplicaResponse
-	29, // [29:42] is the sub-list for method output_type
-	16, // [16:29] is the sub-list for method input_type
-	16, // [16:16] is the sub-list for extension type_name
-	16, // [16:16] is the sub-list for extension extendee
-	0,  // [0:16] is the sub-list for field type_name
+	27, // 8: document.v1.ReadOperationsResponse.collected:type_name -> crdt.v1.VectorEntry
+	24, // 9: document.v1.ListChangedRequest.since:type_name -> google.protobuf.Timestamp
+	1,  // 10: document.v1.ListChangedResponse.documents:type_name -> document.v1.Document
+	24, // 11: document.v1.ListChangedResponse.next_since:type_name -> google.protobuf.Timestamp
+	27, // 12: document.v1.ReportVectorRequest.vector:type_name -> crdt.v1.VectorEntry
+	27, // 13: document.v1.ReplicaReport.vector:type_name -> crdt.v1.VectorEntry
+	24, // 14: document.v1.ReplicaReport.reported_at:type_name -> google.protobuf.Timestamp
+	24, // 15: document.v1.ReplicaReport.released_at:type_name -> google.protobuf.Timestamp
+	20, // 16: document.v1.ListReportsResponse.reports:type_name -> document.v1.ReplicaReport
+	2,  // 17: document.v1.DocumentService.CreateDocument:input_type -> document.v1.CreateDocumentRequest
+	4,  // 18: document.v1.DocumentService.GetDocument:input_type -> document.v1.GetDocumentRequest
+	5,  // 19: document.v1.DocumentService.ArchiveDocument:input_type -> document.v1.ArchiveDocumentRequest
+	6,  // 20: document.v1.DocumentService.LoadState:input_type -> document.v1.LoadStateRequest
+	8,  // 21: document.v1.DocumentService.AppendOperations:input_type -> document.v1.AppendOperationsRequest
+	10, // 22: document.v1.DocumentService.ReadOperations:input_type -> document.v1.ReadOperationsRequest
+	12, // 23: document.v1.DocumentService.ClaimReplica:input_type -> document.v1.ClaimReplicaRequest
+	14, // 24: document.v1.DocumentService.ForkDocument:input_type -> document.v1.ForkDocumentRequest
+	15, // 25: document.v1.DocumentService.ListChangedDocuments:input_type -> document.v1.ListChangedRequest
+	3,  // 26: document.v1.DocumentService.SetEpoch:input_type -> document.v1.SetEpochRequest
+	17, // 27: document.v1.DocumentService.ReportVector:input_type -> document.v1.ReportVectorRequest
+	19, // 28: document.v1.DocumentService.ListReports:input_type -> document.v1.ListReportsRequest
+	22, // 29: document.v1.DocumentService.ReleaseReplica:input_type -> document.v1.ReleaseReplicaRequest
+	1,  // 30: document.v1.DocumentService.CreateDocument:output_type -> document.v1.Document
+	1,  // 31: document.v1.DocumentService.GetDocument:output_type -> document.v1.Document
+	1,  // 32: document.v1.DocumentService.ArchiveDocument:output_type -> document.v1.Document
+	7,  // 33: document.v1.DocumentService.LoadState:output_type -> document.v1.LoadStateResponse
+	9,  // 34: document.v1.DocumentService.AppendOperations:output_type -> document.v1.AppendOperationsResponse
+	11, // 35: document.v1.DocumentService.ReadOperations:output_type -> document.v1.ReadOperationsResponse
+	13, // 36: document.v1.DocumentService.ClaimReplica:output_type -> document.v1.ClaimReplicaResponse
+	1,  // 37: document.v1.DocumentService.ForkDocument:output_type -> document.v1.Document
+	16, // 38: document.v1.DocumentService.ListChangedDocuments:output_type -> document.v1.ListChangedResponse
+	1,  // 39: document.v1.DocumentService.SetEpoch:output_type -> document.v1.Document
+	18, // 40: document.v1.DocumentService.ReportVector:output_type -> document.v1.ReportVectorResponse
+	21, // 41: document.v1.DocumentService.ListReports:output_type -> document.v1.ListReportsResponse
+	23, // 42: document.v1.DocumentService.ReleaseReplica:output_type -> document.v1.ReleaseReplicaResponse
+	30, // [30:43] is the sub-list for method output_type
+	17, // [17:30] is the sub-list for method input_type
+	17, // [17:17] is the sub-list for extension type_name
+	17, // [17:17] is the sub-list for extension extendee
+	0,  // [0:17] is the sub-list for field type_name
 }
 
 func init() { file_document_v1_document_proto_init() }

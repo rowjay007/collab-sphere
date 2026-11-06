@@ -160,11 +160,13 @@ func (stopEvent) isEvent() {}
 // fillEvent is one ReadOperations result. The loop offers it. A gen that is
 // not the in-flight read is discarded.
 type fillEvent struct {
-	gen   uint64
-	after uint64
-	batch fanout.Batch
-	opSeq uint64
-	err   error
+	gen       uint64
+	after     uint64
+	batch     fanout.Batch
+	opSeq     uint64
+	liveSeq   uint64
+	collected crdt.VersionVector
+	err       error
 }
 
 func (fillEvent) isEvent() {}
@@ -245,6 +247,9 @@ type Hub struct {
 	catchup []joinEvent
 	opening map[crdt.ClientID]*opening
 	openGen uint64
+
+	liveBuilding  bool
+	appendThrough uint64
 
 	// policy is published by the poller. The loop only loads it.
 	// peerView is published by the loop. The poller only loads it.
@@ -367,6 +372,8 @@ func (h *Hub) loop() {
 				idle.Reset(h.registry.idleSync)
 			case fillEvent:
 				stop = h.handleFill(ev)
+			case liveBuildEvent:
+				stop = h.handleLiveBuild(ev)
 			case joinReadyEvent:
 				stop = h.handleJoinReady(ev)
 			}
@@ -1102,6 +1109,9 @@ func (h *Hub) persist(accepted []crdt.Op, readAt int64) ([]uint64, bool) {
 		h.failStop(collabv1.ErrorMessage_CODE_UNAVAILABLE, "document service unavailable")
 		return nil, true
 	}
+	if res.FirstNewSeq > 0 {
+		h.appendThrough = res.OpSeq
+	}
 	if b, ok := newlyStored(accepted, res); ok {
 		b.ReadUnixNano = readAt
 		b.OriginUnixNano = time.Now().UnixNano()
@@ -1193,6 +1203,9 @@ func (h *Hub) deliver(ready []fanout.Batch) error {
 		})
 		h.broadcast(frame, 0, true, b.ReadUnixNano)
 	}
+	if h.appendThrough > 0 && h.delivered() >= h.appendThrough {
+		h.appendThrough = 0
+	}
 	return nil
 }
 
@@ -1262,9 +1275,12 @@ func (h *Hub) startFill(target uint64, toHead, heal bool) {
 	store := h.store
 	go func() {
 		ctx, cancel := context.WithTimeout(context.Background(), readTimeout)
-		b, opSeq, err := store.ReadOperations(ctx, docID, after, fillLimit)
+		b, meta, err := store.ReadOperations(ctx, docID, after, fillLimit)
 		cancel()
-		_ = h.send(context.Background(), fillEvent{gen: gen, after: after, batch: b, opSeq: opSeq, err: err})
+		_ = h.send(context.Background(), fillEvent{
+			gen: gen, after: after, batch: b, opSeq: meta.OpSeq,
+			liveSeq: meta.LiveSeq, collected: meta.Collected, err: err,
+		})
 	}()
 }
 
@@ -1286,6 +1302,7 @@ func (h *Hub) handleFill(ev fillEvent) bool {
 	if ev.err != nil {
 		return h.finishFillErr(heal, ev.err)
 	}
+	h.maybeStartLiveBuild(ev.collected)
 	if ev.opSeq < target && h.delivered() < target {
 		h.refuseBeyond(ev.opSeq)
 		target = ev.opSeq

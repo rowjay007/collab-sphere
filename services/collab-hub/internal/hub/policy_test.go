@@ -141,12 +141,12 @@ type blockingReadStore struct {
 	once    sync.Once
 }
 
-func (s *blockingReadStore) ReadOperations(ctx context.Context, docID string, after uint64, limit int) (fanout.Batch, uint64, error) {
+func (s *blockingReadStore) ReadOperations(ctx context.Context, docID string, after uint64, limit int) (fanout.Batch, LogMeta, error) {
 	s.once.Do(func() { close(s.started) })
 	select {
 	case <-s.release:
 	case <-ctx.Done():
-		return fanout.Batch{}, 0, ctx.Err()
+		return fanout.Batch{}, LogMeta{}, ctx.Err()
 	}
 	return s.Store.ReadOperations(ctx, docID, after, limit)
 }

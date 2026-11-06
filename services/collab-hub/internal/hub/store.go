@@ -46,14 +46,21 @@ type AppendResult struct {
 	Seqs        []uint64
 }
 
+// LogMeta is the log head plus live snapshot metadata from ReadOperations.
+type LogMeta struct {
+	OpSeq     uint64
+	LiveSeq   uint64
+	Collected crdt.VersionVector
+}
+
 // Store is the consumer-side persistence seam for a document hub.
 type Store interface {
 	Replica(ctx context.Context, docID string, requested crdt.ClientID) (crdt.ClientID, error)
 	// Load returns the document and the seq of the last op it holds.
 	Load(ctx context.Context, docID string) (*crdt.Doc, uint64, error)
 	Append(ctx context.Context, docID string, ops []crdt.Op) (AppendResult, error)
-	// ReadOperations returns up to limit ops after seq after, and the log's last seq.
-	ReadOperations(ctx context.Context, docID string, after uint64, limit int) (fanout.Batch, uint64, error)
+	// ReadOperations returns up to limit ops after seq after and log metadata.
+	ReadOperations(ctx context.Context, docID string, after uint64, limit int) (fanout.Batch, LogMeta, error)
 	// ReportVector records one replica's version vector at homeSeq.
 	// ErrStaleReport means the stored row was left unchanged.
 	ReportVector(ctx context.Context, docID string, replica crdt.ClientID, vector crdt.VersionVector, homeSeq uint64) error
@@ -79,8 +86,10 @@ type MemoryStore struct {
 }
 
 type memoryLog struct {
-	ops []crdt.Op
-	seq map[crdt.ID]uint64
+	ops           []crdt.Op
+	seq           map[crdt.ID]uint64
+	liveSeq       uint64
+	liveCollected crdt.VersionVector
 }
 
 // NewMemoryStore returns an empty in-memory store.
@@ -201,19 +210,29 @@ func (s *MemoryStore) Report(docID string, replica crdt.ClientID) (StoredReport,
 }
 
 // ReadOperations returns up to limit ops after seq after.
-func (s *MemoryStore) ReadOperations(_ context.Context, docID string, after uint64, limit int) (fanout.Batch, uint64, error) {
+func (s *MemoryStore) ReadOperations(_ context.Context, docID string, after uint64, limit int) (fanout.Batch, LogMeta, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	l := s.log(docID)
 	opSeq := uint64(len(l.ops))
 	if after > opSeq {
-		return fanout.Batch{}, opSeq, fmt.Errorf("after %d is beyond op seq %d", after, opSeq)
+		return fanout.Batch{}, LogMeta{}, fmt.Errorf("after %d is beyond op seq %d", after, opSeq)
 	}
 	end := min(opSeq, after+uint64(limit))
 	if end == after {
-		return fanout.Batch{}, opSeq, nil
+		return fanout.Batch{}, LogMeta{OpSeq: opSeq, Collected: l.liveCollected.Clone()}, nil
 	}
-	return fanout.Batch{FirstSeq: after + 1, Ops: append([]crdt.Op(nil), l.ops[after:end]...)}, opSeq, nil
+	return fanout.Batch{FirstSeq: after + 1, Ops: append([]crdt.Op(nil), l.ops[after:end]...)},
+		LogMeta{OpSeq: opSeq, LiveSeq: l.liveSeq, Collected: l.liveCollected.Clone()}, nil
+}
+
+// SetLiveMeta sets live snapshot metadata returned by ReadOperations.
+func (s *MemoryStore) SetLiveMeta(docID string, seq uint64, collected crdt.VersionVector) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	l := s.log(docID)
+	l.liveSeq = seq
+	l.liveCollected = collected.Clone()
 }
 
 // FailAppend makes the next Append calls return err. Pass nil to resume.

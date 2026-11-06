@@ -87,7 +87,7 @@ func TestJoinDuringBlockedFillDeliversInOrder(t *testing.T) {
 	}
 	alice.SubmitOps(ctx, []crdt.Op{insert(1, 2)})
 	for {
-		if _, opSeq, _ := base.ReadOperations(ctx, "doc", 0, 10); opSeq == 3 {
+		if _, meta, _ := base.ReadOperations(ctx, "doc", 0, 10); meta.OpSeq == 3 {
 			break
 		}
 		select {

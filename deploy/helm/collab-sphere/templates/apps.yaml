@@ -55,6 +55,10 @@ spec:
             {{- include "collab-sphere.secretEnv" (dict "root" . "name" "INTERNAL_TOKEN" "key" "INTERNAL_TOKEN") | nindent 12 }}
             - name: PERMISSION_ADDR
               value: {{ include "collab-sphere.addr" (list . "permission-service" 9094) | quote }}
+            - name: VERSION_ADDR
+              value: {{ include "collab-sphere.addr" (list . "version-service" 9093) | quote }}
+            - name: COMMENT_ADDR
+              value: {{ include "collab-sphere.addr" (list . "comment-service" 9092) | quote }}
             {{- include "collab-sphere.extraEnv" (dict "root" . "metrics" ":9190") | nindent 12 }}
           livenessProbe:
             tcpSocket:

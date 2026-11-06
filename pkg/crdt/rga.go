@@ -424,6 +424,17 @@ func (d *Doc) Clock() uint64 {
 }
 
 // Vector returns a copy of the document's version vector.
+func (d *Doc) Collected() VersionVector {
+	if d == nil {
+		return nil
+	}
+	out := make(VersionVector, len(d.collected))
+	for k, v := range d.collected {
+		out[k] = v
+	}
+	return out
+}
+
 func (d *Doc) Vector() VersionVector {
 	if d == nil {
 		return VersionVector{}

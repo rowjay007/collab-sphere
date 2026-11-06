@@ -85,10 +85,10 @@ func (s *Store) Fork(ctx context.Context, src uuid.UUID, seq uint64, title, requ
 	}
 	if snapSeq > 0 {
 		if _, err := tx.Exec(ctx, `
-			INSERT INTO snapshots (document_id, seq, state)
-			SELECT $1, seq, state
+			INSERT INTO snapshots (document_id, seq, kind, state)
+			SELECT $1, seq, $4, state
 			FROM snapshots
-			WHERE document_id = $2 AND seq = $3`, id, src, int64(snapSeq)); err != nil {
+			WHERE document_id = $2 AND seq = $3 AND kind = $4`, id, src, int64(snapSeq), snapshotKindCompact); err != nil {
 			return domain.Document{}, fmt.Errorf("copy snapshot: %w", err)
 		}
 	}
@@ -120,9 +120,9 @@ func latestSnapshotSeqAtOrBelow(ctx context.Context, tx pgx.Tx, id uuid.UUID, se
 	var snap int64
 	err := tx.QueryRow(ctx, `
 		SELECT seq FROM snapshots
-		WHERE document_id = $1 AND seq <= $2
+		WHERE document_id = $1 AND seq <= $2 AND kind = $3
 		ORDER BY seq DESC
-		LIMIT 1`, id, int64(seq)).Scan(&snap)
+		LIMIT 1`, id, int64(seq), snapshotKindCompact).Scan(&snap)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return 0, nil
 	}

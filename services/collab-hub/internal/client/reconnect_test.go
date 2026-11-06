@@ -417,8 +417,8 @@ func TestClientNeverBlocksOnAStalledHub(t *testing.T) {
 		}
 	}
 	logged := func() bool {
-		_, opSeq, err := store.ReadOperations(ctx, canonicalTestDocumentID("doc"), 0, 0)
-		return err == nil && opSeq > 0
+		_, meta, err := store.ReadOperations(ctx, canonicalTestDocumentID("doc"), 0, 0)
+		return err == nil && meta.OpSeq > 0
 	}
 	var ids []crdt.ID
 	last := crdt.Root

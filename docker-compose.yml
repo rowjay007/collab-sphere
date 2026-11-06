@@ -147,6 +147,10 @@ services:
       AUTH_PUBLIC_KEY: wBiwn96X59Q0XaGgZIFY1UDnR55L2agldgCbneQFQvM=
       INTERNAL_TOKEN: 99555b306395f2318808fdf9d3c6e1262e809d072790eeb91871cdc6c7214ee8
       PERMISSION_ADDR: permission-service:9094
+      VERSION_ADDR: version-service:9093
+      COMMENT_ADDR: comment-service:9092
+      GC_INTERVAL: 30s
+      REPLICA_REPORT_TTL: 336h
       METRICS_ADDR: ":9190"
     ports:
       - "9090:9090"

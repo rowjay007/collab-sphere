@@ -7,6 +7,7 @@ import (
 	"os"
 	"os/signal"
 	"syscall"
+	"time"
 
 	"github.com/jackc/pgx/v5/pgxpool"
 	"google.golang.org/grpc"
@@ -17,6 +18,7 @@ import (
 	"github.com/rowjay007/collab-sphere/pkg/metrics"
 	docgrpc "github.com/rowjay007/collab-sphere/services/document-service/internal/grpc"
 	"github.com/rowjay007/collab-sphere/services/document-service/internal/store"
+	docworker "github.com/rowjay007/collab-sphere/services/document-service/internal/worker"
 )
 
 func main() {
@@ -98,6 +100,30 @@ func main() {
 	doc.UseAppend(docMetrics.Append)
 	documentv1.RegisterDocumentServiceServer(server, doc)
 
+	gcCtx, gcCancel := context.WithCancel(context.Background())
+	defer gcCancel()
+	versionAddr := os.Getenv("VERSION_ADDR")
+	commentAddr := os.Getenv("COMMENT_ADDR")
+	if versionAddr == "" || commentAddr == "" {
+		slog.Info("gc worker disabled", "reason", "VERSION_ADDR or COMMENT_ADDR unset")
+	} else if interval := gcInterval(); interval <= 0 {
+		slog.Info("gc worker disabled", "reason", "GC_INTERVAL empty or zero")
+	} else {
+		clients, err := docworker.Dial(versionAddr, commentAddr, internal)
+		if err != nil {
+			slog.Error("gc clients", "err", err)
+			os.Exit(1)
+		}
+		gc := &docworker.GC{
+			Store:   st,
+			Floor:   clients,
+			Pins:    clients,
+			Metrics: docMetrics,
+			TTL:     lookupDuration("REPLICA_REPORT_TTL", 336*time.Hour),
+		}
+		go gc.Run(gcCtx, interval)
+	}
+
 	errCh := make(chan error, 1)
 	go func() {
 		slog.Info("serving", "addr", lis.Addr().String())
@@ -120,4 +146,31 @@ func main() {
 		pool.Close()
 		os.Exit(1)
 	}
+}
+
+func gcInterval() time.Duration {
+	raw, ok := os.LookupEnv("GC_INTERVAL")
+	if !ok {
+		return 30 * time.Second
+	}
+	if raw == "" || raw == "0" || raw == "0s" {
+		return 0
+	}
+	d, err := time.ParseDuration(raw)
+	if err != nil {
+		return 30 * time.Second
+	}
+	return d
+}
+
+func lookupDuration(name string, def time.Duration) time.Duration {
+	raw := os.Getenv(name)
+	if raw == "" {
+		return def
+	}
+	d, err := time.ParseDuration(raw)
+	if err != nil {
+		return def
+	}
+	return d
 }

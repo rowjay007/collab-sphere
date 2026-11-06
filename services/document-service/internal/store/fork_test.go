@@ -79,7 +79,7 @@ func TestForkCopiesPrefixAndStaysIndependent(t *testing.T) {
 		t.Fatal("source was still at the fork seq")
 	}
 
-	first, ops, opSeq, err := st.ReadOperations(ctx, fork.ID, 0, 100)
+	first, ops, opSeq, _, err := st.ReadOperations(ctx, fork.ID, 0, 100)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -129,7 +129,7 @@ func TestForkCopiesPrefixAndStaysIndependent(t *testing.T) {
 		t.Fatal("source absorbed the fork append")
 	}
 
-	first, ops, opSeq, err = st.ReadOperations(ctx, fork.ID, 0, 100)
+	first, ops, opSeq, _, err = st.ReadOperations(ctx, fork.ID, 0, 100)
 	if err != nil {
 		t.Fatal(err)
 	}

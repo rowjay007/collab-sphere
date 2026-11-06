@@ -146,23 +146,39 @@ func hasErrorReason(err error, code codes.Code, reason string) bool {
 }
 
 // ReadOperations reads up to limit ops after seq after.
-func (s *Store) ReadOperations(ctx context.Context, docID string, after uint64, limit int) (fanout.Batch, uint64, error) {
+func (s *Store) ReadOperations(ctx context.Context, docID string, after uint64, limit int) (fanout.Batch, hub.LogMeta, error) {
 	resp, err := s.client.ReadOperations(ctx, &documentv1.ReadOperationsRequest{
 		Id:       docID,
 		AfterSeq: after,
 		Limit:    uint32(limit),
 	})
 	if err != nil {
-		return fanout.Batch{}, 0, err
+		return fanout.Batch{}, hub.LogMeta{}, err
 	}
 	ops, err := decodeOps(resp.GetOperations())
 	if err != nil {
-		return fanout.Batch{}, 0, err
+		return fanout.Batch{}, hub.LogMeta{}, err
 	}
 	if len(ops) > 0 && resp.GetFirstSeq() != after+1 {
-		return fanout.Batch{}, 0, fmt.Errorf("read after %d started at seq %d", after, resp.GetFirstSeq())
+		return fanout.Batch{}, hub.LogMeta{}, fmt.Errorf("read after %d started at seq %d", after, resp.GetFirstSeq())
 	}
-	return fanout.Batch{FirstSeq: resp.GetFirstSeq(), Ops: ops}, resp.GetOpSeq(), nil
+	meta := hub.LogMeta{
+		OpSeq:     resp.GetOpSeq(),
+		LiveSeq:   resp.GetLiveSeq(),
+		Collected: vectorFromEntries(resp.GetCollected()),
+	}
+	return fanout.Batch{FirstSeq: resp.GetFirstSeq(), Ops: ops}, meta, nil
+}
+
+func vectorFromEntries(entries []*crdtv1.VectorEntry) crdt.VersionVector {
+	out := make(crdt.VersionVector, len(entries))
+	for _, e := range entries {
+		if e.GetClient() == 0 || e.GetClock() == 0 {
+			continue
+		}
+		out[crdt.ClientID(e.GetClient())] = e.GetClock()
+	}
+	return out
 }
 
 // ReportVector stores one replica's vector. A stale row comes back as hub.ErrStaleReport.

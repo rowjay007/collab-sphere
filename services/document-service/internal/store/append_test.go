@@ -565,7 +565,7 @@ func TestReadOperations(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			firstSeq, got, opSeq, err := st.ReadOperations(ctx, tc.id, tc.after, tc.limit)
+			firstSeq, got, opSeq, _, err := st.ReadOperations(ctx, tc.id, tc.after, tc.limit)
 			if tc.want.err != nil {
 				if !errors.Is(err, tc.want.err) {
 					t.Fatalf("err %v", err)
@@ -590,7 +590,7 @@ func TestReadOperations(t *testing.T) {
 		if _, err := st.Archive(ctx, doc.ID); err != nil {
 			t.Fatal(err)
 		}
-		firstSeq, got, opSeq, err := st.ReadOperations(ctx, doc.ID, 0, 10)
+		firstSeq, got, opSeq, _, err := st.ReadOperations(ctx, doc.ID, 0, 10)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -618,7 +618,7 @@ func TestReadOperations(t *testing.T) {
 		if gotDoc.SnapshotSeq == 0 {
 			t.Fatal("expected snapshot")
 		}
-		firstSeq, got, opSeq, err := st.ReadOperations(ctx, compacted.ID, 0, 0)
+		firstSeq, got, opSeq, _, err := st.ReadOperations(ctx, compacted.ID, 0, 0)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -636,7 +636,7 @@ func TestReadOperations(t *testing.T) {
 		if _, err := st.Append(ctx, wide.ID, all); err != nil {
 			t.Fatal(err)
 		}
-		firstSeq, got, opSeq, err := st.ReadOperations(ctx, wide.ID, 0, 0)
+		firstSeq, got, opSeq, _, err := st.ReadOperations(ctx, wide.ID, 0, 0)
 		if err != nil {
 			t.Fatal(err)
 		}
