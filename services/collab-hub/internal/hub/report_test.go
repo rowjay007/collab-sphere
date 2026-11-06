@@ -258,6 +258,107 @@ func (s *gateReportStore) call(i int) crdt.VersionVector {
 	return s.calls[i].Clone()
 }
 
+// slotProbeStore reports, from inside Append on the hub's loop, whether the
+// hub still holds a report slot for replica.
+type slotProbeStore struct {
+	Store
+	reg     *Registry
+	replica crdt.ClientID
+	held    chan bool
+}
+
+func (s *slotProbeStore) Append(ctx context.Context, docID string, ops []crdt.Op) (AppendResult, error) {
+	s.reg.mu.Lock()
+	h := s.reg.hubs[docID]
+	s.reg.mu.Unlock()
+	if h != nil {
+		_, ok := h.reports[s.replica]
+		select {
+		case s.held <- ok:
+		default:
+		}
+	}
+	return s.Store.Append(ctx, docID, ops)
+}
+
+func TestReportSlotFreedAfterPeerLeaves(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	base := NewMemoryStore()
+	if _, err := base.AppendFromOtherWriter("doc", insert(7, 1)); err != nil {
+		t.Fatal(err)
+	}
+	gate := &gateReportStore{
+		MemoryStore: base,
+		hold:        make(chan struct{}),
+		entered:     make(chan struct{}),
+	}
+	t.Cleanup(func() {
+		select {
+		case <-gate.hold:
+		default:
+			close(gate.hold)
+		}
+	})
+	store := &slotProbeStore{Store: gate, replica: 2, held: make(chan bool, 1)}
+	reg := localRegistry(store)
+	store.reg = reg
+	reg.idleSync = time.Hour
+	t.Cleanup(reg.Close)
+
+	leaver := NewPeer(2, 0)
+	leaving, err := reg.Join(ctx, "doc", leaver, false, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case <-gate.entered:
+	case <-ctx.Done():
+		t.Fatal("join stamp did not reach ReportVector")
+	}
+	leaving.SubmitOps(ctx, []crdt.Op{insert(2, 1)})
+	leaving.SubmitReport(ctx, crdt.VersionVector{7: 1, 2: 1})
+	select {
+	case <-store.held:
+	case <-ctx.Done():
+		t.Fatal("leaver's append did not run")
+	}
+	stayer, _, _ := join(t, ctx, reg, 1)
+	leaving.Leave(ctx)
+	close(gate.hold)
+
+	rep := waitReport(t, ctx, base, "doc", 2)
+	for rep.HomeSeq != 2 {
+		select {
+		case <-ctx.Done():
+			t.Fatalf("pending report after leave was not stored: %+v", rep)
+		case <-time.After(5 * time.Millisecond):
+		}
+		rep = waitReport(t, ctx, base, "doc", 2)
+	}
+	if rep.Vector[2] != 1 || rep.Vector[7] != 1 {
+		t.Fatalf("report = %+v", rep)
+	}
+
+	for clock := uint64(1); ; clock++ {
+		stayer.SubmitOps(ctx, []crdt.Op{insert(1, clock)})
+		var held bool
+		select {
+		case held = <-store.held:
+		case <-ctx.Done():
+			t.Fatal("append did not run")
+		}
+		if !held {
+			return
+		}
+		select {
+		case <-ctx.Done():
+			t.Fatal("report slot for the departed replica was never freed")
+		case <-time.After(10 * time.Millisecond):
+		}
+	}
+}
+
 func TestReportCoalescesWhileBlocked(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()

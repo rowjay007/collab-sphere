@@ -81,6 +81,9 @@ func (h *Hub) applyPolicy(sent time.Time, entry *PolicyEntry, batchErr error) {
 		}
 		return
 	}
+	if prev := h.policy.Load(); prev != nil && prev.ok && !sent.After(prev.freshAt) {
+		return
+	}
 	if time.Since(sent) > policyStale {
 		h.markUnavailable()
 		return

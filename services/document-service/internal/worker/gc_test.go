@@ -8,9 +8,12 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgxpool"
+	"github.com/prometheus/client_golang/prometheus"
+	dto "github.com/prometheus/client_model/go"
 
 	crdtv1 "github.com/rowjay007/collab-sphere/gen/crdt/v1"
 	"github.com/rowjay007/collab-sphere/pkg/crdt"
+	"github.com/rowjay007/collab-sphere/pkg/metrics"
 	docgc "github.com/rowjay007/collab-sphere/services/document-service/internal/gc"
 	"github.com/rowjay007/collab-sphere/services/document-service/internal/store"
 	"github.com/rowjay007/collab-sphere/services/document-service/internal/testdb"
@@ -93,7 +96,7 @@ func TestGCWorkerFloorCoversForkTree(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	leaf, full, opSeq := appendDeletedLeaf(t, st, doc.ID, doc.ForkRoot)
+	leaf, full, opSeq := appendDeletedLeaf(t, st, doc.ID, doc.ForkRoot, time.Now())
 	branch, err := st.Fork(ctx, doc.ID, opSeq, "branch", "fork-tree")
 	if err != nil {
 		t.Fatal(err)
@@ -127,7 +130,7 @@ func TestGCWorkerSilentClaimProtectsLeaf(t *testing.T) {
 	if _, _, err := st.ClaimReplica(ctx, doc.ID, 2, false, "", time.Hour); err != nil {
 		t.Fatal(err)
 	}
-	leaf, full, opSeq := appendDeletedLeaf(t, st, doc.ID, doc.ForkRoot)
+	leaf, full, opSeq := appendDeletedLeaf(t, st, doc.ID, doc.ForkRoot, time.Now())
 	gc := worker.GC{Store: st, Floor: fakeFloor{vec: full}, Pins: fakePins{}, TTL: time.Hour}
 	gc.RunDocument(ctx, doc.ID)
 	if !hasNode(t, st, doc.ID, opSeq, leaf) {
@@ -145,9 +148,50 @@ func TestStableRetiredReport(t *testing.T) {
 	}
 }
 
+func TestGCPassGaugesAggregateDocuments(t *testing.T) {
+	st, _ := testdb.Open(t)
+	ctx := t.Context()
+	young, err := st.Create(ctx, "young", "owner")
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, youngFull, _ := appendDeletedLeaf(t, st, young.ID, young.ForkRoot, time.Now().Add(-time.Minute))
+	old, err := st.Create(ctx, "old", "owner")
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, oldFull, _ := appendDeletedLeaf(t, st, old.ID, old.ForkRoot, time.Now().Add(-2*time.Hour))
+
+	ids, err := st.ListGCCandidates(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(ids) != 2 || ids[0] != old.ID || ids[1] != young.ID {
+		t.Fatalf("candidates=%v, want old %s collected before young %s", ids, old.ID, young.ID)
+	}
+
+	m := metrics.NewDoc(prometheus.NewRegistry())
+	gc := worker.GC{
+		Store:   st,
+		Floor:   fakeFloor{byDoc: map[uuid.UUID]crdt.VersionVector{young.ID: youngFull, old.ID: oldFull}},
+		Pins:    fakePins{},
+		Metrics: m,
+		TTL:     24 * time.Hour,
+	}
+	gc.Pass(ctx)
+
+	age := gaugeValue(t, m.GCStableAge)
+	if age < (2 * time.Hour).Seconds() {
+		t.Fatalf("stable age gauge=%.0fs, want the older document's age of at least 7200s", age)
+	}
+	if pinned := gaugeValue(t, m.GCPinned); pinned != 2 {
+		t.Fatalf("pinned gauge=%v, want 2 distinct replicas across both fork trees", pinned)
+	}
+}
+
 // appendDeletedLeaf claims replica 1 on id, appends an insert and its delete,
-// and stores replica 1's report covering both.
-func appendDeletedLeaf(t *testing.T, st *store.Store, id, forkRoot uuid.UUID) (crdt.ID, crdt.VersionVector, uint64) {
+// and stores replica 1's report covering both, reported at reportedAt.
+func appendDeletedLeaf(t *testing.T, st *store.Store, id, forkRoot uuid.UUID, reportedAt time.Time) (crdt.ID, crdt.VersionVector, uint64) {
 	t.Helper()
 	ctx := t.Context()
 	if _, _, err := st.ClaimReplica(ctx, id, 1, false, "", time.Hour); err != nil {
@@ -173,10 +217,19 @@ func appendDeletedLeaf(t *testing.T, st *store.Store, id, forkRoot uuid.UUID) (c
 		t.Fatal(err)
 	}
 	full := r.Vector()
-	if err := st.UpsertReport(ctx, forkRoot, 1, full, appended.OpSeq, false, time.Now()); err != nil {
+	if err := st.UpsertReport(ctx, forkRoot, 1, full, appended.OpSeq, false, reportedAt); err != nil {
 		t.Fatal(err)
 	}
 	return ins.ID, full, appended.OpSeq
+}
+
+func gaugeValue(t *testing.T, g prometheus.Gauge) float64 {
+	t.Helper()
+	var pb dto.Metric
+	if err := g.Write(&pb); err != nil {
+		t.Fatal(err)
+	}
+	return pb.GetGauge().GetValue()
 }
 
 func hasNode(t *testing.T, st *store.Store, id uuid.UUID, seq uint64, node crdt.ID) bool {

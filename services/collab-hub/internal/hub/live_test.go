@@ -44,6 +44,7 @@ type liveRowStore struct {
 	*MemoryStore
 	mu        sync.Mutex
 	collected crdt.VersionVector
+	loadDelay time.Duration
 }
 
 func (s *liveRowStore) publishLive(docID string, seq uint64, collected crdt.VersionVector) {
@@ -55,6 +56,7 @@ func (s *liveRowStore) publishLive(docID string, seq uint64, collected crdt.Vers
 
 func (s *liveRowStore) Load(ctx context.Context, docID string) (*crdt.Doc, uint64, error) {
 	doc, seq, err := s.MemoryStore.Load(ctx, docID)
+	time.Sleep(s.loadDelay)
 	s.mu.Lock()
 	collected := s.collected.Clone()
 	s.mu.Unlock()
@@ -104,6 +106,65 @@ func TestHubSwapsInCollectedLiveDoc(t *testing.T) {
 			t.Fatal("hub never swapped in the collected live doc")
 		case <-time.After(20 * time.Millisecond):
 		}
+	}
+}
+
+func TestBusyDocumentBoundsLiveRebuilds(t *testing.T) {
+	ctx, cancel := context.WithTimeout(t.Context(), 10*time.Second)
+	defer cancel()
+	store := &liveRowStore{MemoryStore: NewMemoryStore(), loadDelay: 20 * time.Millisecond}
+	tomb := insert(1, 1)
+	seedLog(t, store.MemoryStore, []crdt.Op{
+		tomb,
+		insert(1, 2),
+		crdt.Delete{ID: crdt.ID{Client: 1, Clock: 3}, Target: tomb.ID},
+	})
+	reg := localRegistry(store)
+	reg.idleSync = 200 * time.Millisecond
+	reg.gapGrace = time.Millisecond
+	t.Cleanup(reg.Close)
+
+	session, peer, _ := join(t, ctx, reg, 2)
+	store.publishLive("doc", 3, crdt.VersionVector{1: 3})
+	start := store.Loads()
+	const window = time.Second
+	for clock, end := uint64(1), time.Now().Add(window); time.Now().Before(end); clock++ {
+		if _, err := store.AppendFromOtherWriter("doc", insert(9, clock)); err != nil {
+			t.Fatal(err)
+		}
+		session.SubmitOps(ctx, []crdt.Op{insert(2, clock)})
+		time.Sleep(time.Millisecond)
+	}
+	loads := store.Loads() - start
+	select {
+	case <-peer.Done():
+		t.Fatal("writer was dropped")
+	default:
+	}
+	if limit := int64(window/reg.idleSync) + 2; loads > limit {
+		t.Fatalf("%d live rebuild loads in %s, want at most %d", loads, window, limit)
+	}
+}
+
+func TestCompactLiveRowBuildsOnce(t *testing.T) {
+	ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
+	defer cancel()
+	store := NewMemoryStore()
+	tomb := insert(1, 1)
+	seedLog(t, store, []crdt.Op{
+		tomb,
+		crdt.Delete{ID: crdt.ID{Client: 1, Clock: 2}, Target: tomb.ID},
+	})
+	reg := localRegistry(store)
+	reg.idleSync = 10 * time.Millisecond
+	t.Cleanup(reg.Close)
+
+	join(t, ctx, reg, 2)
+	start := store.Loads()
+	store.SetLiveMeta("doc", 2, crdt.VersionVector{1: 2})
+	time.Sleep(50 * reg.idleSync)
+	if loads := store.Loads() - start; loads != 1 {
+		t.Fatalf("%d loads for a live row Load never applies, want 1", loads)
 	}
 }
 

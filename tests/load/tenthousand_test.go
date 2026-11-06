@@ -152,6 +152,10 @@ func TestTenThousand(t *testing.T) {
 			}
 		}
 	}
+	connected, err := hubConnections(s)
+	if err != nil {
+		t.Fatal(err)
+	}
 
 	recordAfter := cohortStart.Add(loadWarmup)
 	echoHist := hdrhistogram.New(1, 60_000_000, 3)
@@ -215,7 +219,7 @@ func TestTenThousand(t *testing.T) {
 		}
 	}
 
-	fmt.Printf("connections=%d\n", loadDocs*loadConnsPerDoc)
+	fmt.Printf("connections=%d\n", connected)
 	fmt.Printf("echo samples=%d fan-out samples=%d\n", echoSamples, fanoutSamples)
 	fmt.Printf("echo p50=%dus p99=%dus max=%dus\n",
 		echoHist.ValueAtPercentile(50), echoHist.ValueAtPercentile(99.0), echoHist.Max())
@@ -224,6 +228,9 @@ func TestTenThousand(t *testing.T) {
 	printHubAlloc(t, s)
 	printHubStalls(s)
 
+	if want := loadDocs * loadConnsPerDoc; connected < want {
+		t.Fatalf("connections=%d at end of measurement window, want at least %d", connected, want)
+	}
 	echoP99 := echoHist.ValueAtPercentile(99.0)
 	fanoutP99 := fanoutHist.ValueAtPercentile(99.0)
 	if echoP99 >= 50_000 {
@@ -351,6 +358,36 @@ func fetchMetrics(metricsURL string) (string, error) {
 		return "", err
 	}
 	return b.String(), nil
+}
+
+func hubConnections(s *stack.Stack) (int, error) {
+	total := 0
+	for i := range s.Hubs() {
+		url := s.HubMetricsURL(i)
+		if url == "" {
+			return 0, fmt.Errorf("hub-%d metrics disabled", i)
+		}
+		text, err := fetchMetrics(url)
+		if err != nil {
+			return 0, fmt.Errorf("hub-%d metrics: %w", i, err)
+		}
+		n, ok := gaugeValue(text, "collab_hub_connections")
+		if !ok {
+			return 0, fmt.Errorf("hub-%d collab_hub_connections not found", i)
+		}
+		total += int(n)
+	}
+	return total, nil
+}
+
+func gaugeValue(text, name string) (float64, bool) {
+	for _, line := range strings.Split(text, "\n") {
+		if strings.HasPrefix(line, name+" ") {
+			f, err := strconv.ParseFloat(strings.Fields(line)[1], 64)
+			return f, err == nil
+		}
+	}
+	return 0, false
 }
 
 func histogramSumCount(text, name string) (sum, count float64, ok bool) {

@@ -45,6 +45,9 @@ type Registry struct {
 	// policyKick wakes the poller when a hub opens, so its first join does
 	// not wait out policyPeriod.
 	policyKick chan struct{}
+	// policyApply orders overlapping batches' applies, so a hub compares
+	// each response against the view the last apply stored.
+	policyApply sync.Mutex
 
 	loops         sync.WaitGroup
 	presenceCalls sync.WaitGroup

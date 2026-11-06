@@ -59,12 +59,12 @@ func StableAge(reports []Report, stable crdt.VersionVector, now time.Time) time.
 	return now.Sub(oldest)
 }
 
-func PinnedReplicaCount(reports []Report) float64 {
-	n := 0
+func PinnedReplicas(reports []Report) []uint64 {
+	out := make([]uint64, 0, len(reports))
 	for _, r := range reports {
 		if !r.Retired {
-			n++
+			out = append(out, r.Replica)
 		}
 	}
-	return float64(n)
+	return out
 }

@@ -58,8 +58,9 @@ var (
 )
 
 const (
-	policyPeriod = 500 * time.Millisecond
-	policyStale  = 2 * time.Second
+	policyPeriod   = 500 * time.Millisecond
+	policyStale    = 2 * time.Second
+	policyInFlight = 3
 )
 
 type event interface{ isEvent() }
@@ -249,7 +250,7 @@ type Hub struct {
 	opening map[crdt.ClientID]*opening
 	openGen uint64
 
-	liveBuilding  bool
+	live          liveBuild
 	appendThrough uint64
 
 	// policy is published by the poller. The loop only loads it.
@@ -930,10 +931,18 @@ func (h *Hub) finishReport(id crdt.ClientID) {
 	next := slot.next
 	slot.next = nil
 	if next == nil || h.dead {
+		h.freeReport(id)
 		return
 	}
 	slot.busy = true
 	go h.sendReport(next)
+}
+
+// freeReport drops an idle slot once its replica has no peer on this hub.
+func (h *Hub) freeReport(id crdt.ClientID) {
+	if slot := h.reports[id]; slot != nil && !slot.busy && h.peers[id] == nil {
+		delete(h.reports, id)
+	}
 }
 
 func (h *Hub) handleOpsGroup(first opsEvent) (event, bool) {
@@ -1499,6 +1508,7 @@ func (h *Hub) dropPeer(p *Peer) {
 	h.publishPeers()
 	p.CloseWithReason("session ended")
 	h.leavePresence(p)
+	h.freeReport(p.id)
 }
 
 func (h *Hub) sendOrDrop(p *Peer, frame []byte) bool {

@@ -2,34 +2,34 @@ package hub
 
 import (
 	"context"
+	"sync"
 	"time"
 )
 
+// pollPolicy starts a batch every period without waiting for the last one,
+// so the view stays fresh while batch latency is under policyStale-policyPeriod.
 func (r *Registry) pollPolicy(stop <-chan struct{}) {
+	inFlight := make(chan struct{}, policyInFlight)
+	var polls sync.WaitGroup
+	defer polls.Wait()
+	tick := time.NewTicker(policyPeriod)
+	defer tick.Stop()
 	for {
-		if policyPollDone(stop) {
-			return
+		select {
+		case inFlight <- struct{}{}:
+			polls.Go(func() {
+				defer func() { <-inFlight }()
+				r.runPolicyBatch(stop)
+				r.noteStale(time.Now())
+			})
+		default:
 		}
-		r.runPolicyBatch(stop)
-		r.noteStale(time.Now())
-		timer := time.NewTimer(policyPeriod)
 		select {
 		case <-stop:
-			timer.Stop()
 			return
-		case <-timer.C:
+		case <-tick.C:
 		case <-r.policyKick:
-			timer.Stop()
 		}
-	}
-}
-
-func policyPollDone(stop <-chan struct{}) bool {
-	select {
-	case <-stop:
-		return true
-	default:
-		return false
 	}
 }
 
@@ -67,7 +67,11 @@ func (r *Registry) runPolicyBatch(stop <-chan struct{}) {
 	case <-stop:
 		return
 	case res = <-ch:
+	case <-ctx.Done():
+		res.err = ctx.Err()
 	}
+	r.policyApply.Lock()
+	defer r.policyApply.Unlock()
 	for _, h := range hubs {
 		var entry *PolicyEntry
 		if res.err == nil {

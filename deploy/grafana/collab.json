@@ -135,7 +135,7 @@
       "targets": [
         { "datasource": { "type": "prometheus", "uid": "prometheus" }, "expr": "collab_doc_gc_stable_age_seconds", "refId": "A" }
       ],
-      "title": "GC stable age",
+      "title": "GC max stable age (last pass)",
       "type": "timeseries"
     }
   ],

@@ -144,9 +144,9 @@ func NewDoc(reg prometheus.Registerer) Doc {
 		Name: "collab_doc_gc_nodes_removed_total",
 		Help: "Nodes removed by GC.",
 	})
-	gcPinned := gauge(reg, "collab_doc_gc_pinned_replicas", "Replicas included in the last stable minimum.")
+	gcPinned := gauge(reg, "collab_doc_gc_pinned_replicas", "Distinct replicas (fork root, replica) included in a stable minimum during the last GC pass.")
 	gcLast := gauge(reg, "collab_doc_gc_last_success_unixtime", "Unix time of the last pass that committed a live snapshot.")
-	gcAge := gauge(reg, "collab_doc_gc_stable_age_seconds", "Age of the stable frontier used by the last GC pass.")
+	gcAge := gauge(reg, "collab_doc_gc_stable_age_seconds", "Maximum stable frontier age across documents in the last GC pass.")
 	reg.MustRegister(gcNodes)
 	return Doc{
 		Append: appendHist, GCPass: gcPass, GCNodes: gcNodes,
