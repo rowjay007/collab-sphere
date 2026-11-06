@@ -1,101 +1,146 @@
 # collab-sphere
 
-Real-time collaborative text editing in Go. This repository holds Phase 1: a CRDT core and single-server collaboration. Two or more clients edit one document over WebSocket, and every replica converges to the same text.
+collab-sphere is a real-time collaborative text editor backend written in Go. Clients edit a shared document over WebSocket, and every replica converges to the same text. Several hubs can serve one document at once. Users sign in with tokens, roles control who can read, comment, and edit, and documents keep a version history that you can restore, branch, merge, and export.
 
-## Layout
+## How it fits together
 
-| Path | What it is |
+A client opens a WebSocket on `collab-hub` at `GET /ws/{documentID}`. The hub checks the user's token and role, loads the document from `document-service`, and sends a `DocumentSync` with the full CRDT snapshot. It then relays binary protobuf `ClientMessage` and `ServerMessage` frames.
+
+The hub validates each operation, appends it through `document-service`, and broadcasts it only after the append commits. The broadcast doubles as the sender's acknowledgement. `document-service` gives every operation a sequence number, and each hub delivers operations to its sockets in that order. Hubs publish appends on Redis Pub/Sub as a hint and repair anything they missed from the log.
+
+| Service | Owns |
 | --- | --- |
-| `pkg/crdt` | RGA sequence CRDT: insert, delete, merge, snapshot, tombstone GC |
-| `pkg/collabclient` | Go WebSocket client used by the end-to-end and load tests |
-| `services/document-service` | gRPC service that stores documents, the op log, and snapshots in PostgreSQL |
-| `services/collab-hub` | WebSocket server with one goroutine per open document |
-| `proto/` | Protobuf definitions for the CRDT snapshot, the WebSocket protocol, and the gRPC API |
-| `gen/` | Generated Go code for `proto/`, committed |
-| `tests/crdt` | Merge correctness over the exported CRDT API, in every arrival order |
-| `tests/load` | 100 concurrent editors and the Append latency probe |
-| `services/presence-service` | gRPC service that owns cursors and names in Redis and expires dead sessions |
-| `tests/e2e` | Clients converge across hubs, survive restarts and hub crashes, and see each other's presence |
-| `tests/internal/stack` | Builds both binaries once per test process and starts them on a fresh database |
-| `docs/adr` | Architecture decisions |
-| `docs/perf` | Load-test measurements |
+| `collab-hub` | WebSocket sessions, one goroutine per open document, fan-out between hubs |
+| `document-service` | Documents, the operation log, snapshots, replica reports, and tombstone garbage collection, in PostgreSQL |
+| `presence-service` | Cursors and display names in Redis. It expires sessions whose hub died. |
+| `permission-service` | Owners, grants, and share links. Roles are `owner`, `editor`, `commenter`, and `viewer`. |
+| `comment-service` | Comment threads anchored to text, which survive edits |
+| `version-service` | The version graph: checkpoints, restore, branch, merge, and diff |
+| `export-service` | Export jobs that render a version and store the file in S3-compatible storage |
 
-A client connects to `GET /ws/{documentID}?client={id}` on the hub. The hub loads the document from document-service, sends a `DocumentSync` with the full CRDT snapshot, and then relays binary protobuf `ClientMessage` and `ServerMessage` frames. The hub validates and applies each op, persists it through document-service, and only then broadcasts it. The broadcast doubles as the sender's acknowledgement.
+Shared packages live in `pkg/`:
+
+- `crdt` is the RGA sequence CRDT, with insert, delete, merge, snapshot, and garbage collection.
+- `auth` mints and verifies Ed25519 user tokens and the internal service token.
+- `access` is the `permission-service` client that the other services use to check roles.
+- `docrypt` seals document text and wraps document keys for end-to-end encrypted documents. Clients use it. Services never import it, so they store only ciphertext.
+- `render` turns visible document text into Markdown, DOCX, and PDF.
+- `metrics` serves the Prometheus registry.
+- `collabclient` is the Go WebSocket client that the tests use.
+
+`proto/` holds the protobuf definitions. `gen/` holds the generated Go code, which is committed. The reasoning behind each design choice is in [`docs/adr`](docs/adr).
 
 ## Requirements
 
 - Go 1.26
-- Docker, for PostgreSQL 17
+- Docker with Compose
 - `protoc` with `protoc-gen-go` and `protoc-gen-go-grpc`, only if you change `proto/`
+- `helm` and `kubeconform`, only if you change `deploy/helm`
 
-## Run
+## Run the stack
+
+To start every service with its databases, Redis, MinIO, Prometheus, and Grafana, run:
 
 ```sh
-make up            # PostgreSQL on localhost:55432
-make run-docsvc    # gRPC on :9090, applies migrations at startup
-make run-hub       # HTTP and WebSocket on :8080
+docker compose up --build
 ```
 
-Configuration is by environment variable.
+The hub listens on `localhost:8080`. Grafana is on `localhost:3000`, and Prometheus is on `localhost:9098`. `docker-compose.yml` sets development keys and passwords. Never reuse them outside your machine.
+
+To run one service from source against the Compose databases, start Compose and use the matching target, for example `make run-docsvc`, `make run-hub`, `make run-presence`, `make run-permission`, or `make run-export`.
+
+## Connect a client
+
+1. Create a document with the `CreateDocument` RPC on `document-service`.
+2. Mint a user token with `auth.Mint` and the private key that matches `AUTH_PUBLIC_KEY`.
+3. Open `ws://localhost:8080/ws/{documentID}` with the header `Authorization: Bearer {token}`.
+
+The hub answers `401` for a bad token and `403` when the user has no role on the document. `GET /healthz` reports hub liveness.
+
+These query parameters are optional:
+
+| Parameter | Meaning |
+| --- | --- |
+| `client` | The replica ID to reuse. The server assigns one when it is absent. |
+| `seq` | Resume after this sequence number. The hub then sends only the operations you missed. |
+| `conn` | The connection epoch. A newer connection for the same replica replaces an older one. |
+
+If a replica has been offline longer than `REPLICA_REPORT_TTL`, or was released, the hub sends a `DocumentSync` with `resync` set. The client then replaces its local state and drops its unsent operations.
+
+## Configure the services
+
+Each service reads its configuration from environment variables. Every backend service also needs `INTERNAL_TOKEN`, and every service except `presence-service` needs `AUTH_PUBLIC_KEY`.
 
 | Service | Variable | Default |
 | --- | --- | --- |
-| document-service | `DATABASE_URL` | required |
-| document-service | `GRPC_ADDR` | `:9090` |
-| collab-hub | `HTTP_ADDR` | `:8080` |
-| collab-hub | `DOCUMENT_SERVICE_ADDR` | `localhost:9090` |
-| collab-hub | `REDIS_URL` | unset: in-process fan-out, one hub |
-| collab-hub | `HUB_ID` | `{hostname}-{pid}`, the fan-out origin |
-| collab-hub | `PRESENCE_SERVICE_ADDR` | unset: in-process presence, one hub |
-| collab-hub | `PRESENCE_HEARTBEAT` | `10s` |
-| presence-service | `REDIS_URL` | required |
-| presence-service | `GRPC_ADDR` | `:9091` |
-| presence-service | `PRESENCE_TTL` | `30s` |
-| presence-service | `PRESENCE_SWEEP` | `1s` |
+| all | `METRICS_ADDR` | `:9190` to `:9196` in the order of the table above. Empty turns metrics off. |
+| `collab-hub` | `HTTP_ADDR` | `:8080` |
+| `collab-hub` | `DOCUMENT_SERVICE_ADDR` | `localhost:9090` |
+| `collab-hub` | `PERMISSION_ADDR` | required |
+| `collab-hub` | `REDIS_URL` | unset, which means in-process fan-out and a single hub |
+| `collab-hub` | `HUB_ID` | `{hostname}-{pid}` |
+| `collab-hub` | `PRESENCE_SERVICE_ADDR` | unset, which means in-process presence and a single hub |
+| `collab-hub` | `PRESENCE_HEARTBEAT` | `10s` |
+| `collab-hub` | `HUB_IDLE_SYNC` | `1s` |
+| `document-service` | `DATABASE_URL` | required |
+| `document-service` | `GRPC_ADDR` | `:9090` |
+| `document-service` | `PERMISSION_ADDR`, `VERSION_ADDR`, `COMMENT_ADDR` | required |
+| `document-service` | `GC_INTERVAL` | `30s`. `0` or empty turns garbage collection off. |
+| `document-service` | `REPLICA_REPORT_TTL` | `336h` |
+| `presence-service` | `REDIS_URL` | required |
+| `presence-service` | `GRPC_ADDR` | `:9091` |
+| `presence-service` | `PRESENCE_TTL` | `30s` |
+| `presence-service` | `PRESENCE_SWEEP` | `1s` |
+| `comment-service` | `DATABASE_URL`, `DOCUMENT_ADDR`, `VERSION_ADDR`, `PERMISSION_ADDR` | required |
+| `comment-service` | `GRPC_ADDR` | `:9092` |
+| `version-service` | `DATABASE_URL`, `DOCUMENT_ADDR`, `PERMISSION_ADDR` | required |
+| `version-service` | `GRPC_ADDR` | `:9093` |
+| `version-service` | `SWEEP_INTERVAL` | `5s` |
+| `version-service` | `RESTORE_HORIZON` | `720h` |
+| `permission-service` | `DATABASE_URL`, `DOCUMENT_ADDR`, `SHARE_PRIVATE_KEY` | required |
+| `permission-service` | `GRPC_ADDR` | `:9094` |
+| `export-service` | `DATABASE_URL`, `DOCUMENT_ADDR`, `VERSION_ADDR`, `PERMISSION_ADDR` | required |
+| `export-service` | `S3_ENDPOINT`, `S3_BUCKET`, `S3_ACCESS_KEY`, `S3_SECRET_KEY`, `S3_REGION` | required |
+| `export-service` | `GRPC_ADDR` | `:9095` |
 
-Create a document with the `CreateDocument` RPC, then connect clients to `/ws/{id}`. `/healthz` reports hub liveness.
+Versions older than `RESTORE_HORIZON` stay readable and diffable, but `Restore` and `Branch` refuse them with `RESTORE_HORIZON`.
 
 ## Test
 
 ```sh
-make test               # unit tests with -race; database tests skip
-make test-integration   # starts PostgreSQL and runs everything, including tests/e2e and tests/load
+make test               # unit tests with -race. Database tests skip.
+make test-integration   # starts PostgreSQL and Redis, then runs every test, including end-to-end and load tests
+make load-proof         # 10,000 WebSocket connections. Needs COLLAB_TEST_DATABASE_URL and COLLAB_TEST_REDIS_URL.
+make helm-check         # renders the chart and validates it with kubeconform
 ```
 
-`tests/internal/stack` builds both binaries and starts them as subprocesses on a database created for each test. `tests/e2e` and `tests/load` use it for these checks:
+Integration tests read `COLLAB_TEST_DATABASE_URL`, `COLLAB_TEST_REDIS_URL`, and `COLLAB_TEST_S3_URL`. `tests/internal/stack` builds the service binaries once and starts them on a fresh database for each test. `tests/e2e` covers editing across three hubs, a killed hub, a Redis outage, and presence. `tests/crdt` checks merge correctness in every arrival order.
 
-- Two clients making 700 concurrent edits converge to identical CRDT state, and document-service holds the same state.
-- Both services restart and a new client receives the same text.
-- 100 clients each make 40 edits concurrently and converge. The test logs op round-trip percentiles.
+## Deploy
 
-To reproduce the load numbers without the race detector:
+`deploy/helm/collab-sphere` is a Helm chart for every service, with in-cluster PostgreSQL, Redis, and MinIO that you can swap for external ones. `deploy/argocd/collab-sphere.yaml` is an Argo CD `Application` with manual sync. `deploy/prometheus` and `deploy/grafana` hold the scrape config and the dashboard.
+
+To build images and install the chart on a local cluster, run:
 
 ```sh
-COLLAB_TEST_DATABASE_URL='postgres://collab:collab@localhost:55432/collab?sslmode=disable' \
-  go test -count=1 -v -run 'TestHundred|TestAppendLatency' ./tests/load/
+make images IMAGE_TAG=dev
+helm upgrade --install collab deploy/helm/collab-sphere \
+	--namespace collab-sphere --create-namespace \
+	--set images.document.tag=dev --set images.presence.tag=dev \
+	--set images.comment.tag=dev --set images.version.tag=dev \
+	--set images.permission.tag=dev --set images.export.tag=dev \
+	--set images.hub.tag=dev
 ```
+
+The chart's default secrets are for development only. Override `secrets.*` on any shared cluster.
 
 ## Performance
 
-The 100-editor test starts from a 20,000-rune document. It reports sender echo latency and full fan-out latency. Full fan-out ends when the last of the other 99 clients receives an op. The target is full fan-out P99 under 50ms. The test logs the measurements but does not assert the target because shared laptop load is noisy.
+The target is a 99th-percentile echo and fan-out latency under 50ms with 10,000 open connections. `make load-proof` asserts it. On one laptop that runs the services, Redis, PostgreSQL, and the load generator together, the result varies between runs. With PostgreSQL in Docker, the 99th percentile measured 53 to 114ms. With PostgreSQL running natively, it measured 42 to 162ms, and half the runs passed. A reliable result needs the load generator on a separate machine. `docs/perf` has earlier measurements.
 
-Editors type at a cursor held as a CRDT ID, using `Replica.InsertAfter` and `Replica.Delete`. Index-based edits call `IDAt`, which walks the document. On a 20,000-rune document, that walk took more than half of the test process's CPU.
+## Known limits
 
-On one laptop running Postgres in Docker, both services and 100 full replicas, fan-out P50 is 7 to 11ms. Fan-out P99 ranges from 23ms to over 200ms between runs. The hub's Append call has a P50 of about 4.5ms and a P99 of about 20ms. Disabling snapshots or `synchronous_commit` does not remove the tail. `docs/perf/after-group-commit.txt` has the runs. Proving the target needs the load generator on separate hardware from the services.
-
-## Phase 2
-
-Several hubs can serve one document. Each appends to document-service, which assigns every op a seq, and delivers ops to its sockets in seq order (ADR 0007). Hubs publish their appends on Redis Pub/Sub as a hint and repair anything lost from the log (ADR 0008). Clients resume after a disconnect on any hub with their unacked ops.
-
-Cursors and display names go through presence-service, the only writer of presence state in Redis (ADR 0009). A joining client first gets the document and then an `AwarenessSync` with everyone already present. A client whose hub dies is reported with `REASON_EXPIRED` within `PRESENCE_TTL` plus one sweep. Presence heals without reconnecting: a hub that drops presence events, loses Redis, or cannot reach presence-service for a Join sends its clients a fresh `AwarenessSync` once it can, and a stale connection can never evict the client's newer one on another hub. Run several hubs with `make up`, `make run-docsvc`, `make run-presence`, and `make run-hub` per hub with distinct `HTTP_ADDR`, `HUB_ID`, `REDIS_URL` and `PRESENCE_SERVICE_ADDR=localhost:9091`.
-
-`tests/e2e` covers three hubs: concurrent editing, a killed hub, a 2s Redis outage under 30 editors, and presence. The presence test logs cursor latency from one hub to another and fails at 200ms.
-
-## Phase 1 limits
-
-- No authentication. Clients choose their own client ID, and the hub only rejects a second live connection with the same ID on one document.
-- A rejected operation disconnects its sender. The client must reconnect and replace local state from `DocumentSync`.
-- The server pings each WebSocket every 30 seconds. Failed keepalives and slow consumers release their client IDs.
-- Archived documents refuse collaboration joins.
-- `crdt.Doc.GC` exists and is tested, but no service calls it. Tombstones accumulate.
-- Snapshots are protojson in JSONB, as the brief asks. ADR 0004 covers the `bytea` alternative.
+- Garbage collection is conservative across branches. While any branch of a document stays open, tombstones from clients that branch has not seen are kept. Nothing is lost, but storage grows on documents with long-lived branches.
+- There is no user directory. Another system issues tokens, and the services only verify them against `AUTH_PUBLIC_KEY`.
+- A rejected operation disconnects its sender. The client reconnects and replaces local state from `DocumentSync`.
+- Snapshots are stored as protojson in JSONB. ADR 0004 covers the `bytea` alternative.
