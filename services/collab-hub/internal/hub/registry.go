@@ -67,6 +67,13 @@ func (r *Registry) SetMetrics(m metrics.Hub) {
 	r.met = &m
 }
 
+// SetIdleSync sets how often idle hubs poll the log for new ops.
+func (r *Registry) SetIdleSync(d time.Duration) {
+	if d > 0 {
+		r.idleSync = d
+	}
+}
+
 // AddConnection counts one open socket.
 func (r *Registry) AddConnection() {
 	if r.met != nil && r.met.Connections != nil {

@@ -2,7 +2,7 @@ PROTO_FILES := $(shell find proto -name '*.proto')
 TEST_DATABASE_URL ?= postgres://collab:collab@localhost:55432/collab?sslmode=disable
 TEST_REDIS_URL ?= redis://localhost:56379/0
 
-.PHONY: proto test test-integration up down run-docsvc run-hub run-presence run-permission run-export helm-check images
+.PHONY: proto test test-integration load-proof up down run-docsvc run-hub run-presence run-permission run-export helm-check images
 
 DEV_AUTH_PUBLIC_KEY ?= wBiwn96X59Q0XaGgZIFY1UDnR55L2agldgCbneQFQvM=
 DEV_SHARE_PRIVATE_KEY ?= 1/Phydme/tVCmEdnYd3iDBlvCBEtVvanqFUW10vwMg0=
@@ -25,6 +25,9 @@ down:
 
 test-integration: up
 	COLLAB_TEST_DATABASE_URL='$(TEST_DATABASE_URL)' COLLAB_TEST_REDIS_URL='$(TEST_REDIS_URL)' go test -race -count=1 ./...
+
+load-proof:
+	ulimit -n 65536; go test -tags loadproof -count=1 -timeout 20m -run TestTenThousand ./tests/load/
 
 run-docsvc:
 	DATABASE_URL='$(TEST_DATABASE_URL)' go run ./services/document-service/cmd/document-service

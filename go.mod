@@ -3,6 +3,7 @@ module github.com/rowjay007/collab-sphere
 go 1.26.4
 
 require (
+	github.com/HdrHistogram/hdrhistogram-go v1.4.0
 	github.com/aws/aws-sdk-go-v2 v1.47.6
 	github.com/aws/aws-sdk-go-v2/config v1.33.14
 	github.com/aws/aws-sdk-go-v2/service/s3 v1.114.7

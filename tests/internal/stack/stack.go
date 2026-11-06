@@ -207,9 +207,10 @@ func (p *process) stop() {
 }
 
 type hubInstance struct {
-	id   string
-	http string
-	proc *process
+	id      string
+	http    string
+	metrics string
+	proc    *process
 }
 
 type Stack struct {
@@ -222,6 +223,8 @@ type Stack struct {
 	presence    string
 	presenceTTL time.Duration
 	docsvc      *process
+	hubEnv      []string
+	hubMetrics  bool
 	hubs        []*hubInstance
 	Docs        documentv1.DocumentServiceClient
 	Perm        *PermissionService
@@ -242,6 +245,8 @@ type config struct {
 	presenceTTL time.Duration
 	redisProxy  bool
 	export      bool
+	hubEnv      []string
+	hubMetrics  bool
 }
 
 // WithRedisProxy routes the hubs' Redis connections, but not
@@ -266,6 +271,16 @@ func WithPresenceTTL(d time.Duration) Option {
 // The test skips when COLLAB_TEST_S3_URL is unset.
 func WithExport() Option {
 	return func(c *config) { c.export = true }
+}
+
+// WithHubEnv appends env vars to every collab-hub process.
+func WithHubEnv(kv ...string) Option {
+	return func(c *config) { c.hubEnv = append(c.hubEnv, kv...) }
+}
+
+// WithHubMetrics serves Prometheus on a free port for each hub.
+func WithHubMetrics() Option {
+	return func(c *config) { c.hubMetrics = true }
 }
 
 // New starts document-service and the hubs. With Redis, which more than one
@@ -299,8 +314,14 @@ func New(t *testing.T, opts ...Option) *Stack {
 		s.hubRedisURL = u.String()
 	}
 	for i := range cfg.hubs {
-		s.hubs = append(s.hubs, &hubInstance{id: fmt.Sprintf("hub-%d", i), http: freeAddr(t)})
+		h := &hubInstance{id: fmt.Sprintf("hub-%d", i), http: freeAddr(t)}
+		if cfg.hubMetrics {
+			h.metrics = freeAddr(t)
+		}
+		s.hubs = append(s.hubs, h)
 	}
+	s.hubEnv = cfg.hubEnv
+	s.hubMetrics = cfg.hubMetrics
 	conn, err := grpc.NewClient(s.grpc,
 		grpc.WithTransportCredentials(insecure.NewCredentials()),
 		grpc.WithUnaryInterceptor(s.fillInternal()),
@@ -371,6 +392,12 @@ func (s *Stack) StartHub(i int) {
 	if s.presenceTTL > 0 {
 		env = append(env, "PRESENCE_HEARTBEAT="+(s.presenceTTL/4).String())
 	}
+	if len(s.hubEnv) > 0 {
+		env = append(env, s.hubEnv...)
+	}
+	if h.metrics != "" {
+		env = append(env, "METRICS_ADDR="+h.metrics)
+	}
 	h.proc = start(s.t, h.id, binary(s.t, "collab-hub"), env...)
 	waitFor(s.t, h.id, func(ctx context.Context) error {
 		req, _ := http.NewRequestWithContext(ctx, http.MethodGet, "http://"+h.http+"/healthz", nil)
@@ -419,6 +446,14 @@ func (s *Stack) CreateDocument(ctx context.Context) string {
 
 // HubURL is hub i's WebSocket base URL.
 func (s *Stack) HubURL(i int) string { return "ws://" + s.hubs[i].http }
+
+// HubMetricsURL is hub i's Prometheus scrape URL, or "" when metrics are off.
+func (s *Stack) HubMetricsURL(i int) string {
+	if s.hubs[i].metrics == "" {
+		return ""
+	}
+	return "http://" + s.hubs[i].metrics + "/metrics"
+}
 
 func (s *Stack) HubURLs() []string {
 	urls := make([]string, len(s.hubs))

@@ -113,6 +113,14 @@ func main() {
 	}
 
 	reg := hub.NewRegistry(docstore.New(documentv1.NewDocumentServiceClient(conn)), bus, pres)
+	if v := os.Getenv("HUB_IDLE_SYNC"); v != "" {
+		idle, err := time.ParseDuration(v)
+		if err != nil || idle <= 0 {
+			slog.Error("parse HUB_IDLE_SYNC", "err", err)
+			os.Exit(1)
+		}
+		reg.SetIdleSync(idle)
+	}
 	prom := metrics.NewRegistry()
 	hubMetrics := metrics.NewHub(prom)
 	reg.SetMetrics(hubMetrics)
