@@ -14,6 +14,7 @@ import (
 var ErrArchived = errors.New("document archived")
 var ErrUnknownReplica = errors.New("unknown replica")
 var ErrReplicaForbidden = errors.New("replica owned by another user")
+var ErrStaleReport = errors.New("stale replica report")
 
 type replicaUserKey struct{}
 
@@ -53,6 +54,16 @@ type Store interface {
 	Append(ctx context.Context, docID string, ops []crdt.Op) (AppendResult, error)
 	// ReadOperations returns up to limit ops after seq after, and the log's last seq.
 	ReadOperations(ctx context.Context, docID string, after uint64, limit int) (fanout.Batch, uint64, error)
+	// ReportVector records one replica's version vector at homeSeq.
+	// ErrStaleReport means the stored row was left unchanged.
+	ReportVector(ctx context.Context, docID string, replica crdt.ClientID, vector crdt.VersionVector, homeSeq uint64) error
+}
+
+// StoredReport is one replica's recorded vector.
+type StoredReport struct {
+	Replica crdt.ClientID
+	Vector  crdt.VersionVector
+	HomeSeq uint64
 }
 
 // MemoryStore is an in-process Store for tests. Each document is an ordered
@@ -61,6 +72,7 @@ type MemoryStore struct {
 	mu        sync.Mutex
 	logs      map[string]*memoryLog
 	replicas  map[string]map[crdt.ClientID]struct{}
+	reports   map[string]map[crdt.ClientID]StoredReport
 	nextID    crdt.ClientID
 	appendErr error
 	loads     atomic.Int64
@@ -76,6 +88,7 @@ func NewMemoryStore() *MemoryStore {
 	return &MemoryStore{
 		logs:     make(map[string]*memoryLog),
 		replicas: make(map[string]map[crdt.ClientID]struct{}),
+		reports:  make(map[string]map[crdt.ClientID]StoredReport),
 	}
 }
 
@@ -160,6 +173,31 @@ func (l *memoryLog) append(ops []crdt.Op) (AppendResult, error) {
 	}
 	res.OpSeq = uint64(len(l.ops))
 	return res, nil
+}
+
+// ReportVector records the report, replacing any row for the same replica.
+func (s *MemoryStore) ReportVector(_ context.Context, docID string, replica crdt.ClientID, vector crdt.VersionVector, homeSeq uint64) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	byReplica := s.reports[docID]
+	if byReplica == nil {
+		byReplica = make(map[crdt.ClientID]StoredReport)
+		s.reports[docID] = byReplica
+	}
+	byReplica[replica] = StoredReport{Replica: replica, Vector: vector.Clone(), HomeSeq: homeSeq}
+	return nil
+}
+
+// Report returns the recorded report for replica.
+func (s *MemoryStore) Report(docID string, replica crdt.ClientID) (StoredReport, bool) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	rep, ok := s.reports[docID][replica]
+	if !ok {
+		return StoredReport{}, false
+	}
+	rep.Vector = rep.Vector.Clone()
+	return rep, true
 }
 
 // ReadOperations returns up to limit ops after seq after.

@@ -37,6 +37,7 @@ const (
 	writeTimeout     = 10 * time.Second
 	pingInterval     = 30 * time.Second
 	pingTimeout      = 10 * time.Second
+	reportInterval   = 30 * time.Second
 )
 
 var (
@@ -77,6 +78,9 @@ type Options struct {
 	Key func(epoch uint32) ([]byte, error)
 	// WriteEpoch is the open epoch a sealed insert uses.
 	WriteEpoch func() uint32
+	// ReportInterval is how often a connected client sends its version vector.
+	// Zero uses 30s.
+	ReportInterval time.Duration
 }
 
 type state int
@@ -108,22 +112,23 @@ type Client struct {
 	life  context.Context
 	stop  context.CancelFunc
 
-	mu        sync.Mutex
-	changed   chan struct{}
-	state     state
-	err       error
-	gen       uint64
-	link      *link
-	urlIdx    int
-	epoch     uint64
-	replica   *crdt.Replica
-	seq       uint64
-	lastJoin  JoinKind
-	unacked   []crdt.Op
-	sentTimes map[crdt.ID]time.Time
-	received  map[crdt.ID]time.Time
-	latencies []time.Duration
-	errs      []*collabv1.ErrorMessage
+	mu           sync.Mutex
+	changed      chan struct{}
+	state        state
+	err          error
+	gen          uint64
+	link         *link
+	urlIdx       int
+	epoch        uint64
+	replica      *crdt.Replica
+	seq          uint64
+	lastJoin     JoinKind
+	unacked      []crdt.Op
+	reportResume bool
+	sentTimes    map[crdt.ID]time.Time
+	received     map[crdt.ID]time.Time
+	latencies    []time.Duration
+	errs         []*collabv1.ErrorMessage
 
 	name          string
 	cursor        []byte
@@ -794,10 +799,12 @@ func (c *Client) joinURL(base string) (string, error) {
 func (c *Client) joinFrame(msg *collabv1.ServerMessage) (bool, error) {
 	switch p := msg.GetPayload().(type) {
 	case *collabv1.ServerMessage_DocumentSync:
+		resume := c.replica != nil
 		if err := c.rebuild(p.DocumentSync); err != nil {
 			return false, err
 		}
 		c.lastJoin = Sync
+		c.reportResume = resume
 		return true, nil
 	case *collabv1.ServerMessage_MissedOps:
 		if c.replica == nil {
@@ -807,7 +814,11 @@ func (c *Client) joinFrame(msg *collabv1.ServerMessage) (bool, error) {
 			return false, err
 		}
 		c.lastJoin = Missed
-		return c.seq == p.MissedOps.GetSeq(), nil
+		done := c.seq == p.MissedOps.GetSeq()
+		if done {
+			c.reportResume = true
+		}
+		return done, nil
 	case *collabv1.ServerMessage_Error:
 		c.errs = append(c.errs, p.Error)
 		return false, errorFrame(p.Error)
@@ -860,10 +871,15 @@ func (c *Client) attach(conn *websocket.Conn, urlIdx int) {
 	go c.readLoop(l)
 	go writeLoop(l)
 	go pingLoop(l)
+	go c.reportLoop(l)
 	if c.name != "" && !c.send(c.nameFrame()) {
 		return
 	}
 	c.transmit(c.unacked)
+	if c.reportResume {
+		c.reportResume = false
+		c.sendReport()
+	}
 	if c.cursor != nil {
 		c.send(c.cursor)
 	}
@@ -989,6 +1005,56 @@ func (c *Client) applySequenced(firstSeq uint64, ops []*crdtv1.Operation) error 
 		c.ack(op.OpID(), now)
 	}
 	return nil
+}
+
+func (c *Client) reportEvery() time.Duration {
+	if c.opts.ReportInterval > 0 {
+		return c.opts.ReportInterval
+	}
+	return reportInterval
+}
+
+func (c *Client) sendReport() {
+	if c.replica == nil || c.replica.Doc == nil {
+		return
+	}
+	c.send(mustMarshal(&collabv1.ClientMessage{
+		Payload: &collabv1.ClientMessage_VectorReport{VectorReport: &collabv1.VectorReport{
+			Vector: vectorWire(c.replica.Doc.Vector()),
+		}},
+	}))
+}
+
+func vectorWire(vector crdt.VersionVector) []*crdtv1.VectorEntry {
+	ids := make([]crdt.ClientID, 0, len(vector))
+	for id, clock := range vector {
+		if id != 0 && clock != 0 {
+			ids = append(ids, id)
+		}
+	}
+	slices.Sort(ids)
+	entries := make([]*crdtv1.VectorEntry, 0, len(ids))
+	for _, id := range ids {
+		entries = append(entries, &crdtv1.VectorEntry{Client: uint64(id), Clock: vector[id]})
+	}
+	return entries
+}
+
+func (c *Client) reportLoop(l *link) {
+	ticker := time.NewTicker(c.reportEvery())
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ticker.C:
+			c.mu.Lock()
+			if c.gen == l.gen && c.state == attached {
+				c.sendReport()
+			}
+			c.mu.Unlock()
+		case <-l.ctx.Done():
+			return
+		}
+	}
 }
 
 func (c *Client) ack(id crdt.ID, now time.Time) {

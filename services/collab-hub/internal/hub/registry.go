@@ -211,6 +211,11 @@ func (s *Session) SubmitOpsAt(ctx context.Context, ops []crdt.Op, readUnixNano i
 	_ = s.hub.send(ctx, opsEvent{id: s.peer.id, ops: ops, readUnixNano: readUnixNano})
 }
 
+// SubmitReport delivers a version vector in socket order with the ops before it.
+func (s *Session) SubmitReport(ctx context.Context, vector crdt.VersionVector) {
+	_ = s.hub.send(ctx, reportEvent{id: s.peer.id, vector: vector})
+}
+
 // MoveCursor delivers a cursor update to the session's hub.
 func (s *Session) MoveCursor(ctx context.Context, anchor, head crdt.ID) {
 	_ = s.hub.send(ctx, cursorEvent{peer: s.peer, anchor: anchor, head: head})

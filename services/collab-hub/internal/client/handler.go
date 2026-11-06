@@ -4,10 +4,10 @@ import (
 	"context"
 	"errors"
 	"net/http"
+	"sort"
 	"strconv"
-	"time"
-
 	"strings"
+	"time"
 
 	"github.com/coder/websocket"
 	"github.com/google/uuid"
@@ -277,6 +277,14 @@ func handleClientMessage(ctx context.Context, session *hub.Session, peer *hub.Pe
 			return false
 		}
 		return true
+	case *collabv1.ClientMessage_VectorReport:
+		vector, err := vectorFromReport(p.VectorReport.GetVector())
+		if err != nil {
+			peer.TrySend(hub.EncodeError(collabv1.ErrorMessage_CODE_MALFORMED_MESSAGE, "malformed message"))
+			return false
+		}
+		session.SubmitReport(ctx, vector)
+		return true
 	default:
 		peer.TrySend(hub.EncodeError(collabv1.ErrorMessage_CODE_MALFORMED_MESSAGE, "malformed message"))
 		return false
@@ -310,4 +318,22 @@ func idFromProto(id *crdtv1.OpID) crdt.ID {
 		return crdt.Root
 	}
 	return crdt.ID{Client: crdt.ClientID(id.GetClient()), Clock: id.GetClock()}
+}
+
+func vectorFromReport(entries []*crdtv1.VectorEntry) (crdt.VersionVector, error) {
+	sorted := append([]*crdtv1.VectorEntry(nil), entries...)
+	sort.Slice(sorted, func(i, j int) bool {
+		if sorted[i] == nil {
+			return false
+		}
+		if sorted[j] == nil {
+			return true
+		}
+		return sorted[i].GetClient() < sorted[j].GetClient()
+	})
+	doc, err := crdt.FromSnapshot(&crdtv1.Snapshot{Vector: sorted})
+	if err != nil {
+		return nil, err
+	}
+	return doc.Vector(), nil
 }

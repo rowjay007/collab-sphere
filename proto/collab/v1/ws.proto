@@ -12,7 +12,12 @@ message ClientMessage {
     CursorMove cursor_move = 2;
     AwarenessUpdate awareness_update = 3;
     Ping ping = 4;
+    VectorReport vector_report = 5;
   }
+}
+
+message VectorReport {
+  repeated crdt.v1.VectorEntry vector = 1;
 }
 
 message ServerMessage {

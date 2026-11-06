@@ -163,3 +163,37 @@ func TestReadOperations(t *testing.T) {
 		t.Fatal("ReadOperations accepted a range that does not start after the requested seq")
 	}
 }
+
+type reportClient struct {
+	documentv1.DocumentServiceClient
+	req *documentv1.ReportVectorRequest
+	err error
+}
+
+func (c *reportClient) ReportVector(_ context.Context, req *documentv1.ReportVectorRequest, _ ...grpc.CallOption) (*documentv1.ReportVectorResponse, error) {
+	c.req = req
+	return &documentv1.ReportVectorResponse{}, c.err
+}
+
+func TestReportVectorForwardsStamp(t *testing.T) {
+	rec := &reportClient{}
+	err := New(rec).ReportVector(t.Context(), "doc", 7, crdt.VersionVector{7: 4, 3: 1, 1: 0}, 9)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if rec.req.GetDocumentId() != "doc" || rec.req.GetReplicaId() != 7 || rec.req.GetHomeSeq() != 9 {
+		t.Fatalf("request = %+v", rec.req)
+	}
+	if len(rec.req.GetVector()) != 2 || rec.req.GetVector()[0].GetClient() != 3 || rec.req.GetVector()[0].GetClock() != 1 || rec.req.GetVector()[1].GetClient() != 7 || rec.req.GetVector()[1].GetClock() != 4 {
+		t.Fatalf("vector = %v", rec.req.GetVector())
+	}
+
+	st, err := status.New(codes.FailedPrecondition, "stale").WithDetails(&errdetails.ErrorInfo{Reason: "STALE_REPORT"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	err = New(&reportClient{err: st.Err()}).ReportVector(t.Context(), "doc", 7, crdt.VersionVector{7: 1}, 1)
+	if !errors.Is(err, hub.ErrStaleReport) {
+		t.Fatalf("ReportVector error = %v", err)
+	}
+}

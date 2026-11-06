@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log/slog"
 	"maps"
 	"slices"
 	"sync"
@@ -92,6 +93,30 @@ type opsEvent struct {
 }
 
 func (opsEvent) isEvent() {}
+
+type reportEvent struct {
+	id     crdt.ClientID
+	vector crdt.VersionVector
+}
+
+func (reportEvent) isEvent() {}
+
+type reportDone struct{ id crdt.ClientID }
+
+func (reportDone) isEvent() {}
+
+// reportJob is one stamped vector waiting on or in the single RPC for its replica.
+type reportJob struct {
+	id      crdt.ClientID
+	vector  crdt.VersionVector
+	homeSeq uint64
+}
+
+// reportSlot is the one in-flight report for a replica. The loop is the only writer.
+type reportSlot struct {
+	busy bool
+	next *reportJob
+}
 
 type cursorEvent struct {
 	peer   *Peer
@@ -211,6 +236,7 @@ type Hub struct {
 	gap     gapTimer
 	loadErr error
 	peers   map[crdt.ClientID]*Peer
+	reports map[crdt.ClientID]*reportSlot
 	dead    bool
 
 	filling *fillReq
@@ -244,6 +270,7 @@ func newHub(docID string, registry *Registry) *Hub {
 		resync:   make(chan struct{}, 1),
 		stopped:  make(chan struct{}),
 		peers:    make(map[crdt.ClientID]*Peer),
+		reports:  make(map[crdt.ClientID]*reportSlot),
 		opening:  make(map[crdt.ClientID]*opening),
 	}
 	if registry.Policy() != nil {
@@ -316,6 +343,10 @@ func (h *Hub) loop() {
 				h.handleLeave(ev)
 			case opsEvent:
 				pending, stop = h.handleOpsGroup(ev)
+			case reportEvent:
+				h.stampReport(ev.id, ev.vector)
+			case reportDone:
+				h.finishReport(ev.id)
 			case cursorEvent:
 				h.handleCursor(ev)
 			case renameEvent:
@@ -574,6 +605,9 @@ func (h *Hub) attachJoin(ev joinEvent, frames, extra [][]byte) {
 			return
 		}
 	}
+	if !ev.resume {
+		h.stampReport(ev.peer.id, h.doc.Vector())
+	}
 	h.joinPresence(ev.peer, superseded)
 	replyJoin(ev, nil)
 }
@@ -794,6 +828,102 @@ func (h *Hub) handleLeave(ev leaveEvent) {
 	close(ev.reply)
 }
 
+type reportMark struct {
+	id     crdt.ClientID
+	vector crdt.VersionVector
+	clip   crdt.VersionVector
+	after  int
+}
+
+func (h *Hub) markReport(ev reportEvent, after int) reportMark {
+	clip := crdt.VersionVector{}
+	if h.doc != nil {
+		clip = h.doc.Vector()
+	}
+	return reportMark{id: ev.id, vector: ev.vector, clip: clip, after: after}
+}
+
+func (h *Hub) stampMarks(before uint64, seqs []uint64, marks []reportMark) {
+	for _, mark := range marks {
+		if h.doc == nil || h.dead {
+			return
+		}
+		home := before
+		if mark.after > 0 && mark.after <= len(seqs) {
+			home = seqs[mark.after-1]
+		}
+		h.enqueueReport(&reportJob{
+			id:      mark.id,
+			vector:  clipVector(mark.vector, mark.clip),
+			homeSeq: home,
+		})
+	}
+}
+
+func (h *Hub) stampReport(id crdt.ClientID, vector crdt.VersionVector) {
+	if h.doc == nil || h.dead {
+		return
+	}
+	h.enqueueReport(&reportJob{
+		id:      id,
+		vector:  clipVector(vector, h.doc.Vector()),
+		homeSeq: h.delivered(),
+	})
+}
+
+func clipVector(client, stored crdt.VersionVector) crdt.VersionVector {
+	out := make(crdt.VersionVector)
+	for id, clock := range client {
+		have := stored[id]
+		if have == 0 || clock == 0 {
+			continue
+		}
+		out[id] = min(clock, have)
+	}
+	return out
+}
+
+func (h *Hub) enqueueReport(job *reportJob) {
+	slot := h.reports[job.id]
+	if slot == nil {
+		slot = &reportSlot{}
+		h.reports[job.id] = slot
+	}
+	if slot.busy {
+		slot.next = job
+		return
+	}
+	slot.busy = true
+	go h.sendReport(job)
+}
+
+func (h *Hub) sendReport(job *reportJob) {
+	ctx, cancel := context.WithTimeout(context.Background(), appendTimeout)
+	err := h.store.ReportVector(ctx, h.docID, job.id, job.vector, job.homeSeq)
+	cancel()
+	if errors.Is(err, ErrStaleReport) {
+		slog.Debug("stale replica report", "doc", h.docID, "replica", job.id)
+	} else if err != nil && !errors.Is(err, context.Canceled) {
+		slog.Warn("replica report", "doc", h.docID, "replica", job.id, "err", err)
+	}
+	_ = h.send(context.Background(), reportDone{id: job.id})
+}
+
+func (h *Hub) finishReport(id crdt.ClientID) {
+	slot := h.reports[id]
+	if slot == nil {
+		return
+	}
+	slot.busy = false
+	next := slot.next
+	slot.next = nil
+	if next == nil || h.dead {
+		return
+	}
+	slot.busy = true
+	go h.sendReport(next)
+}
+
 func (h *Hub) handleOpsGroup(first opsEvent) (event, bool) {
 	start := time.Now()
 	accepted := h.applyOps(first)
@@ -802,33 +932,41 @@ func (h *Hub) handleOpsGroup(first opsEvent) (event, bool) {
 		readAt = first.readUnixNano
 	}
 	opCount := len(first.ops)
+	var marks []reportMark
 	for opCount < maxOpsPerGroup {
 		select {
 		case next := <-h.events:
-			ev, ok := next.(opsEvent)
-			if !ok {
-				return next, h.finishOps(start, accepted, readAt)
+			switch ev := next.(type) {
+			case opsEvent:
+				if len(ev.ops) > maxOpsPerGroup-opCount {
+					return ev, h.finishOps(start, accepted, readAt, marks)
+				}
+				opCount += len(ev.ops)
+				more := h.applyOps(ev)
+				if readAt == 0 && len(more) > 0 {
+					readAt = ev.readUnixNano
+				}
+				accepted = append(accepted, more...)
+			case reportEvent:
+				marks = append(marks, h.markReport(ev, len(accepted)))
+			default:
+				return next, h.finishOps(start, accepted, readAt, marks)
 			}
-			if len(ev.ops) > maxOpsPerGroup-opCount {
-				return ev, h.finishOps(start, accepted, readAt)
-			}
-			opCount += len(ev.ops)
-			more := h.applyOps(ev)
-			if readAt == 0 && len(more) > 0 {
-				readAt = ev.readUnixNano
-			}
-			accepted = append(accepted, more...)
 		default:
-			return nil, h.finishOps(start, accepted, readAt)
+			return nil, h.finishOps(start, accepted, readAt, marks)
 		}
 	}
-	return nil, h.finishOps(start, accepted, readAt)
+	return nil, h.finishOps(start, accepted, readAt, marks)
 }
 
-func (h *Hub) finishOps(start time.Time, accepted []crdt.Op, readAt int64) bool {
-	stop := h.persist(accepted, readAt)
+func (h *Hub) finishOps(start time.Time, accepted []crdt.Op, readAt int64, marks []reportMark) bool {
+	before := h.delivered()
+	seqs, stop := h.persist(accepted, readAt)
 	if len(accepted) > 0 && h.registry.met != nil {
 		metrics.ObserveSince(h.registry.met.Apply, start)
+	}
+	if !stop {
+		h.stampMarks(before, seqs, marks)
 	}
 	return stop
 }
@@ -939,9 +1077,9 @@ func (h *Hub) rejectOperation(p *Peer, code collabv1.ErrorMessage_Code, message 
 // persist appends the group, publishes what the log newly stored, and offers
 // every seq run to the Sequencer. A run can hold ops the log already had
 // above D, which reveals a gap. It reports whether the hub fail-stopped.
-func (h *Hub) persist(accepted []crdt.Op, readAt int64) bool {
+func (h *Hub) persist(accepted []crdt.Op, readAt int64) ([]uint64, bool) {
 	if len(accepted) == 0 {
-		return false
+		return nil, false
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), appendTimeout)
 	appendStart := time.Now()
@@ -952,7 +1090,7 @@ func (h *Hub) persist(accepted []crdt.Op, readAt int64) bool {
 	}
 	if h.stopApply.Load() {
 		h.failStop(collabv1.ErrorMessage_CODE_UNAVAILABLE, "permission service unavailable")
-		return true
+		return nil, true
 	}
 	if err != nil {
 		var conflict ConflictError
@@ -962,7 +1100,7 @@ func (h *Hub) persist(accepted []crdt.Op, readAt int64) bool {
 			}
 		}
 		h.failStop(collabv1.ErrorMessage_CODE_UNAVAILABLE, "document service unavailable")
-		return true
+		return nil, true
 	}
 	if b, ok := newlyStored(accepted, res); ok {
 		b.ReadUnixNano = readAt
@@ -973,10 +1111,10 @@ func (h *Hub) persist(accepted []crdt.Op, readAt int64) bool {
 		run.ReadUnixNano = readAt
 		if err := h.deliver(h.seq.Offer(run)); err != nil {
 			h.failStop(collabv1.ErrorMessage_CODE_INTERNAL, "internal error")
-			return true
+			return nil, true
 		}
 	}
-	return h.watchGap()
+	return res.Seqs, h.watchGap()
 }
 
 func (h *Hub) handleRemote(b fanout.Batch) bool {
@@ -1163,6 +1301,12 @@ func (h *Hub) handleFill(ev fillEvent) bool {
 	}
 	ready := h.seq.Offer(batch)
 	if len(ready) == 0 && !h.caughtUp(target) {
+		// Delivery moved past the seq this read started at. The result cannot
+		// close the gap that is open now, and it is not a failed read.
+		if ev.after != cursor {
+			h.armGap()
+			return false
+		}
 		return h.finishFillErr(heal, errNoProgress)
 	}
 	if err := h.deliver(ready); err != nil {

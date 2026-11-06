@@ -3,6 +3,7 @@ package docstore
 import (
 	"context"
 	"fmt"
+	"sort"
 	"strconv"
 
 	"google.golang.org/genproto/googleapis/rpc/errdetails"
@@ -162,6 +163,36 @@ func (s *Store) ReadOperations(ctx context.Context, docID string, after uint64, 
 		return fanout.Batch{}, 0, fmt.Errorf("read after %d started at seq %d", after, resp.GetFirstSeq())
 	}
 	return fanout.Batch{FirstSeq: resp.GetFirstSeq(), Ops: ops}, resp.GetOpSeq(), nil
+}
+
+// ReportVector stores one replica's vector. A stale row comes back as hub.ErrStaleReport.
+func (s *Store) ReportVector(ctx context.Context, docID string, replica crdt.ClientID, vector crdt.VersionVector, homeSeq uint64) error {
+	_, err := s.client.ReportVector(ctx, &documentv1.ReportVectorRequest{
+		DocumentId: docID,
+		ReplicaId:  uint64(replica),
+		Vector:     vectorEntries(vector),
+		HomeSeq:    homeSeq,
+	})
+	if hasErrorReason(err, codes.FailedPrecondition, "STALE_REPORT") {
+		return fmt.Errorf("%w: %v", hub.ErrStaleReport, err)
+	}
+	return err
+}
+
+func vectorEntries(v crdt.VersionVector) []*crdtv1.VectorEntry {
+	clients := make([]crdt.ClientID, 0, len(v))
+	for id, clock := range v {
+		if id == 0 || clock == 0 {
+			continue
+		}
+		clients = append(clients, id)
+	}
+	sort.Slice(clients, func(i, j int) bool { return clients[i] < clients[j] })
+	out := make([]*crdtv1.VectorEntry, 0, len(clients))
+	for _, id := range clients {
+		out = append(out, &crdtv1.VectorEntry{Client: uint64(id), Clock: v[id]})
+	}
+	return out
 }
 
 func decodeOps(pbs []*crdtv1.Operation) ([]crdt.Op, error) {
