@@ -12,7 +12,7 @@ import (
 )
 
 func TestGCWorkerPinnedLeafSurvives(t *testing.T) {
-	st, _ := testdb.Open(t)
+	st, pool := testdb.Open(t)
 	ctx := t.Context()
 	doc, err := st.Create(ctx, "pin", "owner")
 	if err != nil {
@@ -67,6 +67,10 @@ func TestGCWorkerPinnedLeafSurvives(t *testing.T) {
 	}
 	if !d.Has(left.ID) || d.Has(right.ID) {
 		t.Fatalf("pinned=%v sibling=%v", d.Has(left.ID), d.Has(right.ID))
+	}
+	var ops int
+	if err := pool.QueryRow(ctx, `SELECT count(*) FROM operations WHERE document_id = $1`, doc.ID).Scan(&ops); err != nil || ops != len(protoOps) {
+		t.Fatalf("operations=%d err=%v want %d", ops, err, len(protoOps))
 	}
 }
 

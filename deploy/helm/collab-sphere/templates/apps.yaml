@@ -60,6 +60,7 @@ spec:
             - name: COMMENT_ADDR
               value: {{ include "collab-sphere.addr" (list . "comment-service" 9092) | quote }}
             {{- include "collab-sphere.extraEnv" (dict "root" . "metrics" ":9190") | nindent 12 }}
+            {{- include "collab-sphere.gcEnv" . | nindent 12 }}
           livenessProbe:
             tcpSocket:
               port: grpc
@@ -279,6 +280,7 @@ spec:
             - name: PERMISSION_ADDR
               value: {{ include "collab-sphere.addr" (list . "permission-service" 9094) | quote }}
             {{- include "collab-sphere.extraEnv" (dict "root" . "metrics" ":9193") | nindent 12 }}
+            {{- include "collab-sphere.horizonEnv" . | nindent 12 }}
           livenessProbe:
             tcpSocket:
               port: grpc

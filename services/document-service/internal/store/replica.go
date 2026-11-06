@@ -70,7 +70,17 @@ func writeSystemReport(ctx context.Context, tx pgx.Tx, documentID, forkRoot uuid
 	if err != nil {
 		return err
 	}
-	return upsertReportTx(ctx, tx, forkRoot, replica, vector, seq, time.Now())
+	body, err := marshalVector(vector)
+	if err != nil {
+		return err
+	}
+	if _, err := tx.Exec(ctx, `
+		INSERT INTO replica_reports (fork_root, replica_id, vector, home_seq, reported_at)
+		VALUES ($1, $2::numeric, $3::jsonb, $4, $5)
+		ON CONFLICT DO NOTHING`, forkRoot, strconv.FormatUint(replica, 10), body, int64(seq), time.Now()); err != nil {
+		return fmt.Errorf("insert system report: %w", err)
+	}
+	return nil
 }
 
 func replicaKind(system bool) string {

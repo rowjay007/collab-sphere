@@ -163,6 +163,24 @@ func TestSystemClaimWritesInitialReport(t *testing.T) {
 	if got[1] != op.ID.Clock {
 		t.Fatalf("documents.vector = %v", got)
 	}
+
+	next, err := r.InsertAt(1, 't')
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := st.Append(ctx, doc.ID, []*crdtv1.Operation{crdt.OpToProto(next)}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := st.ClaimReplica(ctx, doc.ID, sys, true, ""); err != nil {
+		t.Fatal(err)
+	}
+	reports, err = st.ListReports(ctx, doc.ForkRoot)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(reports) != 1 || reports[0].Vector[1] != op.ID.Clock || reports[0].HomeSeq != 1 {
+		t.Fatalf("re-claim moved the system floor: %+v", reports)
+	}
 }
 
 func TestBackfillReportsOnce(t *testing.T) {

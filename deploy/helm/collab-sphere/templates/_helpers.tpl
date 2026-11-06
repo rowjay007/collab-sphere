@@ -81,12 +81,18 @@ prometheus.io/port: {{ . | quote }}
 {{- define "collab-sphere.extraEnv" -}}
 - name: METRICS_ADDR
   value: {{ .metrics | quote }}
+{{- end -}}
+
+{{- define "collab-sphere.gcEnv" -}}
 - name: GC_INTERVAL
-  value: {{ .root.Values.gc.interval | quote }}
-- name: RESTORE_HORIZON
-  value: {{ .root.Values.gc.restoreHorizon | quote }}
+  value: {{ .Values.gc.interval | quote }}
 - name: REPLICA_REPORT_TTL
-  value: {{ .root.Values.gc.replicaReportTTL | quote }}
+  value: {{ .Values.gc.replicaReportTTL | quote }}
+{{- end -}}
+
+{{- define "collab-sphere.horizonEnv" -}}
+- name: RESTORE_HORIZON
+  value: {{ .Values.gc.restoreHorizon | quote }}
 {{- end -}}
 
 {{- define "collab-sphere.appResources" -}}
